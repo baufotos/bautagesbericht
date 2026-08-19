@@ -6,6 +6,7 @@ werden die Werte weiterhin aus einer ``.env``-Datei geladen; auf einem
 Hosting-Server (Render, Fly.io, ...) werden sie über das Dashboard gesetzt.
 """
 
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
@@ -33,18 +34,25 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     nominatim_user_agent: str = "bautagesbericht-hpp/1.0"
 
-    # SMTP-Versand — Zugangsdaten kommen ausschließlich aus Umgebungsvariablen.
-    # BTB_SMTP_HOST, BTB_SMTP_PORT, BTB_SMTP_USER, BTB_SMTP_PASSWORD,
-    # BTB_SMTP_FROM (Absender-Adresse, z. B. bautagesbericht@hpp.com),
-    # BTB_SMTP_USE_TLS (True/False, Standard True = STARTTLS auf Port 587).
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    smtp_use_tls: bool = True
+    # Benachrichtigung per Microsoft-Teams-Kanal-Webhook (siehe
+    # app.services.teams_notifier) — der einzige automatische Zustellweg.
+    # Zusätzlich gibt es die Übersichtsseite in der App, in der jeder selbst
+    # nachschauen kann, ohne dass überhaupt benachrichtigt werden muss.
+    # BTB_TEAMS_WEBHOOK_URL kommt aus Teams: Kanal -> "..." -> Workflows ->
+    # Vorlage "Send webhook alerts to a channel" (globaler Fallback-Kanal,
+    # normalerweise reicht die pro Empfänger hinterlegte Webhook-URL).
+    teams_webhook_url: str = ""
+
+    # Öffentlich erreichbare Basis-URL der App, um im Teams-Post einen
+    # funktionierenden Download-Link zu erzeugen, z. B.
+    # "https://bautagesbericht-jwga.onrender.com". Wird bei Render automatisch
+    # aus RENDER_EXTERNAL_URL übernommen, falls nicht explizit gesetzt.
+    public_base_url: str = ""
 
     model_config = {"env_prefix": "BTB_", "env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()
+
+if not settings.public_base_url:
+    settings.public_base_url = os.environ.get("RENDER_EXTERNAL_URL", "")
