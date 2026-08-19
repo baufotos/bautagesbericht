@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-hpp-navy: #1F3A5C;
+  --color-hpp-navy-dark: #16304C;
+  --color-hpp-cream: #F6F5F1;
+  --color-hpp-gold: #C98A2C;
+  --color-hpp-stone: #D8D5CD;
+  --color-hpp-gray: #77746B;
+  --color-hpp-black: #201F1D;
+  --color-hpp-muted: #A9A59C;
+  --color-hpp-text-secondary: #57544C;
+  --color-hpp-warn-bg: #FBECEA;
+  --color-hpp-warn-text: #8A2E1F;
+  --color-hpp-hint-text: #8A6B1F;
+  --color-hpp-hint-bg: #FBF4E1;
+  --color-hpp-success-bg: #EAF2E9;
+  --color-hpp-success-text: #2B5C2E;
+  --color-hpp-success-border: #C7DEC6;
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+body {
+  background: var(--color-hpp-cream);
+  color: var(--color-hpp-black);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
