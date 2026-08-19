@@ -10,6 +10,7 @@ import {
   ClipboardList,
   MapPin,
   Mail,
+  MessageSquare,
   Loader2,
   Download,
   AlertTriangle,
@@ -50,7 +51,7 @@ async function loeschenMitRueckfrage(
   }
 }
 
-type Tab = "einreichen" | "projekte" | "emails";
+type Tab = "einreichen" | "uebersicht" | "projekte" | "emails";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("einreichen");
@@ -113,7 +114,7 @@ export default function Home() {
         </div>
         <div className="font-mono text-[11px] text-hpp-gray text-right leading-relaxed">
           <div>PROJEKTE: {projects.length}</div>
-          <div>E-MAILS: {emails.length}</div>
+          <div>EMPFÄNGER: {emails.length}</div>
           <div>EINREICHUNGEN: {submissions.length}</div>
         </div>
       </div>
@@ -130,8 +131,9 @@ export default function Home() {
         {(
           [
             ["einreichen", "Bericht einreichen"],
+            ["uebersicht", "Übersicht"],
             ["projekte", "Stammdaten · Projekt"],
-            ["emails", "Stammdaten · E-Mail"],
+            ["emails", "Stammdaten · Empfänger"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -165,6 +167,8 @@ export default function Home() {
           />
         ) : tab === "emails" ? (
           <EmailsTab emails={emails} onUpdate={loadAll} />
+        ) : tab === "uebersicht" ? (
+          <UebersichtTab submissions={submissions} onUpdate={loadAll} />
         ) : (
           <EinreichenTab
             projects={projects}
@@ -324,6 +328,7 @@ function EmailsTab({
   const [showForm, setShowForm] = useState(false);
   const [label, setLabel] = useState("");
   const [email, setEmail] = useState("");
+  const [teamsWebhookUrl, setTeamsWebhookUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -334,9 +339,11 @@ function EmailsTab({
       await api.empfaenger.create({
         label: label.trim(),
         email: email.trim(),
+        teams_webhook_url: teamsWebhookUrl.trim(),
       });
       setLabel("");
       setEmail("");
+      setTeamsWebhookUrl("");
       setShowForm(false);
       onUpdate();
     } catch {
@@ -358,7 +365,7 @@ function EmailsTab({
   return (
     <div>
       <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-3.5">
-        E-MAIL-EMPFÄNGER — EINMAL ANLEGEN, DANACH IM FORMULAR WÄHLBAR
+        EMPFÄNGER (E-MAIL UND/ODER TEAMS) — EINMAL ANLEGEN, DANACH IM FORMULAR WÄHLBAR
       </div>
 
       {deleteError && (
@@ -369,8 +376,10 @@ function EmailsTab({
 
       {emails.length === 0 && !showForm && (
         <div className="border border-dashed border-hpp-stone p-7 text-center text-hpp-gray text-sm mb-4">
-          Noch keine Empfänger angelegt. Lege die Personen an, die den fertigen
-          Bautagesbericht per E-Mail erhalten sollen.
+          Noch keine Empfänger angelegt. Lege die Personen an, für die
+          Bautagesberichte eingereicht werden sollen — die fertigen Berichte
+          findet man dann in der Übersicht, optional zusätzlich per
+          Teams-Benachrichtigung.
         </div>
       )}
 
@@ -385,6 +394,11 @@ function EmailsTab({
               <div className="flex items-center gap-1.5 text-hpp-text-secondary text-[13px] mt-1">
                 <Mail size={13} /> {e.email}
               </div>
+              {e.teams_webhook_url && (
+                <div className="flex items-center gap-1.5 text-hpp-text-secondary text-[13px] mt-1">
+                  <MessageSquare size={13} /> Teams-Kanal hinterlegt
+                </div>
+              )}
             </div>
             <button
               onClick={() => handleDelete(e.id, e.label)}
@@ -407,12 +421,27 @@ function EmailsTab({
           />
           <input
             className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="E-Mail-Adresse"
+            placeholder="E-Mail-Adresse (nur zur Kontaktinfo, kein Versand)"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAdd()}
           />
+          <input
+            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
+            placeholder="Teams-Kanal-Webhook-URL (optional)"
+            type="url"
+            value={teamsWebhookUrl}
+            onChange={(e) => setTeamsWebhookUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+          />
+          <p className="text-[12px] text-hpp-gray -mt-1">
+            Fertige Berichte stehen immer in der Übersicht zum Download
+            bereit. Optional: Webhook-URL eines eigenen Teams-Kanals für
+            diese Person (Kanal → „…" → Workflows → „Send webhook alerts to
+            a channel" → „Copy webhook link") — dann kommt zusätzlich eine
+            Teams-Nachricht mit Download-Link an.
+          </p>
           <div className="flex gap-2">
             <button
               onClick={handleAdd}
@@ -426,6 +455,7 @@ function EmailsTab({
                 setShowForm(false);
                 setLabel("");
                 setEmail("");
+                setTeamsWebhookUrl("");
               }}
               className="inline-flex items-center gap-1.5 border border-hpp-navy text-hpp-navy px-4 py-2.5 text-[13px] font-semibold cursor-pointer hover:bg-hpp-navy hover:text-hpp-cream transition-colors"
             >
@@ -440,6 +470,72 @@ function EmailsTab({
         >
           <Plus size={14} /> Empfänger anlegen
         </button>
+      )}
+    </div>
+  );
+}
+
+/* ───────── Übersicht Tab ───────── */
+const OFFENE_STATUS = ["eingereicht", "wird_verarbeitet", "wartet_auf_bestaetigung"];
+
+function UebersichtTab({
+  submissions,
+  onUpdate,
+}: {
+  submissions: Einreichung[];
+  onUpdate: () => void;
+}) {
+  const [filter, setFilter] = useState<"alle" | "offen" | "fertig">("alle");
+
+  const anzahlOffen = submissions.filter((s) =>
+    OFFENE_STATUS.includes(s.status)
+  ).length;
+
+  const gefiltert = submissions.filter((s) => {
+    if (filter === "offen") return OFFENE_STATUS.includes(s.status);
+    if (filter === "fertig") return !OFFENE_STATUS.includes(s.status);
+    return true;
+  });
+
+  return (
+    <div>
+      <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-3.5">
+        ALLE EINREICHUNGEN — HIER SELBST NACHSCHAUEN, STATT AUF EINE
+        BENACHRICHTIGUNG ZU WARTEN
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        {(
+          [
+            ["alle", `Alle (${submissions.length})`],
+            ["offen", `Offen (${anzahlOffen})`],
+            ["fertig", `Fertig (${submissions.length - anzahlOffen})`],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key)}
+            className={`font-mono text-[11px] tracking-[0.05em] px-3 py-1.5 border cursor-pointer transition-colors ${
+              filter === key
+                ? "bg-hpp-navy text-hpp-cream border-hpp-navy"
+                : "border-hpp-stone text-hpp-gray hover:border-hpp-navy hover:text-hpp-navy"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {gefiltert.length === 0 ? (
+        <div className="border border-dashed border-hpp-stone p-7 text-center text-hpp-gray text-sm">
+          Keine Einreichungen in dieser Ansicht.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {gefiltert.map((s) => (
+            <SubmissionRow key={s.id} s={s} onUpdate={onUpdate} />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -508,7 +604,8 @@ function EinreichenTab({
       {justSubmitted && (
         <div className="bg-hpp-success-bg text-hpp-success-text border border-hpp-success-border px-3.5 py-2.5 text-[13px] mb-4">
           Eingereicht. Die Weiterverarbeitung (Auslesen der Berichte,
-          Wetterdaten, Word-Erstellung, Versand) läuft im Backend-System.
+          Wetterdaten, Word-Erstellung) läuft im Backend-System — den
+          fertigen Bericht findest du danach in der Übersicht.
         </div>
       )}
 
@@ -615,10 +712,10 @@ function EinreichenTab({
           />
         </div>
 
-        {/* E-Mail-Empfänger */}
+        {/* Empfänger */}
         <div>
           <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            E-MAIL-EMPFÄNGER
+            EMPFÄNGER
           </label>
           <select
             className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none mt-1.5 transition-colors"
@@ -635,12 +732,13 @@ function EinreichenTab({
           {emails.length === 0 && (
             <div className="text-xs text-hpp-hint-text mt-1.5">
               Noch keine Empfänger hinterlegt — bitte zuerst unter „Stammdaten ·
-              E-Mail" anlegen.
+              Empfänger" anlegen.
             </div>
           )}
           {selectedEmail && (
             <div className="text-xs text-hpp-gray mt-1.5">
-              Versand an {selectedEmail.email}
+              Fertiger Bericht erscheint in der Übersicht
+              {selectedEmail.teams_webhook_url ? " und wird zusätzlich per Teams gemeldet" : ""}.
             </div>
           )}
         </div>
