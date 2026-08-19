@@ -1,6 +1,5 @@
 import time
 from datetime import datetime, date
-from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -10,7 +9,7 @@ from app.schemas import BautagesberichtJSON, FirmaEintrag, WetterBlock, WarnungS
 from app.services.pdf_extraction import extract_from_file
 from app.services.weather import fetch_weather
 from app.services.docx_generation import generate_bautagesbericht
-from app.services.email_sender import send_bautagesbericht
+from app.services.teams_notifier import send_teams_notification
 
 
 def _log_step(db: Session, einreichung_id: int, schritt: str, ergebnis: str, details: str = "", dauer_ms: int = 0):
@@ -25,33 +24,33 @@ def _log_step(db: Session, einreichung_id: int, schritt: str, ergebnis: str, det
     db.commit()
 
 
-def _send_email(db: Session, einreichung, output_path: Path, projekt) -> None:
-    """Versendet den fertigen Bericht per E-Mail. Fehler werden protokolliert,
-    aber der Abschluss-Status bleibt erhalten (Download bleibt immer möglich)."""
-    empfaenger = einreichung.empfaenger
-    if not empfaenger or not empfaenger.email:
-        _log_step(db, einreichung.id, "email_versand", "warnung",
-                  "Kein Empfänger hinterlegt")
-        return
+async def _send_teams(db: Session, einreichung, projekt) -> None:
+    """Postet eine Benachrichtigung mit Download-Link in Microsoft Teams.
 
+    Nutzt den persönlichen Kanal-Webhook des Empfängers (Feld
+    ``teams_webhook_url``, in den Stammdaten hinterlegt), ersatzweise den
+    globalen BTB_TEAMS_WEBHOOK_URL. Ist keiner von beiden gesetzt, passiert
+    nichts — siehe app.services.teams_notifier. Fehler werden protokolliert,
+    aber der Abschluss-Status bleibt erhalten (Download bleibt immer möglich).
+    """
+    empfaenger = einreichung.empfaenger
     t0 = time.time()
     try:
-        send_bautagesbericht(
-            empfaenger_email=empfaenger.email,
+        await send_teams_notification(
+            einreichung_id=einreichung.id,
             projekt_name=projekt.name if projekt else "",
             datum=einreichung.datum,
-            anhang_pfad=output_path,
+            webhook_url=(empfaenger.teams_webhook_url if empfaenger else "") or "",
         )
-        _log_step(db, einreichung.id, "email_versand", "erfolg",
-                  f"Gesendet an {empfaenger.email}",
-                  int((time.time() - t0) * 1000))
+        _log_step(db, einreichung.id, "teams_benachrichtigung", "erfolg",
+                  "", int((time.time() - t0) * 1000))
     except Exception as exc:
-        _log_step(db, einreichung.id, "email_versand", "fehler",
+        _log_step(db, einreichung.id, "teams_benachrichtigung", "fehler",
                   str(exc), int((time.time() - t0) * 1000))
         warnungen = list(einreichung.warnungen or [])
         warnungen.append({
-            "feld": "email",
-            "problem": f"Versand fehlgeschlagen ({exc}). Dokument kann heruntergeladen werden.",
+            "feld": "teams",
+            "problem": f"Teams-Benachrichtigung fehlgeschlagen ({exc}). Dokument kann heruntergeladen werden.",
             "quelle_datei": "",
         })
         einreichung.warnungen = warnungen
@@ -218,7 +217,7 @@ async def process_einreichung(einreichung_id: int, db: Session):
         _log_step(db, einreichung_id, "docx_erzeugung", "erfolg",
                   f"Datei: {output_path.name}",
                   int((time.time() - t0) * 1000))
-        _send_email(db, einreichung, output_path, projekt)
+        await _send_teams(db, einreichung, projekt)
     except Exception as exc:
         einreichung.status = "fehlgeschlagen"
         db.commit()
@@ -286,7 +285,7 @@ async def confirm_and_generate(einreichung_id: int, db: Session):
         db.commit()
         _log_step(db, einreichung_id, "docx_erzeugung_nach_bestaetigung", "erfolg",
                   f"Datei: {output_path.name}")
-        _send_email(db, einreichung, output_path, projekt)
+        await _send_teams(db, einreichung, projekt)
     except Exception as exc:
         einreichung.status = "fehlgeschlagen"
         db.commit()
