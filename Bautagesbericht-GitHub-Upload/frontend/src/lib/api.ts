@@ -65,7 +65,7 @@ export const api = {
   },
   empfaenger: {
     list: () => fetchAPI<Empfaenger[]>("/empfaenger"),
-    create: (data: { label: string; email: string }) =>
+    create: (data: { label: string; email: string; teams_webhook_url?: string }) =>
       fetchAPI<Empfaenger>("/empfaenger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
