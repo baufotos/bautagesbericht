@@ -11,6 +11,7 @@ export interface Empfaenger {
   id: number;
   label: string;
   email: string;
+  teams_webhook_url: string;
   erstellt_am: string;
 }
 
