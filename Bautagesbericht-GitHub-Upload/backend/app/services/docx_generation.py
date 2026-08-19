@@ -34,11 +34,13 @@ from app.schemas import BautagesberichtJSON
 FONT = "Arial"
 SYMBOL_FONT = "Segoe UI Symbol"
 
-# Schriftgrößen in Halbpunkten, wie in Vorlage und Referenzberichten gemessen.
-SZ_NORMAL = 14      # 7 pt — Standardtext der Tabelle
-SZ_SMALL = 11       # 5.5 pt — graue Hilfslabels
+# Schriftgrößen in Halbpunkten. Etwas großzügiger als die ursprünglich an den
+# Referenzberichten ausgemessenen Werte (7 pt / 5.5 pt), da der reine
+# Tabellentext sonst gedrängt und schwer lesbar wirkt.
+SZ_NORMAL = 18      # 9 pt — Standardtext der Tabelle
+SZ_SMALL = 14       # 7 pt — graue Hilfslabels
 SZ_PROJEKT = 23     # 11.5 pt — Projektname in der Kopfzeile
-SZ_SYMBOL = 18      # 9 pt — Wettersymbole der Bewölkungszeile
+SZ_SYMBOL = 22      # 11 pt — Wettersymbole der Bewölkungszeile
 GRAY = "999999"
 
 # Spaltenbreiten der Vorlagentabelle in Twips.
@@ -171,8 +173,8 @@ def _nested_table_open(width: int, grid: str) -> str:
         f"<w:bottom w:val=\"nil\"/><w:right w:val=\"nil\"/>"
         f"<w:insideH w:val=\"nil\"/><w:insideV w:val=\"nil\"/></w:tblBorders>"
         f'<w:tblLayout w:type="fixed"/>'
-        f'<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
-        f'<w:bottom w:w="0" w:type="dxa"/><w:right w:w="28" w:type="dxa"/></w:tblCellMar>'
+        f'<w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+        f'<w:bottom w:w="40" w:type="dxa"/><w:right w:w="28" w:type="dxa"/></w:tblCellMar>'
         f"</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
     )
 
@@ -193,9 +195,9 @@ def _weather_value_row(w):
         (_num(w.schnee_cm, "cm", decimals=0), None),
     ]
     cells = _cell(LABEL_COL, _para(""))
-    cells += _cell(COL_WIDTHS[1], _para(_run(w.station or ""), after=60))
+    cells += _cell(COL_WIDTHS[1], _para(_run(w.station or ""), after=100))
     for width, (value, align) in zip(COL_WIDTHS[2:], numeric):
-        cells += _cell(width, _para(_run(value), align=align, after=60))
+        cells += _cell(width, _para(_run(value), align=align, after=100))
     return _row(cells)
 
 
@@ -239,7 +241,7 @@ def _hourly_table(stundenwerte: list) -> str:
             )
         return f"<w:tr>{row}</w:tr>"
 
-    tbl += text_row("Uhrzeit", lambda s: f"{s.stunde:02d}", after=40)
+    tbl += text_row("Uhrzeit", lambda s: f"{s.stunde:02d}", after=60)
 
     # Diagrammzeile: feste Höhe, Balken wachsen von unten.
     if temps:
@@ -254,14 +256,15 @@ def _hourly_table(stundenwerte: list) -> str:
             f'w:hRule="exact"/></w:trPr>{chart}</w:tr>'
         )
 
-    tbl += text_row("Temp. (°C)", lambda s: "" if s.temperatur_c is None else f"{s.temperatur_c:.1f}")
-    tbl += text_row("Wind (m/s)", lambda s: "" if s.wind_ms is None else f"{s.wind_ms:.1f}")
-    tbl += text_row("Wind (Grad)", lambda s: "" if s.wind_grad is None else f"{s.wind_grad:.0f}")
+    tbl += text_row("Temp. (°C)", lambda s: "" if s.temperatur_c is None else f"{s.temperatur_c:.1f}", after=40)
+    tbl += text_row("Wind (m/s)", lambda s: "" if s.wind_ms is None else f"{s.wind_ms:.1f}", after=40)
+    tbl += text_row("Wind (Grad)", lambda s: "" if s.wind_grad is None else f"{s.wind_grad:.0f}", after=40)
     tbl += text_row(
         "Bewölkung",
         lambda s: WETTER_SYMBOLE.get(s.icon or "", ""),
         font=SYMBOL_FONT,
         size=SZ_SYMBOL,
+        after=40,
     )
 
     return tbl + "</w:tbl>"
@@ -276,7 +279,7 @@ def _hourly_row(stundenwerte: list):
 
 def _note_row(text: str, *, bottom: bool):
     paras = "".join(
-        _para(_run(line), after=24) for line in text.splitlines() if line.strip()
+        _para(_run(line), after=60) for line in text.splitlines() if line.strip()
     )
     cells = _cell(LABEL_COL, _para(""), bottom=bottom)
     cells += _cell(VALUE_SPAN, paras or _para(""), gridspan=6, bottom=bottom)
@@ -300,7 +303,7 @@ def _firma_row(firma, *, bottom: bool = True):
     grid = f'<w:gridCol w:w="{FIRMA_LABEL_W}"/><w:gridCol w:w="{FIRMA_VALUE_W}"/>'
     tbl = _nested_table_open(VALUE_SPAN, grid)
     for i, (label, value, value_bold) in enumerate(fields):
-        after = 0 if i == len(fields) - 1 else 24
+        after = 0 if i == len(fields) - 1 else 60
         tbl += (
             "<w:tr>"
             f'<w:tc><w:tcPr><w:tcW w:w="{FIRMA_LABEL_W}" w:type="dxa"/>'
@@ -459,7 +462,11 @@ def generate_bautagesbericht(
         _set_bottom_border(row_wetter, False)
         _set_bottom_border(block_rows[-1], True)
 
-    # Firmenblöcke: erste Vorlagenzeile ersetzen, weitere dahinter einfügen
+    # Firmenblöcke: erste Vorlagenzeile ersetzen, weitere dahinter einfügen.
+    # Die Vorlage reserviert zwei leere Firmenzeilen für den handschriftlichen
+    # Gebrauch (row_firma, row_firma_leer) — sobald echte Firmendaten vorliegen,
+    # werden beide Vorlagenzeilen durch die tatsächlichen Blöcke ersetzt, damit
+    # keine leere "Firmen"-Zeile übrig bleibt.
     if data.firmen:
         firma_anchor = row_firma
         for firma in data.firmen:
@@ -467,6 +474,7 @@ def generate_bautagesbericht(
             firma_anchor.addnext(new_row)
             firma_anchor = new_row
         table._tbl.remove(row_firma)
+        table._tbl.remove(row_firma_leer)
 
     # Unterschriftsdatum über das graue Label setzen
     unterschrift_cells = row_unterschrift.findall(qn("w:tc"))
