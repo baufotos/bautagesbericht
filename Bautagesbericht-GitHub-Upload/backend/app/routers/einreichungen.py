@@ -53,10 +53,12 @@ def _to_response(e: Einreichung) -> EinreichungResponse:
 
 @router.get("", response_model=list[EinreichungResponse])
 def list_einreichungen(db: Session = Depends(get_db)):
+    # 200 statt vorher 20 — die Übersichtsseite soll wirklich alle offenen
+    # und kürzlich fertigen Berichte zeigen, nicht nur die letzten paar.
     rows = (
         db.query(Einreichung)
         .order_by(Einreichung.eingereicht_am.desc())
-        .limit(20)
+        .limit(200)
         .all()
     )
     return [_to_response(e) for e in rows]
