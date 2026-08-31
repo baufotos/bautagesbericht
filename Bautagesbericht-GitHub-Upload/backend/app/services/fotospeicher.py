@@ -30,7 +30,7 @@ DREI RÜCKWÄNDE
 
 ``datei``
     Wie bisher im Dateisystem. Richtig auf dem Bürorechner, wo die Platte
-    selbst dauerhaft ist. Das ist der Standard.
+    selbst dauerhaft ist.
 ``db``
     In der Datenbank. Richtig auf Render und überall, wo der Container
     flüchtig ist.
@@ -38,8 +38,11 @@ DREI RÜCKWÄNDE
     S3-kompatibler Objektspeicher (Cloudflare R2, Backblaze B2, MinIO im
     eigenen Haus). Bleibt für den Fall, dass die Fotomenge einmal wächst.
 
-Ohne Angabe entscheidet die Konfiguration: Sind die vier ``BTB_R2_*``-Werte
-gesetzt, gilt ``objekt``, sonst ``datei``.
+Ohne Angabe wird an der Datenbank abgelesen, was gilt: Postgres heißt
+Serverbetrieb und damit ``db``, SQLite heißt Einzelplatz und damit ``datei``.
+Sind die vier ``BTB_R2_*``-Werte gesetzt, gilt ``objekt``. Der Grund für diese
+Ableitung steht bei ``art()``: Sie muss auch dann das Richtige tun, wenn die
+Umgebungsvariable einmal nicht ankommt.
 
 ABWÄRTSKOMPATIBEL
 =================
@@ -78,11 +81,36 @@ def _r2_konfiguriert() -> bool:
 
 
 def art() -> str:
-    """"datei", "db" oder "objekt" — die aktuell gültige Rückwand."""
+    """"datei", "db" oder "objekt" — die aktuell gültige Rückwand.
+
+    Ohne ausdrückliche Angabe wird sie an der Datenbank abgelesen:
+
+    * **Postgres** heißt in diesem Projekt Serverbetrieb — auf Render mit
+      flüchtigem Dateisystem, oder eine Teaminstallation mit gemeinsamer
+      Datenbank. In beiden Fällen ist die Platte des einzelnen Rechners der
+      falsche Ort, in beiden Fällen ist die Datenbank der richtige. In der
+      Teaminstallation behebt das zugleich einen älteren Fehler: Dort standen
+      in der gemeinsamen Datenbank Verweise auf Dateien, die nur auf dem
+      hochladenden Rechner lagen — die Kollegen sahen leere Kacheln.
+    * **SQLite** heißt Einzelplatz auf dem Bürorechner. Dort ist die Platte
+      dauerhaft und das Dateisystem genau richtig.
+
+    Diese Ableitung ist bewusst so gebaut, dass sie **ohne** gesetzte
+    Umgebungsvariable das Richtige tut: Bliebe ``BTB_FOTOSPEICHER`` auf Render
+    einmal unbeachtet — etwa weil eine geänderte Blueprint nicht übernommen
+    wurde —, landeten Fotos still auf einer Platte, die beim nächsten Neustart
+    leer ist. Das ist genau der Fehler, den niemand bemerkt.
+    """
     gewaehlt = (settings.fotospeicher or "").strip().lower()
     if gewaehlt in ("datei", "db", "objekt"):
         return gewaehlt
-    return "objekt" if _r2_konfiguriert() else "datei"
+    if _r2_konfiguriert():
+        return "objekt"
+    if (settings.database_url or "").strip().lower().startswith(
+        ("postgres", "postgresql")
+    ):
+        return "db"
+    return "datei"
 
 
 def objektspeicher_aktiv() -> bool:
