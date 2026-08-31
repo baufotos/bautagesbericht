@@ -43,18 +43,42 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     nominatim_user_agent: str = "bautagesbericht-hpp/1.0"
 
-    # ── Dauerhafter Fotospeicher (Cloudflare R2 oder anderer S3-Dienst) ──
+    # ── Wo hochgeladene Fotos liegen ──
     #
-    # Warum das nötig ist: Auf Render liegt das Dateisystem im Container. Der
-    # Dienst schläft nach 15 Minuten ohne Zugriff ein, und beim Aufwachen —
+    # Warum das eine Frage ist: Auf Render liegt das Dateisystem im Container.
+    # Der Dienst schläft nach 15 Minuten ohne Zugriff ein, und beim Aufwachen —
     # ebenso bei jedem Deploy — startet der Container leer. Hochgeladene Fotos
     # wären dann verschwunden, während in der Datenbank noch ihre Verweise
     # stehen. Für Baustellendokumentation ist das nicht tragbar.
     #
-    # Sind diese vier Werte gesetzt, wandern Fotos stattdessen in einen
-    # Objektspeicher und überstehen jeden Neustart. Bleiben sie leer, arbeitet
-    # die App wie bisher mit dem Dateisystem — das ist auf dem Bürorechner
-    # genau richtig, denn dort ist die Platte dauerhaft.
+    #   "datei"  Dateisystem wie bisher. Standard und auf dem Bürorechner
+    #            richtig, denn dort ist die Platte dauerhaft.
+    #   "db"     In der Datenbank. Richtig auf Render: dauerhaft, ohne
+    #            zusätzlichen Dienst und ohne Zusatzkosten. Die Fotos liegen
+    #            dort nur bis zur Abholung durch das Büro, danach werden sie
+    #            wieder freigegeben (app.services.fotospeicher.raeume_auf).
+    #   "objekt" S3-kompatibler Objektspeicher, siehe BTB_R2_* unten.
+    #
+    # Leer = selbst entscheiden: Objektspeicher, wenn die vier R2-Werte
+    # gesetzt sind, sonst Dateisystem.
+    fotospeicher: str = ""
+
+    # Nur für "db": Wie lange die Bilddaten eines Fotosatzes nach der Abholung
+    # noch in der Datenbank bleiben. Die Schonfrist gibt es, damit die Galerie
+    # in der App direkt nach dem Termin noch Vorschaubilder zeigt. Danach ist
+    # der Projektordner das Archiv; der Datensatz bleibt mit Namen, Größe und
+    # Zielordner erhalten.
+    fotos_aufbewahren_tage: int = 2
+    # Obergrenze für die Bilddaten in der Datenbank. Wird sie überschritten,
+    # werden zusätzlich die ältesten bereits abgeholten Sätze geleert. Noch
+    # nicht abgeholte Sätze bleiben unter allen Umständen liegen.
+    fotos_max_mb: int = 300
+
+    # ── Objektspeicher, falls die Fotomenge einmal wächst (optional) ──
+    #
+    # S3-kompatibel: Cloudflare R2, Backblaze B2, MinIO im eigenen Haus. Nicht
+    # nötig für den Normalbetrieb — die Datenbank reicht, weil Fotos nur bis
+    # zur Abholung dort liegen.
     r2_endpoint: str = ""      # z. B. https://<konto-id>.r2.cloudflarestorage.com
     r2_bucket: str = ""        # Name des Buckets, z. B. baustellenfotos
     r2_key_id: str = ""        # Access Key ID

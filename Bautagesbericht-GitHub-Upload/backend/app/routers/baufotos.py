@@ -224,6 +224,16 @@ def abholung_offen(db: Session = Depends(get_db)):
     Enthält alles, was das Skript für den Zielordner braucht — es muss keine
     weitere Route aufrufen, um Projektname oder Pfad nachzuschlagen.
     """
+    # Guter Anlass zum Aufräumen: Diese Abfrage kommt regelmäßig von den
+    # Bürorechnern, und was sie in der Vergangenheit abgeholt haben, braucht
+    # auf dem Server keinen Platz mehr. Eigener Auslöser (Cron o. Ä.) wäre auf
+    # dem kostenlosen Render-Plan nicht vorhanden.
+    try:
+        fotospeicher.raeume_auf(db)
+    except Exception:
+        # Aufräumen ist Beiwerk — es darf die Abholung nie aufhalten.
+        db.rollback()
+
     offen: list[OffenerFotosatz] = []
     for satz in abholung.offene_saetze(db):
         projekt_name = satz.projekt.name if satz.projekt else ""
@@ -306,12 +316,20 @@ def foto_bild(foto_id: int, thumb: bool = False, db: Session = Depends(get_db)):
     if not foto:
         raise HTTPException(404, "Foto nicht gefunden")
 
-    # Liegt das Foto im Objektspeicher, gibt es keinen Pfad auf der Platte —
-    # dann werden die Bytes direkt ausgeliefert.
-    if fotospeicher.ist_objekt(foto.dateipfad):
-        daten = fotospeicher.lies(foto.dateipfad)
+    # Liegt das Foto in der Datenbank oder im Objektspeicher, gibt es keinen
+    # Pfad auf der Platte — dann werden die Bytes direkt ausgeliefert.
+    if not fotospeicher.ist_datei(foto.dateipfad):
+        daten = fotospeicher.lies(foto.dateipfad, db)
         if daten is None:
-            raise HTTPException(404, "Bilddatei nicht gefunden")
+            # Abgeholte Sätze werden nach der Schonfrist in der Datenbank
+            # freigegeben; die Fotos liegen dann im Projektordner.
+            raise HTTPException(
+                404,
+                "Bilddatei nicht mehr auf dem Server — der Fotosatz liegt "
+                "im Projektordner."
+                if fotospeicher.ist_db(foto.dateipfad)
+                else "Bilddatei nicht gefunden",
+            )
         if thumb:
             daten = bilder.thumbnail_bytes(daten) or daten
         return Response(
@@ -348,7 +366,7 @@ def delete_foto(foto_id: int, db: Session = Depends(get_db)):
     foto = db.get(Baufoto, foto_id)
     if not foto:
         raise HTTPException(404, "Foto nicht gefunden")
-    fotospeicher.loesche(foto.dateipfad)
+    fotospeicher.loesche(foto.dateipfad, db)
     db.delete(foto)
     db.commit()
 
@@ -461,11 +479,11 @@ async def upload_fotos(
             name = f"{Path(name).stem}{Path(original).suffix.lower()}"
 
         # Über die Speicherschicht: auf dem Bürorechner die Platte, auf einem
-        # Server mit flüchtigem Speicher der Objektspeicher. Ohne das wären
-        # Fotos nach dem nächsten Neustart des Dienstes weg, während in der
+        # Server mit flüchtigem Speicher die Datenbank. Ohne das wären Fotos
+        # nach dem nächsten Neustart des Dienstes weg, während in der
         # Datenbank noch ihre Verweise stünden.
         rel_pfad = await fotospeicher.schreibe(
-            f"baufotos/{fotosatz.id}", name, inhalt
+            f"baufotos/{fotosatz.id}", name, inhalt, db
         )
         foto = Baufoto(
             fotosatz_id=fotosatz.id,

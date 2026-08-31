@@ -173,7 +173,7 @@ def delete_fotosatz_cascade(db: Session, fotosatz) -> None:
     from app.services import fotospeicher
 
     for foto in db.query(Baufoto).filter(Baufoto.fotosatz_id == fotosatz.id).all():
-        fotospeicher.loesche(foto.dateipfad)
+        fotospeicher.loesche(foto.dateipfad, db)
     db.query(Baufoto).filter(Baufoto.fotosatz_id == fotosatz.id).delete(
         synchronize_session=False
     )

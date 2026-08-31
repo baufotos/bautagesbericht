@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     func,
@@ -397,6 +398,32 @@ class Fotosatz(Base):
         back_populates="fotosatz",
         order_by="Baufoto.reihenfolge",
     )
+
+
+class Fotoblob(Base):
+    """Die Bilddaten eines Baufotos, wenn sie in der Datenbank liegen.
+
+    Eigene Tabelle und nicht eine Spalte an ``Baufoto``: Die Fotoliste wird
+    bei jedem Aufbau der Galerie abgefragt, und ein ``SELECT *`` würde sonst
+    jedes Mal mehrere Megabyte mitschleppen. So bleibt ``baufotos`` schmal und
+    die Bilddaten werden nur geholt, wenn wirklich jemand ein Bild ansieht.
+
+    Der Schlüssel entspricht dem Pfad, den die Dateiablage benutzt hätte
+    ("baufotos/12/260819_Rohbau_1.jpg") — dadurch sehen die Verweise in
+    ``Baufoto.dateipfad`` in beiden Fällen gleich aus.
+
+    Wann hier etwas liegt und wann es wieder verschwindet, steht in
+    app.services.fotospeicher.
+    """
+
+    __tablename__ = "fotoblobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    schluessel = Column(String, nullable=False, unique=True, index=True)
+    # LargeBinary wird auf Postgres zu BYTEA, auf SQLite zu BLOB.
+    daten = Column(LargeBinary, nullable=False)
+    groesse_bytes = Column(Integer, nullable=False, default=0)
+    erstellt_am = Column(DateTime, default=func.now())
 
 
 class Baufoto(Base):

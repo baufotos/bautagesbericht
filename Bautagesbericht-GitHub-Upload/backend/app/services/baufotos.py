@@ -36,7 +36,7 @@ from datetime import date
 from pathlib import Path
 
 from PIL import Image, ImageOps
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.config import settings
 from app.models import Baufoto, Fotosatz, Projekt
@@ -162,12 +162,16 @@ def baue_zip(fotosatz: Fotosatz) -> bytes:
     """
     puffer = io.BytesIO()
     fehlend: list[str] = []
+    # Liegen die Fotos in der Datenbank, braucht die Speicherschicht eine
+    # Sitzung. Die des Fotosatzes ist die richtige — sie ist offen und sieht
+    # denselben Stand.
+    sitzung = object_session(fotosatz)
 
     with zipfile.ZipFile(puffer, "w", compression=zipfile.ZIP_DEFLATED) as archiv:
         for foto in sorted(fotosatz.fotos, key=lambda f: (f.reihenfolge, f.id)):
             # Ueber die Speicherschicht, damit es gleich funktioniert, ob das
             # Foto auf der Platte oder im Objektspeicher liegt.
-            daten = fotospeicher.lies(foto.dateipfad)
+            daten = fotospeicher.lies(foto.dateipfad, sitzung)
             if daten is None:
                 fehlend.append(foto.dateiname)
                 continue

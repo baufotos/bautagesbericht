@@ -5,7 +5,8 @@ Was am Ende passiert, in einem Satz:
 > Auf der Baustelle Fotos hochladen — und sie liegen kurz darauf fertig
 > benannt und verkleinert in `L:\Bauleitung-Hamburg\<Projekt>\01 FOTOS\`.
 
-Dieses Dokument beschreibt, was dafür **einmalig** einzurichten ist.
+Dieses Dokument beschreibt, was dafür **einmalig** einzurichten ist. Es kostet
+nichts und braucht kein zusätzliches Konto.
 
 ---
 
@@ -16,19 +17,19 @@ Handy auf der Baustelle
         │  bautagesbericht.onrender.com
         │  Projekt · Tätigkeit · Datum · Fotos
         ▼
-Server (Render)                        ← liegt im Internet
+Server (Render)
         │  benennt um: 260819_Baustellenbegehung_1.jpg
         │  verkleinert: längste Kante 1600 px, Qualität 70
-        │  legt ab in Cloudflare R2     ← überlebt jeden Neustart
+        │  legt in der Datenbank ab       ← übersteht jeden Neustart
         ▼
-Abholskript auf einem Bürorechner      ← alle 15 Minuten
+Abholskript auf einem Bürorechner        ← alle 15 Minuten
         │
         ▼
 L:\Bauleitung-Hamburg\K30159 Kita Nord\01 FOTOS\260819_Baustellenbegehung\
 ```
 
 **Warum das Skript im Büro und nicht auf dem Server?** `L:` ist ein Laufwerk
-im Bürolan. Ein Server im Internet kommt dort nicht hinein — daran lässt sich
+im Büronetz. Ein Server im Internet kommt dort nicht hinein — daran lässt sich
 nichts programmieren. Also holt das Büro ab.
 
 Benennung und Bildgröße sind dieselben wie im bisherigen
@@ -36,45 +37,45 @@ Baustellenfotos-Werkzeug. Es ändert sich nur, woher die Fotos kommen.
 
 ---
 
-## Schritt 1 — Fotospeicher einrichten (einmal, 10 Minuten)
+## Wo die Fotos zwischenzeitlich liegen
 
-**Das ist der wichtigste Schritt.** Ohne ihn gehen hochgeladene Fotos
-verloren, sobald der Server neu startet: Render legt den Container nach 15
-Minuten ohne Zugriff schlafen, und beim Aufwachen ist seine Festplatte leer.
-Fotos, die vormittags hochgeladen und erst abends abgeholt werden, wären dann
-weg — während in der Datenbank noch ihre Verweise stehen.
+Sie liegen in **derselben Datenbank**, in der ohnehin Projekte, Berichte und
+Mängel stehen. Nichts einzurichten, nichts zu bezahlen, kein weiteres Konto.
 
-Cloudflare R2 löst das. Bis 10 GB kostenlos; das reicht für Jahre
-Baustellenfotos, zumal jeder Satz nach dem Abholen gelöscht werden kann.
+Das musste so gelöst werden, weil das Dateisystem des Render-Containers
+flüchtig ist: Der Dienst schläft nach 15 Minuten ohne Zugriff ein und startet
+beim Aufwachen — wie bei jedem Deploy — leer. Vormittags hochgeladene Fotos
+wären am Abend verschwunden, während in der Datenbank noch ihre Verweise
+stehen.
 
-1. Auf **dash.cloudflare.com** anmelden (kostenloses Konto genügt).
-2. Links **R2 Object Storage** → **Create bucket**.
-   Name z. B. `hpp-baustellenfotos`, Region `Automatic`.
-3. Im Bucket oben rechts die **S3 API**-Adresse notieren. Sie sieht so aus:
-   `https://<lange-kontonummer>.r2.cloudflarestorage.com`
-4. Zurück auf der R2-Übersicht: **Manage API Tokens** → **Create API Token**
-   → Recht **Object Read & Write**, beschränkt auf diesen einen Bucket.
-   Danach werden **Access Key ID** und **Secret Access Key** angezeigt —
-   das Secret nur dieses eine Mal. Kopieren.
-5. Auf **dashboard.render.com** den Dienst `bautagesbericht` öffnen →
-   **Environment** → vier Werte anlegen:
+Der übliche Weg dafür wäre ein Objektspeicher wie Cloudflare R2. Der verlangt
+aber schon fürs kostenlose Kontingent eine Kreditkarte — deshalb hier nicht.
+Nötig ist er auch nicht, denn:
 
-   | Schlüssel         | Wert                                            |
-   |-------------------|-------------------------------------------------|
-   | `BTB_R2_ENDPOINT` | `https://<kontonummer>.r2.cloudflarestorage.com` |
-   | `BTB_R2_BUCKET`   | `hpp-baustellenfotos`                            |
-   | `BTB_R2_KEY_ID`   | die Access Key ID                                |
-   | `BTB_R2_SECRET`   | das Secret                                       |
+> **Die Datenbank ist ein Durchgang, kein Archiv.** Ein Fotosatz liegt dort
+> von der Baustelle bis zum Bürorechner — im Regelfall eine Viertelstunde.
+> Zwei Tage nach der Abholung werden die Bilddaten wieder freigegeben; der
+> Eintrag mit Name, Größe und Zielordner bleibt. Das Archiv ist `L:`.
 
-6. Speichern. Render startet den Dienst neu — danach überstehen Fotos jeden
-   Neustart.
+Die zwei Tage Schonfrist gibt es, damit die Galerie in der App direkt nach dem
+Termin noch Vorschaubilder zeigt. Wird es trotzdem einmal eng, leert der
+Server zusätzlich die ältesten **bereits abgeholten** Sätze.
 
-> Ohne diese vier Werte läuft alles Übrige trotzdem. Nur muss dann jeder
-> Fotosatz abgeholt werden, bevor der Server einschläft.
+Was noch nicht abgeholt ist, wird unter keinen Umständen angetastet — auch
+nicht, wenn der Platz knapp wird. Lieber eine volle Datenbank als ein
+verlorener Fotosatz.
+
+Nachsehen, ob das greift:
+
+```bash
+curl https://bautagesbericht.onrender.com/api/health/speicher
+```
+
+Dort muss `"dauerhaft": true` und `"art": "db"` stehen.
 
 ---
 
-## Schritt 2 — Zielordner der Projekte pflegen
+## Schritt 1 — Zielordner der Projekte pflegen
 
 In der App: **Stammdaten → Projekte**. Auf jeder Projektkarte steht der
 Fotoordner; ein Klick darauf macht ihn änderbar.
@@ -93,7 +94,7 @@ Bleibt das Feld leer, bildet das Abholskript den Pfad selbst:
 
 ---
 
-## Schritt 3 — Abholskript auf den Bürorechnern
+## Schritt 2 — Abholskript auf den Bürorechnern
 
 Im App-Ordner liegt der Unterordner **`Foto-Abholung`**.
 
@@ -153,6 +154,15 @@ Rechner.
 | `Fotos liegen im Projektordner, nur die Quittung fehlt` | Die Fotos sind da. Der Satz wird bewusst nicht erneut freigegeben, damit er nicht doppelt abgelegt wird — beim nächsten Lauf nachsehen. |
 
 ---
+
+## Wenn die Fotomenge einmal wächst (nicht nötig, nur möglich)
+
+Sollte irgendwann so viel gleichzeitig unterwegs sein, dass die Datenbank zu
+klein wird, lässt sich ein S3-kompatibler Objektspeicher davorschalten —
+Cloudflare R2, Backblaze B2 oder ein eigener MinIO-Server. Dafür auf Render
+`BTB_FOTOSPEICHER=objekt` und die vier Werte `BTB_R2_ENDPOINT`,
+`BTB_R2_BUCKET`, `BTB_R2_KEY_ID`, `BTB_R2_SECRET` setzen. Am Ablauf ändert
+sich nichts, das Abholskript merkt davon nichts.
 
 ## Optional: Abholung mit Losungswort
 
