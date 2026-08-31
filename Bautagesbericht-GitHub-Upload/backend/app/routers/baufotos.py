@@ -17,7 +17,15 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -26,6 +34,9 @@ from app.config import settings
 from app.database import get_db
 from app.models import Baufoto, Fotosatz, Projekt
 from app.schemas import (
+    AbholAnspruch,
+    AbholQuittung,
+    AbholStatus,
     BaufotoResponse,
     FotosatzCreate,
     FotosatzListItem,
@@ -36,9 +47,12 @@ from app.schemas import (
     FotosatzResponse,
     FotosatzUpdate,
     FotosatzVersand,
+    OffenerFotosatz,
 )
+from app.services import abholung
 from app.services import baufotos as dienst
 from app.services import bilder
+from app.services import fotospeicher
 from app.services import fotoversand as versand
 from app.utils.file_storage import get_absolute_path, save_upload_in
 
@@ -181,11 +195,130 @@ def mail_faehigkeiten():
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Abholung durch die Bürorechner
+#
+# Diese drei Routen bedienen kein Menschen-Frontend, sondern das Skript
+# ``desktop/abholung/Baufotos-Abholen.ps1`` in der Windows-Aufgabenplanung.
+# Der Ablauf und die Gründe dafür stehen in ``app.services.abholung``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def pruefe_abholrecht(x_abhol_token: str = Header("")) -> None:
+    """Schützt die Abholrouten, wenn BTB_ABHOL_TOKEN gesetzt ist.
+
+    Ohne gesetzten Token bleibt alles offen — dann verhält sich die Abholung
+    wie der Rest der App. Mit Token braucht jeder Bürorechner denselben Wert
+    in seiner Konfiguration.
+    """
+    erwartet = (settings.abhol_token or "").strip()
+    if erwartet and (x_abhol_token or "").strip() != erwartet:
+        raise HTTPException(401, "Abhol-Token fehlt oder stimmt nicht")
+
+
+@router.get("/abholung/offen", response_model=list[OffenerFotosatz],
+            dependencies=[Depends(pruefe_abholrecht)])
+def abholung_offen(db: Session = Depends(get_db)):
+    """Was wartet noch darauf, ins Netzlaufwerk gelegt zu werden?
+
+    Enthält alles, was das Skript für den Zielordner braucht — es muss keine
+    weitere Route aufrufen, um Projektname oder Pfad nachzuschlagen.
+    """
+    offen: list[OffenerFotosatz] = []
+    for satz in abholung.offene_saetze(db):
+        projekt_name = satz.projekt.name if satz.projekt else ""
+        fotos = list(satz.fotos)
+        offen.append(
+            OffenerFotosatz(
+                id=satz.id,
+                projekt_name=projekt_name,
+                kategorie=satz.kategorie,
+                datum=satz.datum,
+                notiz=satz.notiz or "",
+                anzahl_fotos=len(fotos),
+                groesse_bytes=sum(f.groesse_bytes or 0 for f in fotos),
+                ordnername=abholung.ordnername(satz),
+                zip_dateiname=_zip_name(satz),
+                zielpfad=abholung.zielpfad_von(satz.projekt),
+                erstellt_am=satz.erstellt_am,
+            )
+        )
+    return offen
+
+
+@router.post("/{fotosatz_id}/abholung/beanspruchen", response_model=AbholStatus,
+             dependencies=[Depends(pruefe_abholrecht)])
+def abholung_beanspruchen(fotosatz_id: int, anspruch: AbholAnspruch,
+                          db: Session = Depends(get_db)):
+    """Reserviert den Satz für diesen Rechner. 409, wenn ein anderer schneller war."""
+    erfolg, nachricht = abholung.beanspruche(db, fotosatz_id, anspruch.rechner)
+    satz = db.get(Fotosatz, fotosatz_id)
+    if satz is None:
+        raise HTTPException(404, "Fotosatz nicht gefunden")
+    if not erfolg:
+        # 409 und nicht 403: Der Aufrufer darf grundsätzlich, nur eben jetzt
+        # nicht. Das Skript wertet genau das als "überspringen, kein Fehler".
+        raise HTTPException(409, nachricht)
+    return AbholStatus(
+        id=satz.id,
+        erfolg=True,
+        nachricht=nachricht,
+        abgeholt_am=satz.abgeholt_am,
+        abgeholt_von=satz.abgeholt_von or "",
+        abgeholt_ziel=satz.abgeholt_ziel or "",
+    )
+
+
+@router.post("/{fotosatz_id}/abholung/quittieren", response_model=AbholStatus,
+             dependencies=[Depends(pruefe_abholrecht)])
+def abholung_quittieren(fotosatz_id: int, quittung: AbholQuittung,
+                        db: Session = Depends(get_db)):
+    """Meldet: Der Satz liegt im Projektordner. Erst damit gilt er als erledigt."""
+    satz = _hole(db, fotosatz_id)
+    if not (quittung.ziel or "").strip():
+        raise HTTPException(400, "Ohne Zielpfad keine Quittung")
+    abholung.quittiere(db, satz, quittung.rechner, quittung.ziel)
+    return AbholStatus(
+        id=satz.id,
+        erfolg=True,
+        nachricht="Abholung eingetragen.",
+        abgeholt_am=satz.abgeholt_am,
+        abgeholt_von=satz.abgeholt_von or "",
+        abgeholt_ziel=satz.abgeholt_ziel or "",
+    )
+
+
+@router.post("/{fotosatz_id}/abholung/freigeben", response_model=AbholStatus,
+             dependencies=[Depends(pruefe_abholrecht)])
+def abholung_freigeben(fotosatz_id: int, db: Session = Depends(get_db)):
+    """Gibt einen Satz nach einem Fehlschlag sofort wieder frei."""
+    satz = _hole(db, fotosatz_id)
+    if (satz.abgeholt_ziel or "").strip():
+        raise HTTPException(409, "Dieser Satz ist bereits abgeholt und quittiert")
+    abholung.gib_frei(db, satz)
+    return AbholStatus(id=satz.id, erfolg=True,
+                       nachricht="Wieder zur Abholung freigegeben.")
+
+
 @router.get("/fotos/{foto_id}/bild")
 def foto_bild(foto_id: int, thumb: bool = False, db: Session = Depends(get_db)):
     foto = db.get(Baufoto, foto_id)
     if not foto:
         raise HTTPException(404, "Foto nicht gefunden")
+
+    # Liegt das Foto im Objektspeicher, gibt es keinen Pfad auf der Platte —
+    # dann werden die Bytes direkt ausgeliefert.
+    if fotospeicher.ist_objekt(foto.dateipfad):
+        daten = fotospeicher.lies(foto.dateipfad)
+        if daten is None:
+            raise HTTPException(404, "Bilddatei nicht gefunden")
+        if thumb:
+            daten = bilder.thumbnail_bytes(daten) or daten
+        return Response(
+            content=daten,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
 
     pfad = get_absolute_path(foto.dateipfad)
     if not pfad.is_file():
@@ -215,7 +348,7 @@ def delete_foto(foto_id: int, db: Session = Depends(get_db)):
     foto = db.get(Baufoto, foto_id)
     if not foto:
         raise HTTPException(404, "Foto nicht gefunden")
-    bilder.loesche_mit_thumbnail(get_absolute_path(foto.dateipfad))
+    fotospeicher.loesche(foto.dateipfad)
     db.delete(foto)
     db.commit()
 
@@ -327,9 +460,12 @@ async def upload_fotos(
             # bleiben — der Satz bleibt so als Ganzes sortierbar.
             name = f"{Path(name).stem}{Path(original).suffix.lower()}"
 
-        datei.filename = name
-        rel_pfad = await save_upload_in(
-            f"baufotos/{fotosatz.id}", datei, inhalt=inhalt
+        # Über die Speicherschicht: auf dem Bürorechner die Platte, auf einem
+        # Server mit flüchtigem Speicher der Objektspeicher. Ohne das wären
+        # Fotos nach dem nächsten Neustart des Dienstes weg, während in der
+        # Datenbank noch ihre Verweise stünden.
+        rel_pfad = await fotospeicher.schreibe(
+            f"baufotos/{fotosatz.id}", name, inhalt
         )
         foto = Baufoto(
             fotosatz_id=fotosatz.id,

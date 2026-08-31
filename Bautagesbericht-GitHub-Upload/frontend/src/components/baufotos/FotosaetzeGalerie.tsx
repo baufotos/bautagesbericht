@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileArchive,
+  FolderCheck,
   ImageOff,
   Images,
   Mail,
@@ -384,6 +385,22 @@ function FotosatzKarte({
                 In Teams gemeldet am {formatDatumIso(satz.zuletzt_gemeldet_am)}
               </span>
             )}
+          </div>
+        )}
+
+        {/* Abholvermerk: Liegt der Satz schon im Projektverzeichnis?
+            Beantwortet die Frage "muss ich die Fotos noch selbst ablegen?"
+            ohne dass jemand den Ordner auf L: aufmachen muss. */}
+        {satz.abgeholt_ziel && (
+          <div className="flex items-start gap-1.5 text-[11.5px] text-app-text-still">
+            <FolderCheck size={12} className="mt-0.5 shrink-0 text-app-ok" />
+            <span className="min-w-0">
+              Im Projektordner abgelegt
+              {satz.abgeholt_am && ` am ${formatDatumIso(satz.abgeholt_am.slice(0, 10))}`}
+              <span className="block break-all font-mono text-[10.5px] text-app-text-leise">
+                {satz.abgeholt_ziel}
+              </span>
+            </span>
           </div>
         )}
 

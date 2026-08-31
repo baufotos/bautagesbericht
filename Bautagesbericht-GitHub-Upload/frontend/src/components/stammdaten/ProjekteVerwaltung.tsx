@@ -9,9 +9,23 @@
  *
  * Die Adresse ist nicht Zierde: Aus ihr werden beim Anlegen die Koordinaten
  * bestimmt, mit denen der Bautagesbericht die Wetterdaten des Tages holt.
+ *
+ * Der Fotoordner ebenso wenig: Er sagt dem Abholskript im Büro, in welchen
+ * Ordner auf dem Netzlaufwerk die vom Handy hochgeladenen Baufotos gehören.
+ * Jedes Projekt liegt woanders, deshalb steht der Pfad hier am Projekt und
+ * nicht in einer Textdatei auf jedem einzelnen Rechner.
  */
 
-import { MapPin, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import {
+  Check,
+  FolderTree,
+  MapPin,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 
 import { api } from "@/lib/api";
@@ -38,14 +52,34 @@ export function ProjekteVerwaltung({
   const [name, setName] = useState("");
   const [adresse, setAdresse] = useState("");
   const [webhook, setWebhook] = useState("");
+  const [zielpfad, setZielpfad] = useState("");
   const [speichert, setSpeichert] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+  // Welche Karte gerade ihren Fotoordner bearbeitet. Der Pfad wird selten
+  // beim Anlegen schon feststehen, deshalb ist er auch nachträglich änderbar.
+  const [bearbeitet, setBearbeitet] = useState<number | null>(null);
+  const [pfadEntwurf, setPfadEntwurf] = useState("");
 
   function zuruecksetzen() {
     setName("");
     setAdresse("");
     setWebhook("");
+    setZielpfad("");
     setFormularOffen(false);
+  }
+
+  async function pfadSpeichern(projekt: Projekt) {
+    setSpeichert(true);
+    setFehler(null);
+    try {
+      await api.projekte.update(projekt.id, { foto_zielpfad: pfadEntwurf.trim() });
+      setBearbeitet(null);
+      onAendern();
+    } catch (err) {
+      setFehler(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
+    } finally {
+      setSpeichert(false);
+    }
   }
 
   async function anlegen() {
@@ -57,6 +91,7 @@ export function ProjekteVerwaltung({
         name: name.trim(),
         adresse: adresse.trim(),
         teams_webhook_url: webhook.trim(),
+        foto_zielpfad: zielpfad.trim(),
       });
       zuruecksetzen();
       onAendern();
@@ -136,6 +171,57 @@ export function ProjekteVerwaltung({
                   <MessageSquare size={13} /> Teams-Kanal hinterlegt
                 </div>
               )}
+
+              {bearbeitet === projekt.id ? (
+                <div className="flex flex-col gap-2 rounded-md bg-app-flaeche-still p-2">
+                  <label className="text-[11.5px] text-app-text-still">
+                    Fotoordner im Netzlaufwerk
+                  </label>
+                  <Input
+                    value={pfadEntwurf}
+                    onChange={(e) => setPfadEntwurf(e.target.value)}
+                    placeholder={`L:\\Bauleitung-Hamburg\\${projekt.name}\\01 FOTOS`}
+                    onKeyDown={(e) => e.key === "Enter" && pfadSpeichern(projekt)}
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      icon={Check}
+                      onClick={() => pfadSpeichern(projekt)}
+                      disabled={speichert}
+                    >
+                      Speichern
+                    </Button>
+                    <Button variante="still" icon={X} onClick={() => setBearbeitet(null)}>
+                      Abbrechen
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPfadEntwurf(projekt.foto_zielpfad || "");
+                    setBearbeitet(projekt.id);
+                  }}
+                  className="group flex cursor-pointer items-start gap-1.5 text-left text-[12px] text-app-text-still transition-colors hover:text-app-text"
+                  title="Fotoordner im Netzlaufwerk festlegen"
+                >
+                  <FolderTree size={13} className="mt-0.5 shrink-0" />
+                  <span className="min-w-0 flex-1 break-all font-mono text-[11px]">
+                    {projekt.foto_zielpfad || (
+                      <span className="font-sans text-app-text-leise">
+                        Fotoordner nicht festgelegt
+                      </span>
+                    )}
+                  </span>
+                  <Pencil
+                    size={12}
+                    className="mt-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70"
+                  />
+                </button>
+              )}
+
               <div className="flex justify-end border-t border-app-linie pt-2">
                 <button
                   type="button"
@@ -186,6 +272,16 @@ export function ProjekteVerwaltung({
                 value={webhook}
                 onChange={(e) => setWebhook(e.target.value)}
                 placeholder="optional"
+              />
+            </Field>
+            <Field
+              label="Fotoordner im Netzlaufwerk (optional)"
+              hinweis="Dorthin legt das Abholskript im Büro die vom Handy hochgeladenen Baufotos. Lässt sich später jederzeit auf der Projektkarte ändern."
+            >
+              <Input
+                value={zielpfad}
+                onChange={(e) => setZielpfad(e.target.value)}
+                placeholder={`L:\\Bauleitung-Hamburg\\${name || "Projektname"}\\01 FOTOS`}
               />
             </Field>
             <div className="flex gap-2">

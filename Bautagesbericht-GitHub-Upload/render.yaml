@@ -40,3 +40,25 @@ services:
       # eintragen.
       - key: BTB_TEAMS_WEBHOOK_URL
         sync: false
+      # ── Dauerhafter Fotospeicher (Cloudflare R2) ──
+      #
+      # Ohne diese vier Werte liegen hochgeladene Fotos im Container. Der
+      # schläft nach 15 Minuten ohne Zugriff ein und startet beim Aufwachen —
+      # wie bei jedem Deploy — leer. Die Fotos wären dann weg, während in der
+      # Datenbank noch ihre Verweise stehen. Für Baustellenfotos, die erst
+      # abends vom Bürorechner abgeholt werden, ist das nicht tragbar.
+      #
+      # Anlegen: Cloudflare-Konto -> R2 -> Bucket erstellen -> "Manage API
+      # Tokens" -> Token mit Lese-/Schreibrecht auf diesen Bucket.
+      - key: BTB_R2_ENDPOINT
+        sync: false
+      - key: BTB_R2_BUCKET
+        sync: false
+      - key: BTB_R2_KEY_ID
+        sync: false
+      - key: BTB_R2_SECRET
+        sync: false
+      # Optional: Losungswort für die Abholskripte der Bürorechner. Ist es
+      # gesetzt, muss derselbe Wert in deren einstellungen.txt stehen.
+      - key: BTB_ABHOL_TOKEN
+        sync: false

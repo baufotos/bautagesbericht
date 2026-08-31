@@ -170,10 +170,10 @@ def delete_maengel_for(db: Session, *, projekt_id: int) -> int:
 def delete_fotosatz_cascade(db: Session, fotosatz) -> None:
     """Entfernt einen Fotosatz samt Fotos, Vorschaubildern und Ordner."""
     from app.models import Baufoto
-    from app.services.bilder import loesche_mit_thumbnail
+    from app.services import fotospeicher
 
     for foto in db.query(Baufoto).filter(Baufoto.fotosatz_id == fotosatz.id).all():
-        loesche_mit_thumbnail(settings.upload_dir.parent / foto.dateipfad)
+        fotospeicher.loesche(foto.dateipfad)
     db.query(Baufoto).filter(Baufoto.fotosatz_id == fotosatz.id).delete(
         synchronize_session=False
     )

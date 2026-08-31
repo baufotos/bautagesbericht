@@ -1,0 +1,21 @@
+# Einstellungen fuer die Foto-Abholung
+# ====================================
+# Eine Zeile je Wert:  schluessel = wert
+# Zeilen mit # sind Kommentare.
+
+# Adresse der Website. Normalfall unveraendert lassen.
+server = https://bautagesbericht.onrender.com
+
+# Basisordner der Bauleitung. Wird nur gebraucht, wenn am Projekt in der App
+# kein Zielordner gepflegt ist - dann bildet das Skript den Pfad als
+#   <basisordner>\<Projektname>\<unterordner>
+basisordner = L:\Bauleitung-Hamburg
+unterordner = 01 FOTOS
+
+# Nur ausfuellen, wenn auf dem Server BTB_ABHOL_TOKEN gesetzt ist. Dann muss
+# hier derselbe Wert stehen wie dort.
+token =
+
+# Wohin das Protokoll geschrieben wird. Leer lassen = abholung.log neben
+# diesem Skript.
+# protokoll = C:\HPP-Baufotos\abholung.log

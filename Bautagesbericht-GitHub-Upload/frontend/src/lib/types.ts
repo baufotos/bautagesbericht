@@ -5,6 +5,12 @@ export interface Projekt {
   lat: number | null;
   lon: number | null;
   teams_webhook_url: string;
+  /**
+   * Zielordner der Baufotos im Netzlaufwerk, z. B.
+   * "L:\\Bauleitung-Hamburg\\K30159 Kita Nord\\01 FOTOS".
+   * Leer = das Abholskript im Büro bildet den Pfad nach seiner Standardregel.
+   */
+  foto_zielpfad: string;
   erstellt_am: string;
 }
 
@@ -318,6 +324,12 @@ export interface FotosatzListItem {
   mail_empfaenger: string;
   /** "smtp" = die App hat verschickt, "entwurf" = Outlook hat den Entwurf. */
   mail_weg: string;
+  /** Wann ein Bürorechner den Satz ins Projektverzeichnis gelegt hat. */
+  abgeholt_am: string | null;
+  /** Welcher Rechner das war — steht im Protokoll der Abholung. */
+  abgeholt_von: string;
+  /** Der vollständige Ordner, in dem die Fotos jetzt liegen. */
+  abgeholt_ziel: string;
 }
 
 export interface Fotosatz extends FotosatzListItem {

@@ -1,0 +1,15 @@
+﻿# Projekte, die auf DIESEM Rechner woanders liegen
+# ================================================
+# Normalerweise braucht diese Datei niemand: Der Zielordner steht in der App
+# beim Projekt und gilt damit fuer alle Kollegen.
+#
+# Hier eintragen, wenn ein Laufwerk auf diesem PC anders eingebunden ist
+# (z. B. M: statt L:) oder ein Projekt ausnahmsweise woanders abgelegt wird.
+# Was hier steht, hat Vorrang vor dem Pfad aus der App.
+#
+# Schreibweise:  Projektname aus der App = vollstaendiger Zielordner
+# Der Ordner "<JJMMTT>_<Taetigkeit>" wird darin angelegt.
+
+# Beispiele (Raute entfernen und anpassen):
+# K30159 Kita Nord = M:\Bauleitung-Hamburg\K30159 Kita Nord\01 FOTOS
+# 2451 Neubau Verwaltungsgebaeude Sued = L:\Sonderprojekte\2451\Fotos

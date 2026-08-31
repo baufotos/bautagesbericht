@@ -115,6 +115,32 @@ def thumbnail(original: Path) -> Path | None:
     return ziel
 
 
+def thumbnail_bytes(daten: bytes) -> bytes | None:
+    """Vorschaubild aus Bytes — für Fotos, die im Objektspeicher liegen.
+
+    Dort gibt es keinen Pfad, an dem sich eine Vorschau zwischenspeichern
+    ließe; sie wird bei jedem Abruf frisch berechnet. Das ist vertretbar, weil
+    die Galerie ohnehin nur die sichtbaren Kacheln lädt und der Browser das
+    Ergebnis einen Tag lang behält (Cache-Control im Router).
+
+    ``None``, wenn sich nichts erzeugen ließ — dann liefert der Aufrufer das
+    Bild in voller Größe aus.
+    """
+    try:
+        with Image.open(io.BytesIO(daten)) as bild:
+            bild = ImageOps.exif_transpose(bild)
+            bild = bild.convert("RGB")
+            bild.thumbnail(
+                (MAX_KANTE_THUMBNAIL, MAX_KANTE_THUMBNAIL), Image.Resampling.LANCZOS
+            )
+            puffer = io.BytesIO()
+            bild.save(puffer, format="JPEG",
+                      quality=JPEG_QUALITAET_THUMBNAIL, optimize=True)
+            return puffer.getvalue()
+    except Exception:
+        return None
+
+
 def loesche_mit_thumbnail(original: Path) -> None:
     """Entfernt Foto und zugehöriges Vorschaubild."""
     for pfad in (original, _thumbnail_pfad(original)):

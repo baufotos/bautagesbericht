@@ -8,6 +8,19 @@ class ProjektCreate(BaseModel):
     name: str
     adresse: str = ""
     teams_webhook_url: str = ""
+    #: Zielordner der Baufotos im Netzlaufwerk, z. B.
+    #: "L:\\Bauleitung-Hamburg\\K30159 Kita Nord\\01 FOTOS".
+    #: Leer = der abholende Rechner bildet den Pfad nach seiner Standardregel.
+    foto_zielpfad: str = ""
+
+
+class ProjektUpdate(BaseModel):
+    """Nachtraegliche Aenderung. Nicht gesetzte Felder bleiben, wie sie sind."""
+
+    name: str | None = None
+    adresse: str | None = None
+    teams_webhook_url: str | None = None
+    foto_zielpfad: str | None = None
 
 
 class ProjektResponse(BaseModel):
@@ -17,6 +30,7 @@ class ProjektResponse(BaseModel):
     lat: float | None
     lon: float | None
     teams_webhook_url: str = ""
+    foto_zielpfad: str = ""
     erstellt_am: datetime
 
     model_config = {"from_attributes": True}
@@ -631,6 +645,9 @@ class FotosatzListItem(BaseModel):
     mail_versendet_am: date | None = None
     mail_empfaenger: str = ""
     mail_weg: str = ""
+    abgeholt_am: datetime | None = None
+    abgeholt_von: str = ""
+    abgeholt_ziel: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -668,6 +685,64 @@ class FotosatzMailAnfrage(BaseModel):
             return [eintrag for eintrag in wert
                     if not isinstance(eintrag, str) or eintrag.strip()]
         return wert
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Abholung durch einen Buerorechner
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class OffenerFotosatz(BaseModel):
+    """Ein Fotosatz, der noch auf dem Weg ins Projektverzeichnis wartet.
+
+    Enthaelt alles, was das Abholskript braucht, um den Zielordner zu bilden:
+    Projektname (= Ordnername auf L:), Datum und Taetigkeit.
+    """
+
+    id: int
+    projekt_name: str
+    #: Taetigkeit, z. B. "Baustellenbegehung".
+    kategorie: str
+    datum: date
+    notiz: str = ""
+    anzahl_fotos: int = 0
+    groesse_bytes: int = 0
+    #: Name des Ordners, der im Projektverzeichnis angelegt werden soll:
+    #: "{JJMMTT}_{Taetigkeit}" — dieselbe Regel wie im bisherigen Skript.
+    ordnername: str = ""
+    zip_dateiname: str = ""
+    #: Zielordner aus den Projektstammdaten, z. B.
+    #: "L:\\Bauleitung-Hamburg\\K30159 Kita Nord\\01 FOTOS".
+    #: Leer = das Skript bildet den Pfad nach seiner eigenen Standardregel.
+    zielpfad: str = ""
+    erstellt_am: datetime | None = None
+
+
+class AbholAnspruch(BaseModel):
+    """Ein Buerorechner meldet: Ich nehme diesen Satz jetzt."""
+
+    rechner: str = ""
+
+
+class AbholStatus(BaseModel):
+    """Antwort auf Anspruch, Quittung und Freigabe."""
+
+    id: int
+    #: True = der Aufrufer darf/durfte weitermachen.
+    erfolg: bool = True
+    nachricht: str = ""
+    abgeholt_am: datetime | None = None
+    abgeholt_von: str = ""
+    abgeholt_ziel: str = ""
+
+
+class AbholQuittung(BaseModel):
+    """Rueckmeldung des Bueros: Satz liegt im Projektverzeichnis."""
+
+    #: Rechnername, damit im Protokoll steht, wer abgeholt hat.
+    rechner: str = ""
+    #: Vollstaendiger Zielpfad — fuer Rueckfragen ("wo liegt der Satz?").
+    ziel: str = ""
 
 
 class FotosatzMailFaehigkeiten(BaseModel):

@@ -1,0 +1,91 @@
+FOTO-ABHOLUNG
+=============
+
+Was das hier macht
+------------------
+Auf der Baustelle:
+
+    Handy -> bautagesbericht.onrender.com -> Projekt, Taetigkeit, Datum
+    eingeben -> Fotos hochladen -> fertig.
+
+Der Rest passiert von allein. Dieses Skript laeuft im Hintergrund auf dem
+Buerorechner, holt die hochgeladenen Fotos und legt sie fertig benannt und
+verkleinert im Projektverzeichnis ab:
+
+    L:\Bauleitung-Hamburg\<Projekt>\01 FOTOS\<JJMMTT>_<Taetigkeit>\
+        260819_Baustellenbegehung_1.jpg
+        260819_Baustellenbegehung_2.jpg
+        ...
+
+Benennung und Bildgroesse sind dieselben wie beim bisherigen
+Baustellenfotos-Werkzeug. Es aendert sich nur, woher die Fotos kommen.
+
+
+Warum das ueberhaupt noetig ist
+-------------------------------
+Die Website laeuft im Internet. L: ist ein Laufwerk im Bueronetz. Ein Server
+im Internet kann dort nicht hineinschreiben - also holt das Buero ab.
+
+
+Einrichten (einmal, dauert zwei Minuten)
+----------------------------------------
+1. Diesen Ordner nach C:\HPP-Baufotos kopieren.
+
+2. einstellungen.txt oeffnen und pruefen:
+      server      = Adresse der Website (normalerweise unveraendert lassen)
+      basisordner = L:\Bauleitung-Hamburg
+
+3. Rechtsklick auf Aufgabe-Einrichten.ps1 -> "Mit PowerShell ausfuehren".
+   Danach laeuft die Abholung alle 15 Minuten und zusaetzlich bei jeder
+   Anmeldung.
+
+Fertig.
+
+
+Wohin die Fotos gehen
+---------------------
+Der Zielordner steht IN DER APP beim Projekt (Stammdaten -> Projekte ->
+"Fotoordner im Netzlaufwerk"). Damit gilt er fuer alle Kollegen, und niemand
+muss auf fuenf Rechnern Textdateien pflegen.
+
+Ist beim Projekt nichts eingetragen, bildet das Skript den Pfad selbst:
+
+    <basisordner>\<Projektname>\01 FOTOS
+
+Nur wenn ein Projekt auf DIESEM Rechner woanders liegt (z. B. M: statt L:),
+gehoert ein Eintrag in Projekt-Ausnahmen.txt. Der hat Vorrang.
+
+
+Jeder im Team darf das Skript haben
+-----------------------------------
+Das ist sogar erwuenscht: So kommen die Fotos auch dann an, wenn ein
+einzelner Rechner aus ist. Der Server vergibt jeden Fotosatz nur einmal -
+mehrfaches Ablegen ist ausgeschlossen.
+
+
+Nachsehen, ob es laeuft
+-----------------------
+* abholung.log in diesem Ordner - dort steht jeder Lauf.
+* In der App auf der Fotosatz-Karte: "Im Projektordner abgelegt" mit dem
+  vollstaendigen Pfad.
+
+Einmal von Hand ausprobieren, ohne dass etwas geschrieben wird:
+
+    Rechtsklick auf Baufotos-Abholen.ps1 -> "Mit PowerShell ausfuehren"
+    (oder in PowerShell:  .\Baufotos-Abholen.ps1 -Testlauf)
+
+
+Wenn etwas nicht klappt
+-----------------------
+"Laufwerk L:\ nicht erreichbar"
+    Netzlaufwerk ist nicht verbunden. Einmal im Explorer oeffnen, dann laeuft
+    der naechste Durchgang wieder.
+
+"Server nicht erreichbar"
+    Die Website schlaeft nach 15 Minuten ohne Zugriff ein und braucht bis zu
+    einer Minute zum Aufwachen. Das Skript versucht es von selbst ein zweites
+    Mal. Steht es mehrmals hintereinander im Protokoll, stimmt etwas anderes
+    nicht.
+
+"Uebernimmt gerade ein anderer Rechner"
+    Kein Fehler. Ein Kollege war schneller - der Satz ist trotzdem versorgt.

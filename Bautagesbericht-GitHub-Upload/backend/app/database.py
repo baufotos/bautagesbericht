@@ -78,6 +78,8 @@ NACHTRAEGLICHE_SPALTEN: dict[str, dict[str, str]] = {
         # Mängelmanagement: Teams-Kanal des Projekts als Fallback, wenn am
         # Gewerk kein eigener Kanal hinterlegt ist.
         "teams_webhook_url": "VARCHAR NOT NULL DEFAULT ''",
+        # Zielordner der Baufotos im Netzlaufwerk (siehe Kommentar am Modell).
+        "foto_zielpfad": "VARCHAR NOT NULL DEFAULT ''",
     },
     "gewerke": {
         # Postanschrift der Firma fuer den Adressblock der Maengelanzeige.
@@ -93,6 +95,10 @@ NACHTRAEGLICHE_SPALTEN: dict[str, dict[str, str]] = {
         "mail_versendet_am": "DATE",
         "mail_empfaenger": "TEXT NOT NULL DEFAULT ''",
         "mail_weg": "VARCHAR NOT NULL DEFAULT ''",
+        # Abholung durch einen Buerorechner (siehe models.Fotosatz).
+        "abgeholt_am": "TIMESTAMP",
+        "abgeholt_von": "VARCHAR NOT NULL DEFAULT ''",
+        "abgeholt_ziel": "TEXT NOT NULL DEFAULT ''",
     },
 }
 

@@ -30,6 +30,12 @@ class Projekt(Base):
     # Fallback, wenn am Gewerk kein eigener Kanal hinterlegt ist
     # (siehe app.services.teams_notifier).
     teams_webhook_url = Column(String, nullable=False, default="")
+    # Wohin die Baufotos dieses Projekts im Netzlaufwerk gehoeren, z. B.
+    # "L:\\Bauleitung-Hamburg\\K30159 Kita Nord\\01 FOTOS". Leer = die
+    # Standardregel des Buerorechners greift (siehe abholung.ps1). Der Pfad
+    # steht hier und nicht auf den einzelnen PCs, damit ihn jeder abholende
+    # Rechner kennt, ohne dass jemand fuenf Textdateien pflegt.
+    foto_zielpfad = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
 
     einreichungen = relationship("Einreichung", back_populates="projekt")
@@ -371,6 +377,19 @@ class Fotosatz(Base):
     mail_empfaenger = Column(Text, nullable=False, default="")
     mail_weg = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
+
+    # ── Abholung durch einen Bürorechner ──
+    #
+    # Der Weg auf das Netzlaufwerk L: kann nur von einem Rechner im Büronetz
+    # gegangen werden; ein Server im Internet kommt dort nicht hinein. Deshalb
+    # holt ein Skript in der Aufgabenplanung die fertigen Sätze ab. Diese drei
+    # Felder verhindern, dass zwei Rechner denselben Satz abholen und er
+    # doppelt im Projektordner landet.
+    abgeholt_am = Column(DateTime, nullable=True)
+    #: Rechnername, der abgeholt hat — steht auch im Protokoll.
+    abgeholt_von = Column(String, nullable=False, default="")
+    #: Wohin der Satz gelegt wurde. Für Rückfragen im Büro Gold wert.
+    abgeholt_ziel = Column(Text, nullable=False, default="")
 
     projekt = relationship("Projekt", back_populates="fotosaetze")
     fotos = relationship(

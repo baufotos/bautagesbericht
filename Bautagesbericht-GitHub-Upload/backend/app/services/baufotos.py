@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Baufoto, Fotosatz, Projekt
-from app.services import bildformate
+from app.services import bildformate, fotospeicher
 
 # HEIC/HEIF bei Pillow anmelden, bevor das erste Foto geöffnet wird. Ohne das
 # kommen iPhone-Fotos unverarbeitet im Projektordner an (siehe bildformate).
@@ -165,11 +165,13 @@ def baue_zip(fotosatz: Fotosatz) -> bytes:
 
     with zipfile.ZipFile(puffer, "w", compression=zipfile.ZIP_DEFLATED) as archiv:
         for foto in sorted(fotosatz.fotos, key=lambda f: (f.reihenfolge, f.id)):
-            pfad = settings.upload_dir.parent / foto.dateipfad
-            if not pfad.is_file():
+            # Ueber die Speicherschicht, damit es gleich funktioniert, ob das
+            # Foto auf der Platte oder im Objektspeicher liegt.
+            daten = fotospeicher.lies(foto.dateipfad)
+            if daten is None:
                 fehlend.append(foto.dateiname)
                 continue
-            archiv.write(pfad, arcname=foto.dateiname)
+            archiv.writestr(foto.dateiname, daten)
 
         if fehlend:
             archiv.writestr(

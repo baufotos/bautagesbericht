@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Projekt
-from app.schemas import ProjektCreate, ProjektResponse
+from app.schemas import ProjektCreate, ProjektResponse, ProjektUpdate
 from app.services.cleanup import (
     count_einreichungen_for,
     count_fotosaetze_for,
@@ -33,8 +33,40 @@ async def create_projekt(data: ProjektCreate, db: Session = Depends(get_db)):
         lat=lat,
         lon=lon,
         teams_webhook_url=data.teams_webhook_url.strip(),
+        foto_zielpfad=data.foto_zielpfad.strip(),
     )
     db.add(projekt)
+    db.commit()
+    db.refresh(projekt)
+    return projekt
+
+
+@router.patch("/{projekt_id}", response_model=ProjektResponse)
+async def update_projekt(
+    projekt_id: int, data: ProjektUpdate, db: Session = Depends(get_db)
+):
+    """Aendert Stammdaten eines Projekts.
+
+    Vor allem fuer den Fotozielpfad gedacht: Jedes Projekt liegt woanders im
+    Netzlaufwerk, und der Pfad wird selten beim Anlegen schon feststehen.
+    """
+    projekt = db.get(Projekt, projekt_id)
+    if not projekt:
+        raise HTTPException(404, "Projekt nicht gefunden")
+
+    if data.name is not None and data.name.strip():
+        projekt.name = data.name.strip()
+    if data.teams_webhook_url is not None:
+        projekt.teams_webhook_url = data.teams_webhook_url.strip()
+    if data.foto_zielpfad is not None:
+        projekt.foto_zielpfad = data.foto_zielpfad.strip()
+    if data.adresse is not None and data.adresse.strip() != (projekt.adresse or ""):
+        # Adresse geaendert: Koordinaten neu bestimmen, sonst zeigt die
+        # Wetterabfrage des Bautagesberichts auf den alten Ort.
+        projekt.adresse = data.adresse.strip()
+        lat, lon = await geocode_address(projekt.adresse)
+        projekt.lat, projekt.lon = lat, lon
+
     db.commit()
     db.refresh(projekt)
     return projekt

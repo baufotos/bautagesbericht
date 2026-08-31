@@ -43,6 +43,41 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     nominatim_user_agent: str = "bautagesbericht-hpp/1.0"
 
+    # ── Dauerhafter Fotospeicher (Cloudflare R2 oder anderer S3-Dienst) ──
+    #
+    # Warum das nötig ist: Auf Render liegt das Dateisystem im Container. Der
+    # Dienst schläft nach 15 Minuten ohne Zugriff ein, und beim Aufwachen —
+    # ebenso bei jedem Deploy — startet der Container leer. Hochgeladene Fotos
+    # wären dann verschwunden, während in der Datenbank noch ihre Verweise
+    # stehen. Für Baustellendokumentation ist das nicht tragbar.
+    #
+    # Sind diese vier Werte gesetzt, wandern Fotos stattdessen in einen
+    # Objektspeicher und überstehen jeden Neustart. Bleiben sie leer, arbeitet
+    # die App wie bisher mit dem Dateisystem — das ist auf dem Bürorechner
+    # genau richtig, denn dort ist die Platte dauerhaft.
+    r2_endpoint: str = ""      # z. B. https://<konto-id>.r2.cloudflarestorage.com
+    r2_bucket: str = ""        # Name des Buckets, z. B. baustellenfotos
+    r2_key_id: str = ""        # Access Key ID
+    r2_secret: str = ""        # Secret Access Key
+
+    # ── Abholung durch die Bürorechner ──
+    #
+    # Die Abholskripte auf den Büro-PCs fragen den Server, welche Fotosätze
+    # noch nicht im Netzlaufwerk liegen. Ist hier ein Wort gesetzt, muss es im
+    # Kopf ``X-Abhol-Token`` mitgeschickt werden — sonst antwortet der Server
+    # mit 401. Leer = offen wie der Rest der App.
+    abhol_token: str = ""
+
+    # Wie lange ein angefangener Abholvorgang gilt. Bricht ein Büro-PC mitten
+    # im Entpacken ab (Neustart, Netzlaufwerk weg), taucht der Satz danach
+    # wieder in der Liste auf, damit ihn ein anderer Rechner holen kann.
+    abhol_anspruch_minuten: int = 30
+
+    # Ruhezeit nach dem letzten Foto, bevor ein Satz abgeholt werden darf.
+    # Ohne sie würde das Skript einen Satz mitnehmen, während auf der
+    # Baustelle noch Fotos hochgeladen werden — die späteren fehlten dann.
+    abhol_wartezeit_minuten: int = 3
+
     # Benachrichtigung per Microsoft-Teams-Kanal-Webhook (siehe
     # app.services.teams_notifier) — der einzige automatische Zustellweg.
     # Zusätzlich gibt es die Übersichtsseite in der App, in der jeder selbst

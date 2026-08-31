@@ -24,6 +24,11 @@ dependencies = [
     "pypdfium2>=4.18",
     "docxtpl>=0.18",
     "anthropic>=0.40",
+    # Dauerhafter Fotospeicher auf Cloudflare R2 (S3-kompatibel). Nur nötig,
+    # wenn die vier BTB_R2_*-Werte gesetzt sind — auf dem Bürorechner läuft
+    # die App ohne, dort ist die Festplatte selbst dauerhaft
+    # (app.services.fotospeicher).
+    "boto3>=1.34",
 ]
 
 [tool.hatch.build.targets.wheel]

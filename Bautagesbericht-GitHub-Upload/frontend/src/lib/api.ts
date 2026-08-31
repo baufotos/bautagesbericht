@@ -171,8 +171,21 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 export const api = {
   projekte: {
     list: () => fetchAPI<Projekt[]>("/projekte"),
-    create: (data: { name: string; adresse: string; teams_webhook_url?: string }) =>
-      fetchAPI<Projekt>("/projekte", json("POST", data)),
+    create: (data: {
+      name: string;
+      adresse: string;
+      teams_webhook_url?: string;
+      foto_zielpfad?: string;
+    }) => fetchAPI<Projekt>("/projekte", json("POST", data)),
+    update: (
+      id: number,
+      data: {
+        name?: string;
+        adresse?: string;
+        teams_webhook_url?: string;
+        foto_zielpfad?: string;
+      }
+    ) => fetchAPI<Projekt>(`/projekte/${id}`, json("PATCH", data)),
     delete: (id: number, force = false) =>
       fetchAPI<void>(`/projekte/${id}${force ? "?force=true" : ""}`, {
         method: "DELETE",
