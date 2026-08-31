@@ -81,3 +81,153 @@ async def send_teams_notification(
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(url, json=payload)
         response.raise_for_status()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mängelmanagement
+#
+# Gleicher Weg wie beim Bautagesbericht, nur ein anderer Anlass: ein neu
+# erfasster Mangel oder eine Änderung an Status/Frist. Die Webhook-URL sucht
+# app.services.mangel_versand in dieser Reihenfolge: Gewerk -> Projekt ->
+# globaler BTB_TEAMS_WEBHOOK_URL. Ist keine gesetzt, passiert nichts.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Farbe der Teams-Karte je Anlass (Kopfleiste der MessageCard).
+MANGEL_FARBEN = {
+    "neu": "B45309",
+    "status": "1F3A5C",
+    "frist": "B91C1C",
+    "versand": "1F3A5C",
+}
+
+
+def _build_mangel_url(mangel_id: int) -> str:
+    """Direktlink in die App auf genau diesen Mangel.
+
+    Die Oberfläche liest ``?tab=maengel&mangel=<id>`` beim Laden aus und
+    öffnet die Detailansicht — aus Teams heraus ist man damit einen Klick vom
+    Mangel entfernt.
+    """
+    base = (settings.public_base_url or "").rstrip("/")
+    return f"{base}/?tab=maengel&mangel={mangel_id}"
+
+
+async def send_mangel_notification(
+    mangel_id: int,
+    nummer: str,
+    kurzbezeichnung: str,
+    projekt_name: str,
+    firma: str = "",
+    status: str = "",
+    frist: date | None = None,
+    anlass: str = "neu",
+    zusatz: str = "",
+    webhook_url: str = "",
+) -> bool:
+    """Postet einen Mangel in einen Teams-Kanal.
+
+    ``anlass`` ist einer von "neu", "status", "frist", "versand" und bestimmt
+    Überschrift und Farbe der Karte.
+
+    Gibt ``True`` zurück, wenn wirklich gepostet wurde, und ``False``, wenn
+    überhaupt kein Kanal hinterlegt ist. Diese Unterscheidung ist wichtig:
+    "nichts zu tun" darf in der Oberfläche nicht als "versendet" erscheinen.
+    Wirft eine Exception, wenn eine Webhook-URL vorhanden ist, der Versand
+    aber fehlschlägt — der Aufrufer behandelt das als Warnung, statt den
+    Vorgang scheitern zu lassen.
+    """
+    url = webhook_url or settings.teams_webhook_url
+    if not url:
+        return False
+
+    ueberschriften = {
+        "neu": "Neuer Mangel",
+        "status": "Mangel — Status geändert",
+        "frist": "Mangel — Frist geändert",
+        "versand": "Mängelrüge versendet",
+    }
+    titel = f"{ueberschriften.get(anlass, 'Mangel')}: {nummer} {kurzbezeichnung}"
+
+    zeilen = [f"**{projekt_name}**"]
+    if firma:
+        zeilen.append(f"Firma: {firma}")
+    if status:
+        zeilen.append(f"Status: {status}")
+    if frist:
+        zeilen.append(f"Frist: {frist.strftime('%d.%m.%Y')}")
+    if zusatz:
+        zeilen.append(zusatz)
+    zeilen.append(f"[Mangel in der App öffnen]({_build_mangel_url(mangel_id)})")
+
+    payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": titel,
+        "themeColor": MANGEL_FARBEN.get(anlass, "1F3A5C"),
+        "title": titel,
+        "text": "\n\n".join(zeilen),
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Baufotos
+#
+# Ein Fotosatz geht an das eigene Team, nicht an einen Nachunternehmer —
+# deshalb nur der Projektkanal bzw. der globale Fallback (die Auswahl trifft
+# app.services.baufotos.webhook_fuer). Die Nachricht enthält den Link auf die
+# ZIP-Datei: Genau die hat man bisher per Outlook bekommen.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_zip_url(fotosatz_id: int) -> str:
+    base = (settings.public_base_url or "").rstrip("/")
+    return f"{base}/api/fotosaetze/{fotosatz_id}/zip"
+
+
+async def send_fotosatz_notification(
+    fotosatz_id: int,
+    projekt_name: str,
+    kategorie: str,
+    datum: date,
+    anzahl: int,
+    zip_name: str,
+    webhook_url: str = "",
+) -> bool:
+    """Postet einen fertigen Fotosatz in einen Teams-Kanal.
+
+    Gibt ``True`` nur zurück, wenn wirklich gepostet wurde, und ``False``, wenn
+    kein Kanal hinterlegt ist. Wirft eine Exception, wenn ein Kanal vorhanden
+    ist, der Versand aber scheitert — der Aufrufer macht daraus eine Meldung
+    für die Oberfläche, statt den Fotosatz als fehlerhaft zu behandeln.
+    """
+    url = webhook_url or settings.teams_webhook_url
+    if not url:
+        return False
+
+    datum_str = datum.strftime("%d.%m.%Y")
+    titel = f"Baufotos {projekt_name} — {kategorie} ({datum_str})"
+    text = "\n\n".join([
+        f"**{projekt_name}**",
+        f"Kategorie: {kategorie}",
+        f"{anzahl} Foto(s), umbenannt und verkleinert",
+        f"[{zip_name} herunterladen]({_build_zip_url(fotosatz_id)})",
+    ])
+
+    payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": titel,
+        "themeColor": "2563EB",
+        "title": titel,
+        "text": text,
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+    return True

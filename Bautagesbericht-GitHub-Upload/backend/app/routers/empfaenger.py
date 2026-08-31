@@ -16,7 +16,7 @@ def list_empfaenger(db: Session = Depends(get_db)):
 
 @router.post("", response_model=EmpfaengerResponse, status_code=201)
 def create_empfaenger(data: EmpfaengerCreate, db: Session = Depends(get_db)):
-    emp = Empfaenger(label=data.label, email=data.email)
+    emp = Empfaenger(label=data.label, email=data.email, teams_webhook_url=data.teams_webhook_url)
     db.add(emp)
     db.commit()
     db.refresh(emp)

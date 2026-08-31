@@ -2,10 +2,23 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
-from app.routers import empfaenger, einreichungen, health, projekte
+from app.routers import (
+    baufotos,
+    einreichungen,
+    empfaenger,
+    gewerke,
+    health,
+    maengel,
+    maengelanzeige,
+    mangel_stammdaten,
+    plaene,
+    projekte,
+    projektberichte,
+)
 
 
 @asynccontextmanager
@@ -34,3 +47,38 @@ app.include_router(health.router, prefix="/api")
 app.include_router(projekte.router, prefix="/api")
 app.include_router(empfaenger.router, prefix="/api")
 app.include_router(einreichungen.router, prefix="/api")
+
+# Mängelmanagement
+app.include_router(mangel_stammdaten.router, prefix="/api")
+app.include_router(gewerke.router, prefix="/api")
+app.include_router(plaene.router, prefix="/api")
+app.include_router(projektberichte.router, prefix="/api")
+app.include_router(maengel.router, prefix="/api")
+app.include_router(maengelanzeige.router, prefix="/api")
+
+# Baufotos
+app.include_router(baufotos.router, prefix="/api")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Oberfläche mit ausliefern (nur im Windows-Paket)
+#
+# Auf Render liefert Next.js die Oberfläche aus und leitet /api hierher weiter;
+# dort gibt es kein statisches Verzeichnis und dieser Block tut nichts.
+#
+# Im Windows-Paket ist es umgekehrt: Die Oberfläche wurde statisch exportiert
+# (``NEXT_EXPORT=1 npm run build``, siehe frontend/next.config.ts) und wird von
+# diesem Prozess mitgeliefert. Genau deshalb braucht das Paket auf dem
+# Bürorechner kein Node.js — es ist ein Prozess statt zwei.
+#
+# Die Einbindung steht bewusst NACH allen /api-Routern: Sonst würde die
+# Dateiauslieferung die Schnittstelle verdecken.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_oberflaeche = settings.static_dir
+if _oberflaeche is not None and _oberflaeche.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(_oberflaeche), html=True),
+        name="oberflaeche",
+    )

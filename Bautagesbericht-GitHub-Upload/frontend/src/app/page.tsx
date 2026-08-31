@@ -1,884 +1,413 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  Plus,
-  Trash2,
-  Upload,
-  FileText,
-  X,
-  ClipboardList,
-  MapPin,
-  Mail,
-  MessageSquare,
-  Loader2,
-  Download,
-  AlertTriangle,
-} from "lucide-react";
-import { api, konfliktAnzahl } from "@/lib/api";
-import type { Projekt, Empfaenger, Einreichung } from "@/lib/types";
-
 /**
- * Löschen mit Rückfrage: Der Server lehnt den ersten Versuch mit 409 ab, wenn
- * noch Einreichungen daran hängen, und nennt deren Anzahl. Erst nach dem OK
- * des Nutzers wird mit force=true wirklich gelöscht.
+ * Die Seite ist Router und Hülle — nicht mehr.
+ *
+ * Sie entscheidet, welche Ansicht zu sehen ist, hält die eine Ausnahme von der
+ * Regel (die Mangel-Detailansicht legt sich über die gewählte Ansicht) und
+ * verteilt die Daten aus ``useAppDaten`` an die Ansichten. Alles Fachliche
+ * steckt in den Komponenten, alles Ladende im Hook.
+ *
+ * MERKEN UND VERLINKEN
+ * ====================
+ * Die zuletzt benutzte Ansicht wird im Browser gemerkt: Wer morgens die App
+ * öffnet, landet dort, wo er aufgehört hat. Ein ausdrücklicher Link gewinnt
+ * aber immer — die alten Links aus Teams-Nachrichten und aus dem App-Manifest
+ * (``?tab=maengel``, ``?mangel=<id>``, ``?neu=1``) funktionieren deshalb
+ * weiter; sie werden hier auf die neuen Ansichtsnamen abgebildet.
  */
-async function loeschenMitRueckfrage(
-  entfernen: (force: boolean) => Promise<void>,
-  bezeichnung: string
-): Promise<string | null> {
-  try {
-    await entfernen(false);
-    return null;
-  } catch (err) {
-    const anzahl = konfliktAnzahl(err);
-    if (anzahl === null) {
-      return err instanceof Error ? err.message : "Löschen fehlgeschlagen.";
-    }
-    const ok = window.confirm(
-      `${bezeichnung} wird gelöscht.\n\n` +
-        `Dazu gehören noch ${anzahl} Einreichung(en) — diese werden mit ` +
-        `entfernt (inklusive der erzeugten Word-Dokumente).\n\n` +
-        `Wirklich löschen?`
-    );
-    if (!ok) return null;
-    try {
-      await entfernen(true);
-      return null;
-    } catch (err2) {
-      return err2 instanceof Error ? err2.message : "Löschen fehlgeschlagen.";
-    }
-  }
+
+import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
+import { api } from "@/lib/api";
+import { useAppDaten } from "@/lib/useAppDaten";
+import type { Mangel } from "@/lib/types";
+import {
+  ALLE_EINTRAEGE,
+  AppShell,
+  eintragZu,
+  type Ansicht,
+} from "@/components/AppShell";
+import { InstallierenHinweis, VerbindungsHinweis } from "@/components/AppSchale";
+import { Karte, KarteInhalt, LeerHinweis, SeitenKopf } from "@/components/dashboard";
+import { Meldung } from "@/components/ui";
+import { Dashboard } from "@/components/dashboards/Dashboard";
+import { BaufotosHochladen } from "@/components/baufotos/BaufotosHochladen";
+import { FotosaetzeGalerie } from "@/components/baufotos/FotosaetzeGalerie";
+import { BerichtEinreichen } from "@/components/bautagesberichte/BerichtEinreichen";
+import { BerichteUebersicht } from "@/components/bautagesberichte/BerichteUebersicht";
+import { ProjekteVerwaltung } from "@/components/stammdaten/ProjekteVerwaltung";
+import { EmpfaengerVerwaltung } from "@/components/stammdaten/EmpfaengerVerwaltung";
+import { MangelUebersicht } from "@/components/maengel/MangelUebersicht";
+import { MangelErfassung } from "@/components/maengel/MangelErfassung";
+import { MaengelanzeigeErstellen } from "@/components/maengel/MaengelanzeigeErstellen";
+import { MangelDetail } from "@/components/maengel/MangelDetail";
+import { ProjektberichteVerwaltung } from "@/components/projektberichte/ProjektberichteVerwaltung";
+import { StammdatenGewerke } from "@/components/maengel/StammdatenGewerke";
+import { StammdatenPlaene } from "@/components/maengel/StammdatenPlaene";
+import { StammdatenListen } from "@/components/maengel/StammdatenListen";
+
+const ANSICHT_SPEICHER = "hpp-app-ansicht";
+
+/** Ansichten, die ihren Seitenkopf selbst setzen. */
+const EIGENER_KOPF: Ansicht[] = ["dashboard"];
+
+function istAnsicht(wert: string | null): wert is Ansicht {
+  return wert !== null && ALLE_EINTRAEGE.some((e) => e.key === wert);
 }
 
-type Tab = "einreichen" | "uebersicht" | "projekte" | "emails";
-
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("einreichen");
-  const [projects, setProjects] = useState<Projekt[]>([]);
-  const [emails, setEmails] = useState<Empfaenger[]>([]);
-  const [submissions, setSubmissions] = useState<Einreichung[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const daten = useAppDaten();
+  const [ansicht, setAnsicht] = useState<Ansicht>("dashboard");
+  const [offeneMangelId, setOffeneMangelId] = useState<number | null>(null);
+  const [offenerMangel, setOffenerMangel] = useState<Mangel | null>(null);
+  const [detailHinweis, setDetailHinweis] = useState<string | undefined>();
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  /* ───────── Startansicht: Link, dann Gedächtnis ───────── */
+
+  useEffect(() => {
+    const parameter = new URLSearchParams(window.location.search);
+    const gewuenscht = parameter.get("ansicht");
+    const alterTab = parameter.get("tab");
+    const mangel = Number(parameter.get("mangel"));
+    const neu = parameter.get("neu") === "1";
+    const gemerkt = window.localStorage.getItem(ANSICHT_SPEICHER);
+
+    if (istAnsicht(gewuenscht)) setAnsicht(gewuenscht);
+    else if (neu) setAnsicht("maengel-neu");
+    else if (mangel) setAnsicht("maengel-uebersicht");
+    else if (alterTab === "maengel") setAnsicht("maengel-uebersicht");
+    else if (alterTab === "einreichen") setAnsicht("btb-einreichen");
+    else if (alterTab === "uebersicht") setAnsicht("btb-uebersicht");
+    else if (alterTab === "projekte") setAnsicht("stamm-projekte");
+    else if (alterTab === "emails") setAnsicht("stamm-empfaenger");
+    else if (istAnsicht(gemerkt)) setAnsicht(gemerkt);
+
+    if (mangel) setOffeneMangelId(mangel);
+  }, []);
+
+  const wechsle = useCallback((ziel: Ansicht) => {
+    setAnsicht(ziel);
+    setOffeneMangelId(null);
+    setDetailHinweis(undefined);
+    window.localStorage.setItem(ANSICHT_SPEICHER, ziel);
+  }, []);
+
+  /* ───────── Mangel-Detail nachladen ───────── */
+
+  const ladeMangel = useCallback(async (id: number) => {
     try {
-      const [p, e, s] = await Promise.all([
-        api.projekte.list(),
-        api.empfaenger.list(),
-        api.einreichungen.list(),
-      ]);
-      setProjects(p);
-      setEmails(e);
-      setSubmissions(s);
-      setError(null);
-    } catch (err) {
-      setError(
-        "Verbindung zum Server fehlgeschlagen. Bitte prüfen Sie, ob das Backend läuft."
-      );
+      setOffenerMangel(await api.maengel.get(id));
+    } catch {
+      setOffeneMangelId(null);
+      setOffenerMangel(null);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    if (offeneMangelId === null) {
+      setOffenerMangel(null);
+      return;
+    }
+    ladeMangel(offeneMangelId);
+  }, [offeneMangelId, ladeMangel]);
 
-  const hasInFlight = submissions.some(
-    (s) => s.status === "eingereicht" || s.status === "wird_verarbeitet"
-  );
+  function oeffneMangel(id: number) {
+    setOffeneMangelId(id);
+    setAnsicht("maengel-uebersicht");
+  }
 
-  useEffect(() => {
-    if (!hasInFlight) return;
-    const interval = setInterval(async () => {
-      try {
-        const s = await api.einreichungen.list();
-        setSubmissions(s);
-      } catch {}
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [hasInFlight]);
+  /* ───────── Hülle ───────── */
 
-  return (
-    <div className="min-h-full">
-      {/* Header */}
-      <div className="border-b-2 border-hpp-black px-7 py-[18px] flex justify-between items-end">
-        <div>
-          <div className="font-mono text-[11px] tracking-[0.12em] text-hpp-gray">
-            HPP ARCHITEKTEN BAUMANAGEMENT
-          </div>
-          <div className="text-[21px] font-bold mt-0.5">
-            Bautagesbericht — Eingabe
-          </div>
-        </div>
-        <div className="font-mono text-[11px] text-hpp-gray text-right leading-relaxed">
-          <div>PROJEKTE: {projects.length}</div>
-          <div>EMPFÄNGER: {emails.length}</div>
-          <div>EINREICHUNGEN: {submissions.length}</div>
-        </div>
-      </div>
+  const eintrag = eintragZu(ansicht);
 
-      {/* Error Banner */}
-      {error && (
-        <div className="bg-hpp-warn-bg text-hpp-warn-text px-7 py-2 text-[13px]">
-          {error}
+  const banner = (
+    <>
+      <InstallierenHinweis />
+      <VerbindungsHinweis />
+      {daten.fehler && (
+        <div className="px-3 pt-3 sm:px-5">
+          <Meldung art="fehler">{daten.fehler}</Meldung>
         </div>
       )}
+    </>
+  );
 
-      {/* Tabs */}
-      <div className="flex border-b border-hpp-stone px-7 overflow-x-auto">
-        {(
-          [
-            ["einreichen", "Bericht einreichen"],
-            ["uebersicht", "Übersicht"],
-            ["projekte", "Stammdaten · Projekt"],
-            ["emails", "Stammdaten · Empfänger"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`font-mono text-xs tracking-[0.08em] uppercase px-4 py-3 border-b-2 whitespace-nowrap cursor-pointer transition-colors ${
-              tab === key
-                ? "text-hpp-navy border-hpp-gold"
-                : "text-hpp-gray border-transparent hover:text-hpp-navy"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Content */}
-      <div className="max-w-[720px] mx-auto p-7">
-        {loading ? (
-          <div className="flex items-center gap-2 text-hpp-gray text-sm">
-            <Loader2
-              size={16}
-              className="animate-spin"
-            />
-            Lade Daten…
-          </div>
-        ) : tab === "projekte" ? (
-          <ProjekteTab
-            projects={projects}
-            onUpdate={loadAll}
+  return (
+    <AppShell
+      ansicht={ansicht}
+      onAnsicht={wechsle}
+      projekte={daten.projekte}
+      projektId={daten.projektId}
+      onProjekt={(id) => {
+        daten.setzeProjekt(id);
+        setOffeneMangelId(null);
+      }}
+      onSuche={(begriff) => {
+        daten.setzeMaengelFilter({ ...daten.maengelFilter, suche: begriff || undefined });
+        setOffeneMangelId(null);
+        setAnsicht("maengel-uebersicht");
+      }}
+      onAktualisieren={daten.ladeAlles}
+      // Zahl auf der Glocke in der Kopfzeile. Überfälligkeit rechnet der
+      // Server aus (ist_ueberfaellig) — hier wird nur gezählt.
+      ueberfaellig={daten.maengel.filter((m) => m.ist_ueberfaellig).length}
+      laedt={daten.laedt || daten.laedtMaengel}
+      banner={banner}
+    >
+      {/* Die Detailansicht eines Mangels legt sich über alles andere — auf dem
+          Handy ist sie die ganze Fläche, und genau das ist beim Bearbeiten
+          richtig. */}
+      {offeneMangelId !== null ? (
+        offenerMangel ? (
+          <MangelDetail
+            mangel={offenerMangel}
+            gewerke={daten.gewerke}
+            plaene={daten.plaene}
+            stammdaten={daten.stammdaten}
+            hinweis={detailHinweis}
+            onZurueck={() => {
+              setOffeneMangelId(null);
+              setDetailHinweis(undefined);
+              daten.ladeMaengel();
+            }}
+            onAktualisiert={() => {
+              ladeMangel(offeneMangelId);
+              daten.ladeMaengel();
+            }}
+            onGeloescht={() => {
+              setOffeneMangelId(null);
+              setDetailHinweis(undefined);
+              daten.ladeMaengel();
+            }}
+            onDupliziert={(neueId) => {
+              setDetailHinweis(
+                "Duplikat angelegt. Bitte zuständige Firma und Frist prüfen — " +
+                  "Autosend ist im Duplikat bewusst ausgeschaltet."
+              );
+              setOffeneMangelId(neueId);
+              daten.ladeMaengel();
+            }}
+            onOeffnen={(id) => {
+              setDetailHinweis(undefined);
+              setOffeneMangelId(id);
+            }}
           />
-        ) : tab === "emails" ? (
-          <EmailsTab emails={emails} onUpdate={loadAll} />
-        ) : tab === "uebersicht" ? (
-          <UebersichtTab submissions={submissions} onUpdate={loadAll} />
         ) : (
-          <EinreichenTab
-            projects={projects}
-            emails={emails}
-            submissions={submissions}
-            onUpdate={loadAll}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ───────── Projekte Tab ───────── */
-function ProjekteTab({
-  projects,
-  onUpdate,
-}: {
-  projects: Projekt[];
-  onUpdate: () => void;
-}) {
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [adresse, setAdresse] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  async function handleAdd() {
-    if (!name.trim()) return;
-    setSaving(true);
-    try {
-      await api.projekte.create({ name: name.trim(), adresse: adresse.trim() });
-      setName("");
-      setAdresse("");
-      setShowForm(false);
-      onUpdate();
-    } catch {
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(id: number, projektName: string) {
-    setDeleteError(null);
-    const fehler = await loeschenMitRueckfrage(
-      (force) => api.projekte.delete(id, force),
-      `Projekt „${projektName}"`
-    );
-    if (fehler) setDeleteError(fehler);
-    onUpdate();
-  }
-
-  return (
-    <div>
-      <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-3.5">
-        PROJEKTE — NAME + STANDORT, EINMAL ANLEGEN, DANACH IM FORMULAR WÄHLBAR
-      </div>
-
-      {deleteError && (
-        <div className="bg-hpp-warn-bg text-hpp-warn-text px-3.5 py-2.5 text-[13px] mb-3.5">
-          {deleteError}
-        </div>
-      )}
-
-      {projects.length === 0 && !showForm && (
-        <div className="border border-dashed border-hpp-stone p-7 text-center text-hpp-gray text-sm mb-4">
-          Noch keine Projekte angelegt. Lege ein Projekt mit Standort an — die
-          Adresse wird für den automatischen Wetterdaten-Abruf verwendet.
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2.5 mb-4">
-        {projects.map((p) => (
-          <div
-            key={p.id}
-            className="bg-white border border-hpp-stone p-3.5 px-4 flex justify-between items-start"
-          >
-            <div>
-              <div className="font-semibold text-[15px]">{p.name}</div>
-              <div className="flex items-center gap-1.5 text-hpp-text-secondary text-[13px] mt-1">
-                <MapPin size={13} />
-                {p.adresse || "— keine Adresse hinterlegt —"}
-              </div>
-              {p.lat && p.lon && (
-                <div className="text-[11px] text-hpp-muted mt-0.5 font-mono">
-                  {p.lat.toFixed(4)}, {p.lon.toFixed(4)}
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => handleDelete(p.id, p.name)}
-              aria-label={`${p.name} entfernen`}
-              className="text-hpp-muted hover:text-hpp-warn-text p-1 cursor-pointer transition-colors"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {showForm ? (
-        <div className="bg-white border border-hpp-navy p-4 flex flex-col gap-2.5">
-          <input
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="Projektname / -nummer"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          />
-          <input
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="Adresse des Bauvorhabens (für Wetterdaten)"
-            value={adresse}
-            onChange={(e) => setAdresse(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleAdd}
-              disabled={saving || !name.trim()}
-              className="inline-flex items-center gap-1.5 bg-hpp-navy text-hpp-cream px-4 py-2.5 text-[13px] font-semibold tracking-wide cursor-pointer hover:bg-hpp-navy-dark disabled:bg-hpp-muted disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus size={14} /> Projekt speichern
-            </button>
-            <button
-              onClick={() => {
-                setShowForm(false);
-                setName("");
-                setAdresse("");
-              }}
-              className="inline-flex items-center gap-1.5 border border-hpp-navy text-hpp-navy px-4 py-2.5 text-[13px] font-semibold cursor-pointer hover:bg-hpp-navy hover:text-hpp-cream transition-colors"
-            >
-              Abbrechen
-            </button>
-          </div>
-        </div>
+          <Karte>
+            <KarteInhalt className="flex items-center gap-2 pt-4 text-[13px] text-app-text-still">
+              <Loader2 size={15} className="animate-spin" />
+              Mangel wird geladen…
+            </KarteInhalt>
+          </Karte>
+        )
       ) : (
-        <button
-          onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-1.5 bg-hpp-navy text-hpp-cream px-4 py-2.5 text-[13px] font-semibold tracking-wide cursor-pointer hover:bg-hpp-navy-dark transition-colors"
-        >
-          <Plus size={14} /> Projekt anlegen
-        </button>
+        <>
+          {!EIGENER_KOPF.includes(ansicht) && (
+            <SeitenKopf
+              titel={eintrag.titel}
+              kennung={
+                <>
+                  {eintrag.bereich}
+                  {daten.projekt ? ` · ${daten.projekt.name}` : ""}
+                </>
+              }
+            />
+          )}
+
+          <Inhalt
+            ansicht={ansicht}
+            daten={daten}
+            onAnsicht={wechsle}
+            onMangel={oeffneMangel}
+            onMangelHinweis={setDetailHinweis}
+          />
+        </>
       )}
-    </div>
+    </AppShell>
   );
 }
 
-/* ───────── Emails Tab ───────── */
-function EmailsTab({
-  emails,
-  onUpdate,
-}: {
-  emails: Empfaenger[];
-  onUpdate: () => void;
-}) {
-  const [showForm, setShowForm] = useState(false);
-  const [label, setLabel] = useState("");
-  const [email, setEmail] = useState("");
-  const [teamsWebhookUrl, setTeamsWebhookUrl] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+/* ───────────────────────────── Verzweigung ───────────────────────────── */
 
-  async function handleAdd() {
-    if (!label.trim() || !email.trim()) return;
-    setSaving(true);
-    try {
-      await api.empfaenger.create({
-        label: label.trim(),
-        email: email.trim(),
-        teams_webhook_url: teamsWebhookUrl.trim(),
-      });
-      setLabel("");
-      setEmail("");
-      setTeamsWebhookUrl("");
-      setShowForm(false);
-      onUpdate();
-    } catch {
-    } finally {
-      setSaving(false);
+function Inhalt({
+  ansicht,
+  daten,
+  onAnsicht,
+  onMangel,
+  onMangelHinweis,
+}: {
+  ansicht: Ansicht;
+  daten: ReturnType<typeof useAppDaten>;
+  onAnsicht: (ansicht: Ansicht) => void;
+  onMangel: (id: number) => void;
+  onMangelHinweis: (hinweis?: string) => void;
+}) {
+  const { projekt } = daten;
+
+  /** Ansichten, die ohne Projekt sinnlos sind, bekommen einen klaren Hinweis. */
+  function mitProjekt(inhalt: (p: NonNullable<typeof projekt>) => React.ReactNode) {
+    if (projekt === null) {
+      return (
+        <LeerHinweis>
+          Für diesen Bereich wird ein Projekt gebraucht. Bitte oben in der
+          Kopfzeile ein Projekt wählen — oder unter „Stammdaten → Projekte“ eins
+          anlegen.
+        </LeerHinweis>
+      );
     }
+    return inhalt(projekt);
   }
 
-  async function handleDelete(id: number, empfaengerLabel: string) {
-    setDeleteError(null);
-    const fehler = await loeschenMitRueckfrage(
-      (force) => api.empfaenger.delete(id, force),
-      `Empfänger „${empfaengerLabel}"`
-    );
-    if (fehler) setDeleteError(fehler);
-    onUpdate();
+  switch (ansicht) {
+    case "dashboard":
+      return (
+        <Dashboard
+          projekt={projekt}
+          maengel={daten.maengel}
+          einreichungen={daten.einreichungen}
+          fotosaetze={daten.fotosaetze}
+          gewerke={daten.gewerke}
+          laedt={daten.laedt}
+          onAnsicht={onAnsicht}
+          onMangel={onMangel}
+        />
+      );
+
+    case "baufotos-neu":
+      return mitProjekt((p) => (
+        <BaufotosHochladen
+          projekt={p}
+          kategorien={daten.fotoKategorien}
+          empfaenger={daten.empfaenger}
+          gewerke={daten.gewerke}
+          onFertig={() => {
+            daten.ladeFotosaetze();
+            onAnsicht("baufotos-galerie");
+          }}
+        />
+      ));
+
+    case "baufotos-galerie":
+      return mitProjekt((p) => (
+        <FotosaetzeGalerie
+          projekt={p}
+          fotosaetze={daten.fotosaetze}
+          empfaenger={daten.empfaenger}
+          gewerke={daten.gewerke}
+          laedt={daten.laedtFotos}
+          onAendern={daten.ladeFotosaetze}
+          onNeu={() => onAnsicht("baufotos-neu")}
+        />
+      ));
+
+    case "maengel-uebersicht":
+      return mitProjekt((p) => (
+        <MangelUebersicht
+          maengel={daten.maengel}
+          gewerke={daten.gewerke}
+          stammdaten={daten.stammdaten}
+          filter={{ ...daten.maengelFilter, projekt_id: p.id }}
+          onFilter={daten.setzeMaengelFilter}
+          onOeffnen={onMangel}
+          onNeu={() => onAnsicht("maengel-neu")}
+          laden={daten.laedtMaengel}
+        />
+      ));
+
+    case "maengel-neu":
+      return mitProjekt((p) => (
+        <MangelErfassung
+          projektId={p.id}
+          projektName={p.name}
+          gewerke={daten.gewerke}
+          plaene={daten.plaene}
+          stammdaten={daten.stammdaten}
+          onGespeichert={(id, hinweis) => {
+            onMangelHinweis(hinweis);
+            daten.ladeMaengel();
+            onMangel(id);
+          }}
+          onAbbrechen={() => onAnsicht("maengel-uebersicht")}
+        />
+      ));
+
+    case "maengel-anzeige":
+      return mitProjekt((p) => (
+        <MaengelanzeigeErstellen
+          projekt={p}
+          gewerke={daten.gewerke}
+          maengel={daten.maengel}
+          laedt={daten.laedtMaengel}
+          onAnsicht={onAnsicht}
+        />
+      ));
+
+    case "projektberichte":
+      return mitProjekt((p) => <ProjektberichteVerwaltung projekt={p} />);
+
+    case "btb-einreichen":
+      return (
+        <BerichtEinreichen
+          projekte={daten.projekte}
+          empfaenger={daten.empfaenger}
+          projektId={daten.projektId}
+          einreichungen={daten.einreichungen}
+          onEingereicht={daten.ladeEinreichungen}
+        />
+      );
+
+    case "btb-uebersicht":
+      return (
+        <BerichteUebersicht
+          einreichungen={daten.einreichungen}
+          onAendern={daten.ladeEinreichungen}
+        />
+      );
+
+    case "stamm-projekte":
+      return (
+        <ProjekteVerwaltung projekte={daten.projekte} onAendern={daten.ladeGlobal} />
+      );
+
+    case "stamm-firmen":
+      return mitProjekt((p) => (
+        <StammdatenGewerke
+          projektId={p.id}
+          projektName={p.name}
+          gewerke={daten.gewerke}
+          onAendern={daten.ladeProjektDaten}
+        />
+      ));
+
+    case "stamm-plaene":
+      return mitProjekt((p) => (
+        <StammdatenPlaene
+          projektId={p.id}
+          projektName={p.name}
+          plaene={daten.plaene}
+          onAendern={daten.ladeProjektDaten}
+        />
+      ));
+
+    case "stamm-empfaenger":
+      return (
+        <EmpfaengerVerwaltung
+          empfaenger={daten.empfaenger}
+          onAendern={daten.ladeGlobal}
+        />
+      );
+
+    case "stamm-listen":
+      return (
+        <StammdatenListen
+          stammdaten={daten.stammdaten}
+          onAendern={daten.ladeStammdaten}
+        />
+      );
+
+    default:
+      return <LeerHinweis>Diese Ansicht gibt es nicht.</LeerHinweis>;
   }
-
-  return (
-    <div>
-      <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-3.5">
-        EMPFÄNGER (E-MAIL UND/ODER TEAMS) — EINMAL ANLEGEN, DANACH IM FORMULAR WÄHLBAR
-      </div>
-
-      {deleteError && (
-        <div className="bg-hpp-warn-bg text-hpp-warn-text px-3.5 py-2.5 text-[13px] mb-3.5">
-          {deleteError}
-        </div>
-      )}
-
-      {emails.length === 0 && !showForm && (
-        <div className="border border-dashed border-hpp-stone p-7 text-center text-hpp-gray text-sm mb-4">
-          Noch keine Empfänger angelegt. Lege die Personen an, für die
-          Bautagesberichte eingereicht werden sollen — die fertigen Berichte
-          findet man dann in der Übersicht, optional zusätzlich per
-          Teams-Benachrichtigung.
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2.5 mb-4">
-        {emails.map((e) => (
-          <div
-            key={e.id}
-            className="bg-white border border-hpp-stone p-3.5 px-4 flex justify-between items-start"
-          >
-            <div>
-              <div className="font-semibold text-[15px]">{e.label}</div>
-              <div className="flex items-center gap-1.5 text-hpp-text-secondary text-[13px] mt-1">
-                <Mail size={13} /> {e.email}
-              </div>
-              {e.teams_webhook_url && (
-                <div className="flex items-center gap-1.5 text-hpp-text-secondary text-[13px] mt-1">
-                  <MessageSquare size={13} /> Teams-Kanal hinterlegt
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => handleDelete(e.id, e.label)}
-              aria-label={`${e.label} entfernen`}
-              className="text-hpp-muted hover:text-hpp-warn-text p-1 cursor-pointer transition-colors"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {showForm ? (
-        <div className="bg-white border border-hpp-navy p-4 flex flex-col gap-2.5">
-          <input
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="Bezeichnung (z. B. Name oder Rolle)"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-          />
-          <input
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="E-Mail-Adresse (nur zur Kontaktinfo, kein Versand)"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          />
-          <input
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none transition-colors placeholder:text-hpp-muted"
-            placeholder="Teams-Kanal-Webhook-URL (optional)"
-            type="url"
-            value={teamsWebhookUrl}
-            onChange={(e) => setTeamsWebhookUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-          />
-          <p className="text-[12px] text-hpp-gray -mt-1">
-            Fertige Berichte stehen immer in der Übersicht zum Download
-            bereit. Optional: Webhook-URL eines eigenen Teams-Kanals für
-            diese Person (Kanal → „…" → Workflows → „Send webhook alerts to
-            a channel" → „Copy webhook link") — dann kommt zusätzlich eine
-            Teams-Nachricht mit Download-Link an.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={handleAdd}
-              disabled={saving || !label.trim() || !email.trim()}
-              className="inline-flex items-center gap-1.5 bg-hpp-navy text-hpp-cream px-4 py-2.5 text-[13px] font-semibold tracking-wide cursor-pointer hover:bg-hpp-navy-dark disabled:bg-hpp-muted disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus size={14} /> Empfänger speichern
-            </button>
-            <button
-              onClick={() => {
-                setShowForm(false);
-                setLabel("");
-                setEmail("");
-                setTeamsWebhookUrl("");
-              }}
-              className="inline-flex items-center gap-1.5 border border-hpp-navy text-hpp-navy px-4 py-2.5 text-[13px] font-semibold cursor-pointer hover:bg-hpp-navy hover:text-hpp-cream transition-colors"
-            >
-              Abbrechen
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-1.5 bg-hpp-navy text-hpp-cream px-4 py-2.5 text-[13px] font-semibold tracking-wide cursor-pointer hover:bg-hpp-navy-dark transition-colors"
-        >
-          <Plus size={14} /> Empfänger anlegen
-        </button>
-      )}
-    </div>
-  );
-}
-
-/* ───────── Übersicht Tab ───────── */
-const OFFENE_STATUS = ["eingereicht", "wird_verarbeitet", "wartet_auf_bestaetigung"];
-
-function UebersichtTab({
-  submissions,
-  onUpdate,
-}: {
-  submissions: Einreichung[];
-  onUpdate: () => void;
-}) {
-  const [filter, setFilter] = useState<"alle" | "offen" | "fertig">("alle");
-
-  const anzahlOffen = submissions.filter((s) =>
-    OFFENE_STATUS.includes(s.status)
-  ).length;
-
-  const gefiltert = submissions.filter((s) => {
-    if (filter === "offen") return OFFENE_STATUS.includes(s.status);
-    if (filter === "fertig") return !OFFENE_STATUS.includes(s.status);
-    return true;
-  });
-
-  return (
-    <div>
-      <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-3.5">
-        ALLE EINREICHUNGEN — HIER SELBST NACHSCHAUEN, STATT AUF EINE
-        BENACHRICHTIGUNG ZU WARTEN
-      </div>
-
-      <div className="flex gap-2 mb-4">
-        {(
-          [
-            ["alle", `Alle (${submissions.length})`],
-            ["offen", `Offen (${anzahlOffen})`],
-            ["fertig", `Fertig (${submissions.length - anzahlOffen})`],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setFilter(key)}
-            className={`font-mono text-[11px] tracking-[0.05em] px-3 py-1.5 border cursor-pointer transition-colors ${
-              filter === key
-                ? "bg-hpp-navy text-hpp-cream border-hpp-navy"
-                : "border-hpp-stone text-hpp-gray hover:border-hpp-navy hover:text-hpp-navy"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {gefiltert.length === 0 ? (
-        <div className="border border-dashed border-hpp-stone p-7 text-center text-hpp-gray text-sm">
-          Keine Einreichungen in dieser Ansicht.
-        </div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {gefiltert.map((s) => (
-            <SubmissionRow key={s.id} s={s} onUpdate={onUpdate} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ───────── Einreichen Tab ───────── */
-function EinreichenTab({
-  projects,
-  emails,
-  submissions,
-  onUpdate,
-}: {
-  projects: Projekt[];
-  emails: Empfaenger[];
-  submissions: Einreichung[];
-  onUpdate: () => void;
-}) {
-  const [projektId, setProjektId] = useState("");
-  const [emailId, setEmailId] = useState("");
-  const [datum, setDatum] = useState(new Date().toISOString().slice(0, 10));
-  const [ergaenzendeAngaben, setErgaenzendeAngaben] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [justSubmitted, setJustSubmitted] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const selectedProject = projects.find((p) => p.id === Number(projektId));
-  const selectedEmail = emails.find((e) => e.id === Number(emailId));
-  const canSubmit = projektId && emailId && datum && files.length > 0 && !submitting;
-
-  function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
-    const list = Array.from(e.target.files || []);
-    setFiles((prev) => [...prev, ...list].slice(0, 20));
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  function removeFile(idx: number) {
-    setFiles((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  async function handleSubmit() {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    try {
-      const formData = new FormData();
-      formData.append("projekt_id", projektId);
-      formData.append("empfaenger_id", emailId);
-      formData.append("datum", datum);
-      formData.append("ergaenzende_angaben", ergaenzendeAngaben);
-      files.forEach((f) => formData.append("dateien", f));
-
-      await api.einreichungen.submit(formData);
-      setFiles([]);
-      setErgaenzendeAngaben("");
-      setJustSubmitted(true);
-      onUpdate();
-      setTimeout(() => setJustSubmitted(false), 4000);
-    } catch {
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div>
-      {justSubmitted && (
-        <div className="bg-hpp-success-bg text-hpp-success-text border border-hpp-success-border px-3.5 py-2.5 text-[13px] mb-4">
-          Eingereicht. Die Weiterverarbeitung (Auslesen der Berichte,
-          Wetterdaten, Word-Erstellung) läuft im Backend-System — den
-          fertigen Bericht findest du danach in der Übersicht.
-        </div>
-      )}
-
-      <div className="flex flex-col gap-3.5 mb-5">
-        {/* Projekt */}
-        <div>
-          <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            PROJEKT
-          </label>
-          <select
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none mt-1.5 transition-colors"
-            value={projektId}
-            onChange={(e) => setProjektId(e.target.value)}
-          >
-            <option value="">— Projekt wählen —</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {projects.length === 0 && (
-            <div className="text-xs text-hpp-hint-text mt-1.5">
-              Noch keine Projekte hinterlegt — bitte zuerst unter „Stammdaten ·
-              Projekt" anlegen.
-            </div>
-          )}
-          {selectedProject && (
-            <div className="text-xs text-hpp-gray mt-1.5">
-              Wetterdaten via{" "}
-              {selectedProject.adresse || "Adresse fehlt"}
-            </div>
-          )}
-        </div>
-
-        {/* Datum */}
-        <div>
-          <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            DATUM
-          </label>
-          <input
-            type="date"
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none mt-1.5 transition-colors"
-            value={datum}
-            onChange={(e) => setDatum(e.target.value)}
-          />
-        </div>
-
-        {/* Datei-Upload */}
-        <div>
-          <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            BAUTAGESBERICHTE DER UNTERNEHMEN
-          </label>
-          <label
-            htmlFor="btb-upload"
-            className="mt-1.5 flex items-center justify-center gap-2 border border-dashed border-hpp-navy px-3.5 py-5 cursor-pointer text-hpp-navy text-[13px] hover:bg-hpp-navy/5 transition-colors"
-          >
-            <Upload size={16} /> PDF oder Foto hochladen (mehrere möglich)
-          </label>
-          <input
-            ref={fileInputRef}
-            id="btb-upload"
-            type="file"
-            multiple
-            accept=".pdf,image/*"
-            className="hidden"
-            onChange={handleFiles}
-          />
-
-          {files.length > 0 && (
-            <div className="mt-2 flex flex-col gap-1.5">
-              {files.map((f, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between bg-white border border-hpp-stone px-2.5 py-[7px] text-[13px]"
-                >
-                  <span className="flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
-                    <FileText size={14} className="text-hpp-gray shrink-0" />
-                    {f.name}
-                  </span>
-                  <button
-                    onClick={() => removeFile(i)}
-                    className="text-hpp-muted hover:text-hpp-warn-text cursor-pointer transition-colors"
-                    aria-label="Datei entfernen"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Ergänzende Angaben */}
-        <div>
-          <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            ERGÄNZENDE ANGABEN
-          </label>
-          <textarea
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none mt-1.5 min-h-[80px] resize-y transition-colors placeholder:text-hpp-muted"
-            placeholder="Zusätzliche Hinweise zum Tag…"
-            value={ergaenzendeAngaben}
-            onChange={(e) => setErgaenzendeAngaben(e.target.value)}
-          />
-        </div>
-
-        {/* Empfänger */}
-        <div>
-          <label className="font-mono text-[11px] tracking-[0.08em] text-hpp-gray">
-            EMPFÄNGER
-          </label>
-          <select
-            className="w-full bg-white border border-hpp-stone px-3 py-2.5 text-sm focus:border-hpp-navy outline-none mt-1.5 transition-colors"
-            value={emailId}
-            onChange={(e) => setEmailId(e.target.value)}
-          >
-            <option value="">— Empfänger wählen —</option>
-            {emails.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.label} ({e.email})
-              </option>
-            ))}
-          </select>
-          {emails.length === 0 && (
-            <div className="text-xs text-hpp-hint-text mt-1.5">
-              Noch keine Empfänger hinterlegt — bitte zuerst unter „Stammdaten ·
-              Empfänger" anlegen.
-            </div>
-          )}
-          {selectedEmail && (
-            <div className="text-xs text-hpp-gray mt-1.5">
-              Fertiger Bericht erscheint in der Übersicht
-              {selectedEmail.teams_webhook_url ? " und wird zusätzlich per Teams gemeldet" : ""}.
-            </div>
-          )}
-        </div>
-
-        {/* Submit */}
-        <button
-          onClick={handleSubmit}
-          disabled={!canSubmit}
-          className="flex items-center justify-center gap-1.5 bg-hpp-navy text-hpp-cream px-4 py-2.5 text-[13px] font-semibold tracking-wide cursor-pointer hover:bg-hpp-navy-dark disabled:bg-hpp-muted disabled:cursor-not-allowed mt-1 transition-colors"
-        >
-          {submitting ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <ClipboardList size={14} />
-          )}
-          {submitting ? "Wird eingereicht…" : "Einreichen"}
-        </button>
-      </div>
-
-      {/* Letzte Einreichungen */}
-      {submissions.length > 0 && (
-        <div>
-          <div className="font-mono text-[11px] tracking-[0.1em] text-hpp-gray mb-2 border-t border-hpp-stone pt-4">
-            LETZTE EINREICHUNGEN
-          </div>
-          <div className="flex flex-col gap-1.5">
-            {submissions.slice(0, 6).map((s) => (
-              <SubmissionRow key={s.id} s={s} onUpdate={onUpdate} />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SubmissionRow({
-  s,
-  onUpdate,
-}: {
-  s: Einreichung;
-  onUpdate: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const inFlight = s.status === "eingereicht" || s.status === "wird_verarbeitet";
-  const needsConfirm = s.status === "wartet_auf_bestaetigung";
-
-  async function handleConfirm() {
-    setConfirming(true);
-    try {
-      await api.einreichungen.bestaetigen(s.id);
-      onUpdate();
-    } catch {
-    } finally {
-      setConfirming(false);
-    }
-  }
-
-  return (
-    <div className="bg-white border border-hpp-stone">
-      <div className="flex justify-between items-center text-[13px] px-3 py-2">
-        <button
-          onClick={() =>
-            s.warnungen.length > 0 ? setExpanded((v) => !v) : undefined
-          }
-          className={
-            s.warnungen.length > 0
-              ? "text-left flex-1 cursor-pointer"
-              : "text-left flex-1"
-          }
-        >
-          {s.projekt_name} · {s.datum}
-        </button>
-        <div className="flex items-center gap-2">
-          {inFlight && (
-            <Loader2 size={13} className="animate-spin text-hpp-hint-text" />
-          )}
-          {s.warnungen.length > 0 && (
-            <span className="flex items-center gap-1 text-hpp-hint-text">
-              <AlertTriangle size={13} />
-              {s.warnungen.length}
-            </span>
-          )}
-          <span
-            className={
-              s.status === "abgeschlossen"
-                ? "text-hpp-success-text"
-                : s.status === "fehlgeschlagen"
-                ? "text-hpp-warn-text"
-                : "text-hpp-hint-text"
-            }
-          >
-            {s.status}
-          </span>
-          {s.status === "abgeschlossen" && (
-            <a
-              href={api.einreichungen.downloadUrl(s.id)}
-              className="text-hpp-navy hover:underline"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Word-Dokument herunterladen"
-            >
-              <Download size={13} />
-            </a>
-          )}
-        </div>
-      </div>
-
-      {(expanded || needsConfirm) && s.warnungen.length > 0 && (
-        <div className="border-t border-hpp-stone bg-hpp-hint-bg px-3 py-2 text-[12px]">
-          <div className="font-mono text-[10px] tracking-[0.1em] text-hpp-gray mb-1">
-            WARNUNGEN
-          </div>
-          <ul className="flex flex-col gap-1 mb-2">
-            {s.warnungen.map((w, i) => (
-              <li key={i} className="text-hpp-hint-text">
-                <span className="font-semibold">{w.feld}:</span> {w.problem}
-                {w.quelle_datei ? (
-                  <span className="text-hpp-gray"> ({w.quelle_datei})</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          {needsConfirm && (
-            <button
-              onClick={handleConfirm}
-              disabled={confirming}
-              className="inline-flex items-center gap-1.5 bg-hpp-navy text-hpp-cream px-3 py-1.5 text-[12px] font-semibold cursor-pointer hover:bg-hpp-navy-dark disabled:bg-hpp-muted disabled:cursor-not-allowed transition-colors"
-            >
-              {confirming ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <ClipboardList size={12} />
-              )}
-              {confirming ? "Wird erstellt…" : "Trotzdem erstellen"}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }

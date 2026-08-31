@@ -65,6 +65,29 @@ BAR_INDENT = (HOURLY_VALUE_W - BAR_WIDTH_TWIPS) // 2
 FIRMA_LABEL_W = 1440
 FIRMA_VALUE_W = VALUE_SPAN - FIRMA_LABEL_W
 
+# ── Luft im Dokument ────────────────────────────────────────────────────────
+# Alle Werte in Twips (1/20 pt). Die erste Fassung setzte praktisch überall 0
+# und entfernte zusätzlich die Zeilenhöhen der Vorlage — der fertige Bericht
+# drängte sich dadurch ins obere Seitendrittel, während die untere Hälfte leer
+# blieb, und "Firma / Personen / Leistung" klebten aneinander.
+#
+# Die Werte hier sind bewusst auf Lesbarkeit gestellt, nicht auf möglichst
+# wenig Papier: Ein Tag mit einer Firma bleibt einseitig, ab zwei bis drei
+# Firmen wird der Bericht zweiseitig. Das ist gewollt — ein Wetterdiagramm und
+# fünf Angaben je Firma passen bei ordentlichem Abstand nicht zusammen auf ein
+# Blatt, und gequetscht liest sie auf der Baustelle niemand.
+ZELL_LUFT = 90            # oben und unten je Zelle der Haupttabelle (4,5 pt)
+FELD_ABSTAND = 170        # zwischen Firma, Ort, Personen, Leistung, Besonders (8,5 pt)
+BLOCK_ABSTAND = 220       # zwischen zwei Firmenblöcken (11 pt)
+NOTIZ_ABSTAND = 150       # zwischen den Zeilen des Haupteintrags (7,5 pt)
+ZEILEN_MINDESTHOEHE = 320  # Mindesthöhe einer Tabellenzeile (16 pt)
+
+#: Zeilenabstand innerhalb eines Werts, der umbricht. 240 wäre einfach; 288
+#: entspricht 1,2-fach. Betrifft vor allem "Leistung" und "Besonders" — dort
+#: stehen ganze Sätze, die über zwei bis vier Zeilen laufen, und einfacher
+#: Abstand lässt sie zu einem Block zusammenkleben.
+ZEILENABSTAND_TEXT = 288
+
 # Bright-Sky-Icons auf darstellbare Symbole abbilden.
 WETTER_SYMBOLE = {
     "clear-day": "☀",
@@ -115,14 +138,15 @@ def _run(text: str, *, bold: bool = False, size: int = SZ_NORMAL,
 
 def _para(runs: str, *, align: str | None = None, after: int = 0,
           shading: str | None = None, indent: int = 0,
-          exact_height: int | None = None) -> str:
+          exact_height: int | None = None, zeilenabstand: int = 240) -> str:
     ppr = ""
     if shading:
         ppr += f'<w:shd w:val="clear" w:color="auto" w:fill="{shading}"/>'
     if exact_height:
         ppr += f'<w:spacing w:after="0" w:line="{exact_height}" w:lineRule="exact"/>'
     else:
-        ppr += f'<w:spacing w:after="{after}" w:line="240" w:lineRule="auto"/>'
+        ppr += (f'<w:spacing w:after="{after}" w:line="{zeilenabstand}" '
+                f'w:lineRule="auto"/>')
     if indent:
         ppr += f'<w:ind w:left="{indent}" w:right="{indent}"/>'
     if align:
@@ -148,21 +172,40 @@ def _borders(top: bool, bottom: bool) -> str:
 
 def _cell(width: int, body: str, *, gridspan: int | None = None,
           top: bool = False, bottom: bool = False,
-          valign: str | None = None) -> str:
+          valign: str | None = None, luft: int = ZELL_LUFT) -> str:
     tcpr = f'<w:tcW w:w="{width}" w:type="dxa"/>'
     if gridspan:
         tcpr += f'<w:gridSpan w:val="{gridspan}"/>'
     tcpr += _borders(top, bottom)
+    if luft:
+        # Innenabstand der Zelle: Ohne ihn sitzt der Text direkt auf der
+        # Trennlinie zur nächsten Zeile.
+        tcpr += (
+            f'<w:tcMar><w:top w:w="{luft}" w:type="dxa"/>'
+            f'<w:bottom w:w="{luft}" w:type="dxa"/></w:tcMar>'
+        )
     if valign:
         tcpr += f'<w:vAlign w:val="{valign}"/>'
     return f"<w:tc><w:tcPr>{tcpr}</w:tcPr>{body or _para('')}</w:tc>"
 
 
-def _row(cells: str, *, height: int | None = None):
-    trpr = ""
+def _row(cells: str, *, height: int | None = None,
+         mindesthoehe: int | None = ZEILEN_MINDESTHOEHE):
+    """Eine Tabellenzeile.
+
+    ``height`` erzwingt eine exakte Höhe (für die Balkengrafik nötig).
+    Sonst gilt eine Mindesthöhe: Die Zeile wächst mit dem Inhalt, fällt aber
+    nicht auf Schriftgröße zusammen.
+    """
+    # cantSplit: Eine Zeile wandert ganz auf die nächste Seite, statt am
+    # Seitenrand zerschnitten zu werden. Ohne das stand von der
+    # Unterschriftszeile nur das Wort "Datum" auf Seite zwei.
+    inhalt = "<w:cantSplit/>"
     if height:
-        trpr = f'<w:trPr><w:trHeight w:val="{height}" w:hRule="exact"/></w:trPr>'
-    return parse_xml(f"<w:tr {nsdecls('w')}>{trpr}{cells}</w:tr>")
+        inhalt += f'<w:trHeight w:val="{height}" w:hRule="exact"/>'
+    elif mindesthoehe:
+        inhalt += f'<w:trHeight w:val="{mindesthoehe}" w:hRule="atLeast"/>'
+    return parse_xml(f"<w:tr {nsdecls('w')}><w:trPr>{inhalt}</w:trPr>{cells}</w:tr>")
 
 
 def _nested_table_open(width: int, grid: str) -> str:
@@ -173,8 +216,8 @@ def _nested_table_open(width: int, grid: str) -> str:
         f"<w:bottom w:val=\"nil\"/><w:right w:val=\"nil\"/>"
         f"<w:insideH w:val=\"nil\"/><w:insideV w:val=\"nil\"/></w:tblBorders>"
         f'<w:tblLayout w:type="fixed"/>'
-        f'<w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
-        f'<w:bottom w:w="40" w:type="dxa"/><w:right w:w="28" w:type="dxa"/></w:tblCellMar>'
+        f'<w:tblCellMar><w:top w:w="70" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+        f'<w:bottom w:w="70" w:type="dxa"/><w:right w:w="28" w:type="dxa"/></w:tblCellMar>'
         f"</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
     )
 
@@ -279,14 +322,15 @@ def _hourly_row(stundenwerte: list):
 
 def _note_row(text: str, *, bottom: bool):
     paras = "".join(
-        _para(_run(line), after=60) for line in text.splitlines() if line.strip()
+        _para(_run(line), after=NOTIZ_ABSTAND)
+        for line in text.splitlines() if line.strip()
     )
     cells = _cell(LABEL_COL, _para(""), bottom=bottom)
     cells += _cell(VALUE_SPAN, paras or _para(""), gridspan=6, bottom=bottom)
     return _row(cells)
 
 
-def _firma_row(firma, *, bottom: bool = True):
+def _firma_row(firma, *, bottom: bool = True, zeige_label: bool = True):
     """Ein Firmenblock als zweispaltige Tabelle. Leere Felder werden weggelassen."""
     fields: list[tuple[str, str, bool]] = []
     if firma.firma:
@@ -303,20 +347,26 @@ def _firma_row(firma, *, bottom: bool = True):
     grid = f'<w:gridCol w:w="{FIRMA_LABEL_W}"/><w:gridCol w:w="{FIRMA_VALUE_W}"/>'
     tbl = _nested_table_open(VALUE_SPAN, grid)
     for i, (label, value, value_bold) in enumerate(fields):
-        after = 0 if i == len(fields) - 1 else 60
+        after = 0 if i == len(fields) - 1 else FELD_ABSTAND
         tbl += (
             "<w:tr>"
             f'<w:tc><w:tcPr><w:tcW w:w="{FIRMA_LABEL_W}" w:type="dxa"/>'
             f"{_borders(False, False)}</w:tcPr>{_para(_run(label), after=after)}</w:tc>"
             f'<w:tc><w:tcPr><w:tcW w:w="{FIRMA_VALUE_W}" w:type="dxa"/>'
             f"{_borders(False, False)}</w:tcPr>"
-            f"{_para(_run(value, bold=value_bold), after=after)}</w:tc>"
+            f"{_para(_run(value, bold=value_bold), after=after, zeilenabstand=ZEILENABSTAND_TEXT)}</w:tc>"
             "</w:tr>"
         )
     tbl += "</w:tbl>"
 
-    body = (tbl + _para("")) if fields else _para("")
-    cells = _cell(LABEL_COL, _para(_run("Firmen", bold=True)), bottom=bottom)
+    # Der Abschlussabsatz trennt diesen Firmenblock vom nächsten. Ohne ihn
+    # gingen zwei Firmen ineinander über und man müsste die Zeilen zählen,
+    # um zu sehen, wo die eine aufhört.
+    body = (tbl + _para("", after=BLOCK_ABSTAND)) if fields else _para("")
+    # "Firmen" ist die Überschrift des Abschnitts, nicht die jeder einzelnen
+    # Firma — bei drei Nachunternehmern stand es sonst dreimal untereinander.
+    beschriftung = _para(_run("Firmen", bold=True)) if zeige_label else _para("")
+    cells = _cell(LABEL_COL, beschriftung, bottom=bottom)
     cells += _cell(VALUE_SPAN, body, gridspan=6, bottom=bottom)
     return _row(cells)
 
@@ -345,21 +395,94 @@ def _fill_projekt_header(doc, projekt: str) -> None:
             return
 
 
+#: Schriftgrößen der Fußzeile in Halbpunkten — aus der Vorlage übernommen.
+SZ_FUSS_ZEILE = 13     # 6,5 pt — "Bautagebuch - Projekt - Datum"
+SZ_FUSS_SEITE = 16     # 8 pt — die Seitenzahl
+
+#: Weiches Trennzeichen als Zierstrich links und rechts der Seitenzahl, genau
+#: wie in der Blanko-Vorlage ("­ 1 / 1 ­").
+ZIERSTRICH = "­"
+
+
+def _feld(anweisung: str, vorschau: str, *, size: int = SZ_FUSS_SEITE) -> str:
+    """Ein Word-Feld wie PAGE oder NUMPAGES.
+
+    Fester Text ginge hier nicht: Die Seitenzahl muss Word beim Umbruch selbst
+    ausrechnen. ``vorschau`` ist der Wert, der in Betrachtern ohne
+    Feldberechnung stehen bleibt.
+    """
+    rpr = (f'<w:rPr><w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}"/>'
+           f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr>')
+    return (
+        f"<w:r>{rpr}<w:fldChar w:fldCharType=\"begin\"/></w:r>"
+        f"<w:r>{rpr}<w:instrText xml:space=\"preserve\"> {anweisung} </w:instrText></w:r>"
+        f"<w:r>{rpr}<w:fldChar w:fldCharType=\"separate\"/></w:r>"
+        f'<w:r>{rpr}<w:t>{escape(vorschau)}</w:t></w:r>'
+        f"<w:r>{rpr}<w:fldChar w:fldCharType=\"end\"/></w:r>"
+    )
+
+
 def _fill_footer_line(doc, projekt: str, datum: date) -> None:
-    for para in doc.paragraphs:
-        if para.text.strip() == "Bautagebuch":
-            para.runs[0].text = f"Bautagebuch - {projekt} - {_fmt_date(datum)}"
-            return
+    """Baut die echte Word-Fußzeile und räumt die Vorlagenzeilen aus dem Text.
+
+    Die Blanko-Vorlage trägt "Bautagebuch" und "­ 1 / 1 ­" als gewöhnliche
+    Absätze am Dokumentende — für ein Blatt, das von Hand ausgefüllt wird,
+    reicht das. Im erzeugten Bericht ist es falsch: Die Zeilen stehen dann nur
+    auf der letzten Seite, und "1 / 1" bleibt "1 / 1", auch wenn der Bericht
+    über zwei Seiten läuft.
+
+    Deshalb wandert beides in die Fußzeile des Abschnitts, die Seitenzahl als
+    PAGE/NUMPAGES-Feld. Word setzt sie damit auf jeder Seite und rechnet sie
+    selbst aus.
+    """
+    zeile_links = f"Bautagebuch - {projekt} - {_fmt_date(datum)}"
+
+    abschnitt = doc.sections[0]
+    fuss = abschnitt.footer
+    fuss.is_linked_to_previous = False
+
+    for para in list(fuss.paragraphs):
+        para._element.getparent().remove(para._element)
+
+    absaetze = (
+        _para(_run(zeile_links, size=SZ_FUSS_ZEILE))
+        + _para(
+            _run(f"{ZIERSTRICH} ", size=SZ_FUSS_SEITE)
+            + _feld("PAGE", "1")
+            + _run(" / ", size=SZ_FUSS_SEITE)
+            + _feld("NUMPAGES", "1")
+            + _run(f" {ZIERSTRICH}", size=SZ_FUSS_SEITE),
+            align="right",
+        )
+    )
+    for element in parse_xml(f"<w:root {nsdecls('w')}>{absaetze}</w:root>"):
+        fuss._element.append(element)
+
+    # Die Vorlagenzeilen im Text entfernen — sonst stünde alles doppelt.
+    for para in list(doc.paragraphs):
+        text = para.text.strip()
+        if text == "Bautagebuch" or text.strip(ZIERSTRICH + " ").replace(
+                " ", "") in ("1/1",):
+            para._element.getparent().remove(para._element)
+
+
+def _ist_leer(para) -> bool:
+    return not "".join(t.text or "" for t in para.iter(qn("w:t"))).strip()
 
 
 def _shrink_page_spacer(doc) -> None:
-    """Entfernt den großen Leerraum-Absatz der Vorlage.
+    """Verhindert ein leeres Blatt am Ende des Berichts.
 
     Die Blanko-Vorlage schiebt die Fußzeile mit einem ~12,7 cm hohen
-    ``w:after``-Absatz ans Seitenende (für handschriftliche Nutzung gedacht).
-    Der automatisch erzeugte Bericht ist kompakt; dieser Abstand würde die
-    Fußzeile auf eine zweite Seite drücken. Große Abstände auf Absatzebene
-    werden daher auf ein moderates Maß begrenzt.
+    ``w:after``-Absatz ans Seitenende — gedacht für den handschriftlichen
+    Gebrauch. Im erzeugten Bericht bleibt davon nichts Sichtbares übrig, aber
+    genug Höhe, um ein zweites, komplett leeres Blatt zu erzwingen: Bei drei
+    Firmen kam genau das heraus, und beim Drucken fällt so ein Blatt jedem
+    auf.
+
+    Deshalb werden die leeren Absätze hinter der letzten Tabelle bis auf einen
+    entfernt (Word braucht dort einen) und der verbleibende auf minimale Höhe
+    gesetzt. Absätze mit Text bleiben unangetastet.
     """
     body = doc.element.body
     for para in body.findall(qn("w:p")):
@@ -372,6 +495,33 @@ def _shrink_page_spacer(doc) -> None:
         after = spacing.get(qn("w:after"))
         if after is not None and int(after) > 480:
             spacing.set(qn("w:after"), "240")
+
+    kinder = list(body)
+    tabellen = [i for i, k in enumerate(kinder) if k.tag == qn("w:tbl")]
+    if not tabellen:
+        return
+
+    dahinter = [k for k in kinder[tabellen[-1] + 1:] if k.tag == qn("w:p")]
+    leere = [p for p in dahinter if _ist_leer(p)]
+
+    # Alle bis auf den letzten leeren Absatz entfernen.
+    for para in leere[:-1]:
+        body.remove(para)
+
+    if leere:
+        rest = leere[-1]
+        ppr = rest.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = parse_xml(f"<w:pPr {nsdecls('w')}/>")
+            rest.insert(0, ppr)
+        spacing = ppr.find(qn("w:spacing"))
+        if spacing is None:
+            spacing = parse_xml(f"<w:spacing {nsdecls('w')}/>")
+            ppr.append(spacing)
+        spacing.set(qn("w:after"), "0")
+        spacing.set(qn("w:before"), "0")
+        spacing.set(qn("w:line"), "120")
+        spacing.set(qn("w:lineRule"), "exact")
 
 
 def _set_bottom_border(tr, visible: bool) -> None:
@@ -395,12 +545,25 @@ def _set_bottom_border(tr, visible: bool) -> None:
 
 
 def _drop_row_height(tr) -> None:
+    """Ersetzt die feste Zeilenhöhe der Vorlage durch eine Mindesthöhe.
+
+    Die Blanko-Vorlage reserviert je Zeile mehrere Zentimeter für die
+    handschriftliche Nutzung — das ist im gedruckten Bericht viel zu viel.
+    Die Höhe ganz zu entfernen war aber das andere Extrem: Dann fällt die
+    Zeile auf Schriftgröße zusammen und der Text sitzt auf der Trennlinie.
+    Also: wachsen darf sie, unter ``ZEILEN_MINDESTHOEHE`` fällt sie nicht.
+    """
     trpr = tr.find(qn("w:trPr"))
     if trpr is None:
-        return
+        trpr = parse_xml(f"<w:trPr {nsdecls('w')}/>")
+        tr.insert(0, trpr)
     height = trpr.find(qn("w:trHeight"))
     if height is not None:
-        trpr.remove(height)
+        height.set(qn("w:val"), str(ZEILEN_MINDESTHOEHE))
+        height.set(qn("w:hRule"), "atLeast")
+    # Auch die Zeilen aus der Vorlage sollen nicht am Seitenrand zerreißen.
+    if trpr.find(qn("w:cantSplit")) is None:
+        trpr.insert(0, parse_xml(f"<w:cantSplit {nsdecls('w')}/>"))
 
 
 def _collapse_cell(tc) -> None:
@@ -469,8 +632,8 @@ def generate_bautagesbericht(
     # keine leere "Firmen"-Zeile übrig bleibt.
     if data.firmen:
         firma_anchor = row_firma
-        for firma in data.firmen:
-            new_row = _firma_row(firma)
+        for i, firma in enumerate(data.firmen):
+            new_row = _firma_row(firma, zeige_label=(i == 0))
             firma_anchor.addnext(new_row)
             firma_anchor = new_row
         table._tbl.remove(row_firma)

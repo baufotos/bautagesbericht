@@ -16,6 +16,14 @@ import pdfplumber
 
 from app.config import settings
 
+#: Modell für das Auslesen eingescannter Bautagesberichte.
+#:
+#: Modellkennungen laufen ab: Die vorige Fassung (``claude-sonnet-4-20250514``)
+#: gibt es nicht mehr, der Zweig wäre beim ersten eingetragenen Schlüssel in
+#: einen Fehler gelaufen. Deshalb steht sie hier an EINER Stelle — beim
+#: nächsten Wechsel ist nur diese Zeile zu ändern.
+CLAUDE_MODELL = "claude-opus-5"
+
 
 # ---------------------------------------------------------------------------
 # Basisfunktionen
@@ -344,40 +352,452 @@ def _ocr_review_entry(text: str) -> dict:
     }
 
 
-async def _extract_scan_no_key(file_path: Path) -> list[dict]:
-    """Fallback, wenn kein Anthropic-Key konfiguriert ist.
+# ---------------------------------------------------------------------------
+# Format 4: Formblatt (gedrucktes Firmenformular, meist als Scan)
+#
+# Die Nachunternehmer schicken ihre Berichte auf eigenen Formblättern: ein
+# Kopf mit Kommission und Datum, eine Zeile mit der Zahl der Arbeiter, ein
+# Block "Leistungsergebnisse". Solche Blätter kommen fast immer als Scan, also
+# ohne Textebene — der Text hier stammt daher meist aus der Texterkennung und
+# ist entsprechend fehlerbehaftet ("4.OG" wird zu "406", "Leistungsergebnisse"
+# zu "Leistungserqebnisse"). Die Muster unten sind bewusst großzügig.
+# ---------------------------------------------------------------------------
 
-    Auf dem Server gibt es kein lokales OCR mehr (EasyOCR/torch sprengen die
-    freie Speicherstufe). Scans werden dann als Warnung gemeldet, damit der
-    Nutzer die Angaben manuell ergänzen kann.
+_ARBEITER_MUSTER = [
+    re.compile(r"Anzahl\s+der\s+Besch\w*\s+Arbeiter[:\s]*(\d{1,3})", re.IGNORECASE),
+    re.compile(r"Anzahl\s+\w*\s*Arbeiter[:\s]*(\d{1,3})", re.IGNORECASE),
+    re.compile(r"^\s*(\d{1,3})\s+Mitarbeiter\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"\b(\d{1,3})\s*Mann\b", re.IGNORECASE),
+    re.compile(r"Arbeiter[:\s]+(\d{1,3})", re.IGNORECASE),
+]
+
+#: Ab hier beginnt der Leistungstext. "\w*" fängt die OCR-Verhunzungen mit.
+_LEISTUNG_AB = re.compile(
+    r"^\s*(Leistungs\w*|Ausgef\w*\s+Arbeiten|T\w*tigkeiten|Arbeiten)\s*:?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: Und hier hört er auf.
+_LEISTUNG_BIS = re.compile(
+    r"^\s*(Bemerkung\w*|Besonder\w*|Unterschrift\w*|Behinderung\w*)\s*:?\s*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_ORT_MUSTER = re.compile(
+    r"^\s*(?:Abschnitt|Bauteil|Bereich|Bauabschnitt)\s*[:.\-]?\s*(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: Rechtsformen verraten einen Firmennamen zuverlässiger als jede Position.
+_RECHTSFORM = re.compile(
+    r"^(.{2,60}?\b(?:GmbH(?:\s*&\s*Co\.?\s*KG)?|AG|KG|OHG|GbR|e\.?\s?K\.?|"
+    r"Bau\s?GmbH|SE)\b.{0,20})$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: "Unterschrift RF" — auf vielen Formblättern steht das Firmenkürzel neben der
+#: Unterschriftszeile. "Bauherr" und "Stellvertreter" gehören dort nicht hin.
+#: Das eingestreute "\s*" fängt Erkennungsfehler wie "Uh erschrift RF".
+_UNTERSCHRIFT_FIRMA = re.compile(
+    r"^\s*U\w*\s?\w*schrift\s+(?!Bauherr|Stellv|Auftrag)"
+    r"([A-ZÄÖÜ][\wÄÖÜäöüß&.\- ]{1,30}?)\s*$",
+    re.MULTILINE,
+)
+
+#: Zeilen, die zum Formularrahmen gehören und nie Leistungstext sind. Wird
+#: gebraucht, weil die Überschrift "Leistungsergebnisse" auf gescannten
+#: Blättern regelmäßig verlorengeht — dann muss der Text über das erkannt
+#: werden, was er NICHT ist.
+_FORMULARZEILE = re.compile(
+    r"^\s*(name|vorarb|monteur|uhr|arbeitszeit|von|bis|witterung|sonne|regen|"
+    r"frost|wind|schnee|sonstiges|temperatur|bew\w*lkt|bemerkung|"
+    r"u\w*\s?\w*schrift|formblatt|bautagesbericht|ident|kommission|"
+    r"bauvorhaben|abschnitt|datum|verantwortlich\w*|anzahl|seite|rev\b|"
+    r"erstellt|fassaden|leistungs\w*\s*:?\s*$)",
+    re.IGNORECASE,
+)
+
+#: Ab hier ist der Bericht zu Ende.
+_FORMBLATT_ENDE = re.compile(
+    r"^\s*(bemerkung|u\w*\s?\w*schrift)", re.IGNORECASE)
+
+#: Woran ein Blatt als Bautagesbericht zu erkennen ist. "\w*" fängt die
+#: Verhunzungen der Texterkennung mit ("Leistungserqebnisse").
+_IST_BAUTAGESBERICHT = re.compile(
+    r"(bautage\w*bericht|bautagebuch|tagesbericht|tagesrapport|"
+    r"leistungs\w*ergebnis|leistungserq\w*|arbeitsbericht|"
+    r"anzahl\s+der\s+besch\w*|verantwortlicher\s+bauleiter)",
+    re.IGNORECASE,
+)
+
+#: Letzte Zeile des Kopfbereichs. Alles davor ist Formularrahmen — Kommission,
+#: Bauvorhaben, Abschnitt, Witterung, Mitarbeitertabelle. Erst danach beginnt,
+#: was jemand über den Tag geschrieben hat. Ohne diesen Anker rutschen
+#: "Bauvorhaben" und "Abschnitt" in den Leistungstext, weil ihre Beschriftung
+#: auf gescannten Blättern in einer eigenen Zeile steht.
+_KOPF_ENDE = re.compile(
+    r"^\s*(monteur|vorarb\w*|\d*\s*mitarbeiter|uhr\b|arbeitszeit|"
+    r"anzahl\s+der\s+besch\w*|verantwortlich\w*|bew\w*lkt|sonstiges)",
+    re.IGNORECASE,
+)
+
+
+def _formblatt_firma(text: str, ersatz: str) -> str:
+    for treffer in _RECHTSFORM.finditer(text):
+        name = treffer.group(1).strip(" .:-")
+        if name and not name.lower().startswith(("bauvorhaben", "bauherr")):
+            return name
+    treffer = _UNTERSCHRIFT_FIRMA.search(text)
+    if treffer:
+        return treffer.group(1).strip(" .:-")
+    return ersatz
+
+
+def _formblatt_leistung(text: str) -> str:
+    """Der Leistungstext eines Formblatts.
+
+    Erster Versuch über die Überschrift. Fehlt sie — was bei gescannten
+    Blättern der Normalfall ist, weil die Erkennung sie verschluckt —, wird
+    umgekehrt vorgegangen: alles vor "Bemerkungen"/"Unterschrift" nehmen und
+    davon abziehen, was erkennbar zum Formularrahmen gehört. Übrig bleiben die
+    Sätze, die jemand eingetragen hat.
     """
+    zeilen = [z.strip() for z in text.splitlines()]
+
+    start = _LEISTUNG_AB.search(text)
+    if start:
+        rest = text[start.end():]
+        ende = _LEISTUNG_BIS.search(rest)
+        block = rest[: ende.start()] if ende else rest
+        gesammelt = [z.strip() for z in block.splitlines() if z.strip()]
+        if gesammelt:
+            return " · ".join(gesammelt)
+
+    ende_index = len(zeilen)
+    for i, zeile in enumerate(zeilen):
+        if _FORMBLATT_ENDE.match(zeile):
+            ende_index = i
+            break
+
+    start_index = 0
+    for i, zeile in enumerate(zeilen[:ende_index]):
+        if _KOPF_ENDE.match(zeile):
+            start_index = i + 1
+
+    gesammelt = []
+    for zeile in zeilen[start_index:ende_index]:
+        if not zeile or _FORMULARZEILE.match(zeile):
+            continue
+        # Zahlen, Kürzel und Einzelwörter sind Tabellenzellen, keine Sätze.
+        if len(zeile) < 15 or len(zeile.split()) < 3:
+            continue
+        gesammelt.append(zeile)
+
+    return " · ".join(gesammelt)
+
+
+def parse_formblatt(text: str, quelle: str = "") -> list[dict]:
+    """Liest ein gedrucktes Firmen-Formblatt aus.
+
+    Gibt höchstens einen Eintrag zurück — ein Formblatt gehört zu einer Firma
+    und einem Tag. Ohne Leistungstext und ohne Personenzahl wird nichts
+    zurückgegeben: Dann ist das Blatt entweder kein Bautagesbericht oder die
+    Texterkennung hat zu wenig herausgeholt, und ein leerer Eintrag wäre
+    schlimmer als keiner.
+    """
+    leistung = _formblatt_leistung(text)
+
+    personen = 0
+    for muster in _ARBEITER_MUSTER:
+        treffer = muster.search(text)
+        if treffer:
+            try:
+                personen = int(treffer.group(1))
+            except (TypeError, ValueError):
+                personen = 0
+            if personen:
+                break
+
+    # Ohne Personenzahl braucht es wenigstens ein Merkmal, das dieses Blatt
+    # als Bautagesbericht ausweist. Sonst würde jede Rechnung und jedes
+    # Anschreiben, das im Ordner liegt, als Tagesbericht durchgehen — mit
+    # ihrem Fließtext als "Leistung".
+    if not personen and not _IST_BAUTAGESBERICHT.search(text):
+        return []
+    if not leistung and not personen:
+        return []
+
+    ort = ""
+    treffer = _ORT_MUSTER.search(text)
+    if treffer:
+        ort = treffer.group(1).strip(" .:-")
+        if not ort:
+            # Auf gescannten Formblättern steht der Wert oft in der Zeile
+            # NACH der Beschriftung, weil die Erkennung Spalten trennt.
+            zeilen = text.splitlines()
+            for i, zeile in enumerate(zeilen[:-1]):
+                if re.match(r"^\s*(Abschnitt|Bauteil|Bereich)", zeile, re.IGNORECASE):
+                    ort = zeilen[i + 1].strip(" .:-")
+                    break
+
     return [{
-        "firma": f"(Scan {file_path.name} — kein OCR verfügbar)",
+        "firma": _formblatt_firma(text, quelle or "Firma bitte ergänzen"),
+        "ort": ort,
+        "personen": personen,
+        "leistung": leistung or "Leistungstext nicht lesbar — bitte ergänzen",
+        "besonderes": None,
+        "quelle": "ocr",
+    }]
+
+
+async def _extract_scan_no_key(file_path: Path) -> list[dict]:
+    """Scan ohne Anthropic-Schlüssel: Windows-Texterkennung versuchen.
+
+    Windows bringt seit Windows 10 eine eigene Texterkennung mit. Bei
+    gedruckten Formblättern — und das sind die Berichte der Nachunternehmer —
+    liest sie zuverlässig genug, um Datum, Arbeiterzahl und Leistungstext zu
+    übernehmen. Erst wenn auch das nichts hergibt, bleibt die Bitte um
+    manuelle Ergänzung.
+    """
+    from app.services import windows_ocr
+
+    if windows_ocr.verfuegbar():
+        text = _text_per_windows_ocr(file_path)
+        if text.strip():
+            if _detect_format(text) == "simple":
+                firmen = _parse_simple_page(text, None)
+                if firmen:
+                    for eintrag in firmen:
+                        eintrag["quelle"] = "ocr"
+                    return firmen
+            firmen = parse_formblatt(text)
+            if firmen:
+                return firmen
+
+    return await _scan_ohne_erkennung(file_path)
+
+
+def _text_per_windows_ocr(file_path: Path) -> str:
+    """Erkennt den Text einer Bild- oder Scan-Datei über Windows."""
+    from app.services import windows_ocr
+
+    suffix = file_path.suffix.lower()
+    if suffix != ".pdf":
+        return windows_ocr.text_aus_bild(file_path)
+
+    from app.services.wochenaufteilung import seiten_lesen
+
+    # seiten_lesen liest die Textebene und lässt fehlende Seiten von der
+    # Windows-Erkennung nachtragen — genau das, was hier gebraucht wird.
+    return "\n".join(seiten_lesen(file_path))
+
+
+async def _scan_ohne_erkennung(file_path: Path) -> list[dict]:
+    """Letzte Stufe: Es ließ sich nichts lesen."""
+    return [{
+        "firma": f"(Handschrift/Scan: {file_path.name})",
         "ort": "",
         "personen": 0,
-        "leistung": "Kein Textlayer erkannt und kein Anthropic-API-Key konfiguriert — bitte Angaben manuell ergänzen.",
+        "leistung": (
+            "Aus dieser Datei ließ sich kein Text lesen. Bei gedruckten "
+            "Formblättern gelingt das meist; handschriftliche Berichte "
+            "brauchen einen Anthropic-Schlüssel (einstellungen.txt neben dem "
+            "Programm, Zeile anthropic_key=). Bitte die Angaben hier von Hand "
+            "ergänzen."
+        ),
         "besonderes": None,
     }]
+
+
+def handschrift_verfuegbar() -> bool:
+    """Können Fotos und Scans überhaupt gelesen werden?
+
+    Zwei Wege führen dahin: die Windows-Texterkennung (gedruckte Formblätter,
+    ohne Schlüssel, offline) und die Anthropic-Schnittstelle (auch
+    Handschrift, braucht einen Schlüssel). Einer genügt.
+    """
+    from app.services import windows_ocr
+
+    return _has_real_key() or windows_ocr.verfuegbar()
+
+
+def erkennung_beschreibung() -> tuple[bool, str]:
+    """Was dieser Rechner mit Fotos und Scans anfangen kann — für die Oberfläche."""
+    from app.services import windows_ocr
+
+    mit_schluessel = _has_real_key()
+    mit_windows = windows_ocr.verfuegbar()
+
+    if mit_schluessel and mit_windows:
+        return True, ("Fotos und Scans werden gelesen — gedruckte Formblätter "
+                      "über Windows, Handschrift über den hinterlegten "
+                      "Anthropic-Schlüssel. Bitte das Ergebnis trotzdem prüfen.")
+    if mit_schluessel:
+        return True, ("Fotos und Scans werden über den hinterlegten "
+                      "Anthropic-Schlüssel gelesen, auch handschriftliche. "
+                      "Bitte das Ergebnis trotzdem prüfen.")
+    if mit_windows:
+        return True, ("Gedruckte Formblätter werden von der Windows-"
+                      "Texterkennung gelesen, auch als Scan ohne Textebene. "
+                      "Für handschriftliche Berichte wird zusätzlich ein "
+                      "Anthropic-Schlüssel gebraucht (einstellungen.txt, "
+                      "Zeile anthropic_key=). Bitte das Ergebnis prüfen.")
+    return False, ("Fotos und Scans können auf diesem Rechner nicht gelesen "
+                   "werden. PDF mit Textebene geht ohne Weiteres; für Scans "
+                   "wird ein Anthropic-Schlüssel gebraucht (einstellungen.txt "
+                   "neben dem Programm, Zeile anthropic_key=).")
 
 
 # ---------------------------------------------------------------------------
 # Format 3b: Scan-Fallback via Claude Vision (optional, wenn API-Key vorhanden)
 # ---------------------------------------------------------------------------
 
+#: Auflösung, mit der gescannte PDF-Seiten für die Erkennung gerendert werden.
+#: 200 dpi ist der Punkt, ab dem Handschrift verlässlich lesbar wird, ohne dass
+#: die Bilder die Anfrage sprengen.
+OCR_DPI = 200
+
+#: Längste Bildkante nach dem Verkleinern. Darüber bringt mehr Auflösung nichts
+#: mehr, kostet aber Übertragung und Zeit.
+OCR_MAX_KANTE = 2200
+
+#: Mehr Seiten als das in einer Anfrage zu schicken wird unzuverlässig.
+OCR_MAX_SEITEN = 12
+
+
+def _bild_aufbereiten(daten: bytes) -> bytes:
+    """Bereitet ein Foto oder eine gescannte Seite für die Erkennung auf.
+
+    Handschriftliche Bautagesberichte kommen als Handyfoto: schief belichtet,
+    grauer Schatten über dem Blatt, Bleistift auf weißem Papier. Drei Schritte
+    holen daraus deutlich mehr heraus, als das Rohbild zu schicken:
+
+    1. Drehung aus den EXIF-Daten anwenden — ein hochkant fotografiertes Blatt
+       liegt sonst quer.
+    2. Autokontrast, der die dunkelsten und hellsten 0,5 % abschneidet. Das
+       hebt blasse Bleistiftschrift vom vergilbten Papier ab.
+    3. Auf eine sinnvolle Größe bringen. Zu klein ist unlesbar, zu groß bringt
+       nichts mehr.
+
+    Schlägt etwas davon fehl, werden die Originaldaten zurückgegeben — eine
+    misslungene Aufbereitung darf die Erkennung nicht verhindern.
+    """
+    try:
+        import io
+
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(daten)) as bild:
+            bild = ImageOps.exif_transpose(bild)
+            if bild.mode not in ("RGB", "L"):
+                bild = bild.convert("RGB")
+            bild = ImageOps.autocontrast(bild, cutoff=0.5)
+
+            laengste = max(bild.size)
+            if laengste > OCR_MAX_KANTE:
+                faktor = OCR_MAX_KANTE / laengste
+                neu = (max(1, int(bild.width * faktor)),
+                       max(1, int(bild.height * faktor)))
+                bild = bild.resize(neu, Image.LANCZOS)
+
+            puffer = io.BytesIO()
+            bild.convert("RGB").save(puffer, format="JPEG", quality=88,
+                                     optimize=True)
+            return puffer.getvalue()
+    except Exception:
+        return daten
+
+
+def _scan_seiten_als_bilder(file_path: Path) -> list[bytes]:
+    """Seiten eines gescannten PDFs als aufbereitete JPEG-Bilder.
+
+    Ein gescanntes PDF direkt als Dokument zu schicken funktioniert, liefert
+    bei Handschrift aber schlechtere Ergebnisse als sauber gerenderte Seiten:
+    Der Scan steckt oft in geringer Auflösung im PDF, und die Aufbereitung
+    oben greift nur auf Bildern.
+    """
+    try:
+        import pypdfium2 as pdfium
+
+        dokument = pdfium.PdfDocument(str(file_path))
+        try:
+            bilder: list[bytes] = []
+            for nummer in range(min(len(dokument), OCR_MAX_SEITEN)):
+                import io
+
+                seite = dokument[nummer].render(scale=OCR_DPI / 72).to_pil()
+                puffer = io.BytesIO()
+                seite.save(puffer, format="PNG")
+                bilder.append(_bild_aufbereiten(puffer.getvalue()))
+            return bilder
+        finally:
+            dokument.close()
+    except Exception:
+        return []
+
+
+#: Was Claude über die Vorlage wissen muss. Ohne diese Hinweise werden
+#: Spaltenüberschriften als Firmennamen gelesen und Stundenangaben als
+#: Personenzahl.
+OCR_ANWEISUNG = (
+    "Das ist ein Bautagesbericht von einer Baustelle. Er kann handschriftlich "
+    "ausgefüllt sein — deutsche Handschrift, oft Druckbuchstaben, teils "
+    "Bleistift.\n\n"
+    "Trage für jede aufgeführte Firma einen Eintrag ein:\n"
+    "  firma      Name der Firma. Rechtsformen wie GmbH, KG, e.K. mitnehmen. "
+    "Keine Spaltenüberschriften und keine Wörter wie 'Firma' oder "
+    "'Nachunternehmer' als Namen übernehmen.\n"
+    "  ort        Wo gearbeitet wurde: Bauteil, Geschoss, Achse, Raum. "
+    "Leerer Text, wenn nichts dasteht.\n"
+    "  personen   Anzahl der eingesetzten Personen als ganze Zahl. Das ist "
+    "NICHT die Stundenzahl und nicht die Uhrzeit. Steht keine Zahl da: 0.\n"
+    "  leistung   Was ausgeführt wurde, in ganzen Worten. Abkürzungen der "
+    "Baustelle ausschreiben, wenn eindeutig (z. B. 'BW' = Bauwerk, "
+    "'OG' = Obergeschoss).\n"
+    "  besonderes Behinderungen, Verzögerungen, Unfälle, Anordnungen. "
+    "Sonst null.\n\n"
+    "REGELN:\n"
+    "- Nichts erfinden. Ist ein Wort unleserlich, schreibe den erkennbaren "
+    "Teil und setze dahinter [?]. Lieber '[?]' als geraten.\n"
+    "- Ist ein Feld nicht ausgefüllt, lass es leer statt es zu erfinden.\n"
+    "- Enthält das Bild mehrere Tage, nimm alle Firmen aller Tage auf.\n"
+    "- Durchgestrichenes ist zurückgenommen und gehört nicht ins Ergebnis."
+)
+
+
 async def _extract_scan_via_claude(file_path: Path) -> list[dict]:
     if not settings.anthropic_api_key:
-        return [{
-            "firma": f"(Scan-PDF {file_path.name} — kein API-Key für OCR)",
-            "ort": "",
-            "personen": 0,
-            "leistung": "Kein Textlayer und kein Anthropic-Key konfiguriert",
-            "besonderes": None,
-        }]
+        return await _extract_scan_no_key(file_path)
 
     import base64
+
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+    # Gescannte PDFs seitenweise rendern — das ist der Schritt, der bei
+    # Handschrift den Unterschied macht.
+    seitenbilder: list[bytes] = []
+    if file_path.suffix.lower() == ".pdf":
+        seitenbilder = _scan_seiten_als_bilder(file_path)
+    else:
+        seitenbilder = [_bild_aufbereiten(file_path.read_bytes())]
+
+    if seitenbilder:
+        inhalt: list[dict] = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": base64.standard_b64encode(bild).decode(),
+                },
+            }
+            for bild in seitenbilder
+        ]
+        return await _claude_bilder_auswerten(client, inhalt, file_path.name)
+
+    # Rendern nicht möglich: das Dokument unverändert schicken.
     data = base64.standard_b64encode(file_path.read_bytes()).decode()
 
     media_type_map = {
@@ -413,34 +833,73 @@ async def _extract_scan_via_claude(file_path: Path) -> list[dict]:
         },
     }
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        tools=[tool_schema],
-        tool_choice={"type": "tool", "name": "report_firms"},
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "document" if media_type == "application/pdf" else "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": data},
-                },
-                {
-                    "type": "text",
-                    "text": (
-                        "Extrahiere alle Firmeneinträge aus diesem Bautagesbericht.\n"
-                        "Mappe auf: firma (Name), ort (Bauteil/Etage/Raum), "
-                        "personen (Zahl der eingesetzten Personen), leistung "
-                        "(Beschreibung der ausgeführten Arbeiten), besonderes."
-                    ),
-                },
-            ],
-        }],
-    )
+    inhalt = [{
+        "type": "document" if media_type == "application/pdf" else "image",
+        "source": {"type": "base64", "media_type": media_type, "data": data},
+    }]
+    return await _claude_bilder_auswerten(client, inhalt, file_path.name,
+                                          tool_schema=tool_schema)
 
-    for block in response.content:
+
+def _ocr_schema() -> dict:
+    return {
+        "name": "report_firms",
+        "description": "Gibt die extrahierten Firmeneinträge zurück",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "firmen": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "firma": {"type": "string"},
+                            "ort": {"type": "string"},
+                            "personen": {"type": "integer"},
+                            "leistung": {"type": "string"},
+                            "besonderes": {"type": ["string", "null"]},
+                        },
+                        "required": ["firma", "ort", "personen", "leistung"],
+                    },
+                },
+            },
+            "required": ["firmen"],
+        },
+    }
+
+
+async def _claude_bilder_auswerten(client, inhalt: list[dict], quelle: str,
+                                   tool_schema: dict | None = None) -> list[dict]:
+    """Schickt die aufbereiteten Seiten an Claude und räumt das Ergebnis auf."""
+    inhalt = list(inhalt) + [{"type": "text", "text": OCR_ANWEISUNG}]
+
+    try:
+        antwort = client.messages.create(
+            model=CLAUDE_MODELL,
+            max_tokens=8192,
+            tools=[tool_schema or _ocr_schema()],
+            tool_choice={"type": "tool", "name": "report_firms"},
+            messages=[{"role": "user", "content": inhalt}],
+        )
+    except Exception as exc:
+        return [{
+            "firma": f"(Erkennung fehlgeschlagen: {quelle})",
+            "ort": "",
+            "personen": 0,
+            "leistung": f"Die Texterkennung meldete: {exc}",
+            "besonderes": None,
+            "quelle": "ocr",
+        }]
+
+    for block in antwort.content:
         if block.type == "tool_use" and block.name == "report_firms":
-            return block.input.get("firmen", [])
+            firmen = block.input.get("firmen", []) or []
+            # "quelle" markiert die Einträge als maschinell gelesen. Die
+            # Pipeline hängt daran die Warnung "bitte Angaben prüfen" — bei
+            # Handschrift ist das keine Förmlichkeit.
+            for eintrag in firmen:
+                eintrag["quelle"] = "ocr"
+            return firmen
     return []
 
 
@@ -482,7 +941,7 @@ async def _extract_text_via_claude(text: str, file_name: str) -> list[dict]:
     }
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=CLAUDE_MODELL,
         max_tokens=4096,
         tools=[tool_schema],
         tool_choice={"type": "tool", "name": "report_firms"},
@@ -516,6 +975,28 @@ async def extract_from_file(file_path: Path, target_date: date | None = None) ->
         if _has_real_key():
             return await _extract_scan_via_claude(file_path)
         return await _extract_scan_no_key(file_path)
+
+    # Reiner Text entsteht, wenn eine Seite mehrere Tage enthielt und je Tag
+    # ein Abschnitt ausgeschnitten wurde (siehe services/wochenaufteilung).
+    # Ein halbes Blatt lässt sich nicht als PDF schneiden, der Text schon.
+    if suffix == ".txt":
+        text = file_path.read_text(encoding="utf-8", errors="replace")
+        if _detect_format(text) == "simple":
+            # Ohne Datumsfilter: Der Abschnitt gehört bereits zum richtigen
+            # Tag, eine zweite Prüfung könnte ihn nur fälschlich verwerfen.
+            firmen = _parse_simple_page(text, None)
+            if firmen:
+                return firmen
+        firmen = await _extract_text_via_claude(text, file_path.name)
+        if firmen:
+            return firmen
+        return [{
+            "firma": f"(Textabschnitt {file_path.name} nicht auswertbar)",
+            "ort": "",
+            "personen": 0,
+            "leistung": "Automatische Extraktion nicht möglich — bitte manuell ergänzen",
+            "besonderes": None,
+        }]
 
     if suffix != ".pdf":
         return []

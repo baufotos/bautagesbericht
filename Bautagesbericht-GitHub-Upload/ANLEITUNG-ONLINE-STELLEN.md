@@ -99,10 +99,10 @@ So lädst du ihn hoch:
    | Feld (Key) | Was hineingehört |
    |---|---|
    | `BTB_DATABASE_URL` | Die angepasste Neon-URL aus Teil B (mit `+psycopg`). **Pflicht.** |
-   | `BTB_SMTP_HOST` | Mailserver, z. B. `smtp.office365.com`. Für den automatischen Mailversand. |
+   | `BTB_SMTP_HOST` | Mailserver, z. B. `smtp.office365.com`. Nur nötig für „Baufotos direkt senden" — ohne diesen Wert bietet die App weiterhin den Outlook-Entwurf an. |
    | `BTB_SMTP_USER` | Das Absender-Postfach, z. B. `bautagesbericht@hpp.com`. |
-   | `BTB_SMTP_PASSWORD` | Das **App-Passwort** dieses Postfachs (nicht das normale Login-Passwort). |
-   | `BTB_SMTP_FROM` | Dieselbe Absenderadresse wie oben. |
+   | `BTB_SMTP_PASSWORT` | Das **App-Passwort** dieses Postfachs (nicht das normale Login-Passwort). `BTB_SMTP_PASSWORD` gilt genauso. |
+   | `BTB_SMTP_ABSENDER` | Dieselbe Absenderadresse wie oben. `BTB_SMTP_FROM` gilt genauso. |
    | `BTB_ANTHROPIC_API_KEY` | **Optional.** Nur nötig, um eingescannte Berichte automatisch auszulesen. Ohne Key leer lassen. |
 
    `BTB_SMTP_PORT` ist bereits mit `587` vorbelegt — nichts tun. `BACKEND_URL`
@@ -150,11 +150,24 @@ Die Render-Adresse bleibt **dauerhaft gleich**. Weitergeben kannst du sie so:
 - **Aufwachzeit.** Wird die App 15 Minuten nicht benutzt, „schläft" sie. Der
   nächste Aufruf dauert dann **30–60 Sekunden**, danach läuft alles normal.
   Für ein Werkzeug, das ein paar Mal am Tag benutzt wird, gut vertretbar.
-- **Kein dauerhafter Dateispeicher.** Hochgeladene PDFs und fertige
-  Word-Dokumente können bei einem Neustart verschwinden. **Alle Stammdaten**
-  (Projekte, Empfänger, Einreichungs-Infos) liegen sicher in der **Neon-
-  Datenbank** und bleiben erhalten. Wichtige Berichte also herunterladen oder
-  per E-Mail verschicken lassen.
+- **Kein dauerhafter Dateispeicher — das ist die wichtigste Einschränkung.**
+  Alles, was in der **Neon-Datenbank** steht, bleibt erhalten: Projekte,
+  Empfänger, Firmen, Mängel mit allen Fristen und Texten, Fotosätze mit ihren
+  Angaben. **Dateien** liegen dagegen auf der Festplatte des Render-Containers
+  und können bei einem Neustart verschwinden:
+
+  | Betrifft | Was zu tun ist |
+  |---|---|
+  | Baufotos (Bilddateien) | ZIP-Datei nach dem Hochladen herunterladen und in den Projektordner legen — genau dafür ist sie da. |
+  | Mängelfotos und Anhänge | Wichtige Mängellisten als Word-Dokument exportieren; darin sind die Fotos eingebettet. |
+  | Fertige Word-Berichte | Aus der Übersicht herunterladen und ablegen. |
+  | Hochgeladene Pläne | Original behalten; ein Plan lässt sich jederzeit neu hochladen. |
+
+  Verschwindet eine Bilddatei, bleibt der Datensatz erhalten und die App sagt
+  es (die ZIP-Datei enthält dann eine `FEHLT.txt`) — es entsteht also kein
+  stiller Datenverlust. Wer die Fotos dauerhaft auf dem Server halten will,
+  braucht einen bezahlten Render-Plan mit „Persistent Disk" oder einen
+  Objektspeicher.
 - **Kosten.** GitHub, Neon und Render bleiben in dieser Nutzung dauerhaft
   kostenlos. Keine Kreditkarte, kein Ablaufdatum.
 
@@ -168,6 +181,12 @@ Microsoft sperrt den SMTP-Versand (`smtp.office365.com`) für Postfächer
 freischalten und ein **App-Passwort** erzeugen. Ist das nicht möglich, lass die
 `BTB_SMTP_*`-Felder bei Render einfach leer: Die App erzeugt den Bericht dann
 trotzdem, nur ohne automatischen Mailversand — herunterladen geht immer.
+
+Für **Baufotos per E-Mail** gilt dasselbe, aber es gibt einen Weg ohne SMTP:
+Die App baut die fertige Mail mit dem ZIP im Anhang als `.eml`-Datei, und
+Outlook öffnet sie als Entwurf, in dem nur noch *Senden* fehlt. Der Weg braucht
+keine Freischaltung und funktioniert auch auf dem kostenlosen Render-Plan, auf
+dem ausgehendes SMTP ohnehin gesperrt ist.
 
 ---
 

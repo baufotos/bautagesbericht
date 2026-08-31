@@ -12,6 +12,26 @@ from app.services.docx_generation import generate_bautagesbericht
 from app.services.teams_notifier import send_teams_notification
 
 
+def _haelt_auf(warnungen: list[dict]) -> bool:
+    """Muss vor dem Erzeugen jemand hinsehen?
+
+    Nicht jede Warnung ist ein Grund, den Bericht liegen zu lassen. Zwei Arten
+    sind zu unterscheiden:
+
+    * **Aufhaltend** — es fehlt etwas, das im Dokument stehen müsste: keine
+      Firmendaten gefunden, ein unlesbares Format, eine fehlende Datei. Hier
+      wäre das Ergebnis unbrauchbar, also wartet der Bericht auf eine
+      Bestätigung.
+    * **Nur ein Hinweis** (``blockiert: False``) — der Bericht ist vollständig,
+      man sollte ihn aber gegenlesen. Typisch für gescannte Berichte: Die
+      Texterkennung hat alles gelesen, kann sich aber verlesen haben.
+
+    Ohne diese Unterscheidung stand jeder Tag einer gescannten Woche auf
+    "Prüfung nötig" — fünf Mal derselbe Knopf, obwohl nichts fehlte.
+    """
+    return any(w.get("blockiert", True) for w in warnungen)
+
+
 def _log_step(db: Session, einreichung_id: int, schritt: str, ergebnis: str, details: str = "", dauer_ms: int = 0):
     log = VerarbeitungsLog(
         einreichung_id=einreichung_id,
@@ -156,9 +176,14 @@ async def process_einreichung(einreichung_id: int, db: Session):
     if any(f.get("quelle") == "ocr" for f in all_firmen):
         warnungen.append({
             "feld": "firmen",
-            "problem": "Mindestens ein Bericht wurde per OCR aus einem Scan gelesen "
-                       "— bitte Firmenangaben und Leistungstext prüfen.",
+            "problem": "Aus einem Scan gelesen — bitte Firmenangaben und "
+                       "Leistungstext im fertigen Bericht gegenlesen.",
             "quelle_datei": "",
+            # Hält den Bericht NICHT auf. Gescannte Firmenberichte sind der
+            # Normalfall, nicht die Ausnahme; jeden davon von Hand freizugeben
+            # hieße, fünf Mal pro Woche denselben Knopf zu drücken. Der Hinweis
+            # bleibt am Bericht stehen, das Dokument entsteht trotzdem.
+            "blockiert": False,
         })
 
     # Step 3: Build validated JSON
@@ -198,7 +223,7 @@ async def process_einreichung(einreichung_id: int, db: Session):
 
     einreichung.warnungen = warnungen
 
-    if warnungen:
+    if _haelt_auf(warnungen):
         einreichung.status = "wartet_auf_bestaetigung"
         db.commit()
         _log_step(db, einreichung_id, "validierung", "warnung",

@@ -9,19 +9,41 @@ const BACKEND_URL = /^https?:\/\//.test(RAW_BACKEND_URL)
   ? RAW_BACKEND_URL
   : `https://${RAW_BACKEND_URL}`;
 
-const nextConfig: NextConfig = {
-  // Alle /api-Aufrufe werden serverseitig an das FastAPI-Backend
-  // weitergeleitet. Dadurch muss für Team-Mitglieder nur Port 3000
-  // erreichbar sein, es gibt keine CORS-Probleme, und das Backend
-  // bleibt auf localhost gebunden.
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${BACKEND_URL}/api/:path*`,
+/**
+ * ZWEI BETRIEBSARTEN — dieselbe Oberfläche, zwei Auslieferungswege.
+ *
+ * 1. Server (Standard, so läuft es auf Render)
+ *    Next.js liefert die Seite aus und leitet /api serverseitig an FastAPI
+ *    weiter. Ein öffentlicher Port, kein CORS.
+ *
+ * 2. Statischer Export (NEXT_EXPORT=1, für das Windows-Paket)
+ *    Die Seite wird zu reinen HTML/JS/CSS-Dateien gebaut, die FastAPI selbst
+ *    mit ausliefert. Damit braucht das Programm auf dem Bürorechner KEIN
+ *    Node.js — ein Grund, warum das Paket überhaupt handlich bleibt.
+ *    Ein Rewrite ist hier weder möglich noch nötig: Oberfläche und /api
+ *    kommen dann aus demselben Prozess und damit von derselben Adresse.
+ *
+ * Möglich ist das nur, weil die App eine einzige clientseitige Seite ist —
+ * es gibt keine serverseitig gerenderte Route, die beim Export fehlen würde.
+ */
+const STATISCHER_EXPORT = process.env.NEXT_EXPORT === "1";
+
+const nextConfig: NextConfig = STATISCHER_EXPORT
+  ? {
+      output: "export",
+      // Ordnerweise Ausgabe, damit auch der Aufruf ohne abschließenden
+      // Schrägstrich die richtige Datei findet.
+      trailingSlash: true,
+    }
+  : {
+      async rewrites() {
+        return [
+          {
+            source: "/api/:path*",
+            destination: `${BACKEND_URL}/api/:path*`,
+          },
+        ];
       },
-    ];
-  },
-};
+    };
 
 export default nextConfig;
