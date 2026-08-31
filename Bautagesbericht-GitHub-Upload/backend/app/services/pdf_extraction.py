@@ -601,9 +601,9 @@ async def _scan_ohne_erkennung(file_path: Path) -> list[dict]:
         "leistung": (
             "Aus dieser Datei ließ sich kein Text lesen. Bei gedruckten "
             "Formblättern gelingt das meist; handschriftliche Berichte "
-            "brauchen einen Anthropic-Schlüssel (einstellungen.txt neben dem "
-            "Programm, Zeile anthropic_key=). Bitte die Angaben hier von Hand "
-            "ergänzen."
+            "brauchen einen Anthropic-Schlüssel ("
+            + _wo_der_schluessel_hingehoert()
+            + "). Bitte die Angaben hier von Hand ergänzen."
         ),
         "besonderes": None,
     }]
@@ -619,6 +619,22 @@ def handschrift_verfuegbar() -> bool:
     from app.services import windows_ocr
 
     return _has_real_key() or windows_ocr.verfuegbar()
+
+
+def _wo_der_schluessel_hingehoert() -> str:
+    """Wo der Anthropic-Schlüssel einzutragen ist — je nach Betriebsart.
+
+    Dieselbe App läuft auf dem Bürorechner aus einem Ordner und im Web in
+    einem Container. Ein Hinweis auf "einstellungen.txt neben dem Programm"
+    ist online schlicht falsch: Dort gibt es keine solche Datei, sondern eine
+    Umgebungsvariable im Render-Dashboard.
+    """
+    import sys
+
+    if sys.platform.startswith("win"):
+        return "einstellungen.txt neben dem Programm, Zeile anthropic_key="
+    return ("Umgebungsvariable BTB_ANTHROPIC_API_KEY — bei Render unter "
+            "Environment einzutragen")
 
 
 def erkennung_beschreibung() -> tuple[bool, str]:
@@ -640,12 +656,13 @@ def erkennung_beschreibung() -> tuple[bool, str]:
         return True, ("Gedruckte Formblätter werden von der Windows-"
                       "Texterkennung gelesen, auch als Scan ohne Textebene. "
                       "Für handschriftliche Berichte wird zusätzlich ein "
-                      "Anthropic-Schlüssel gebraucht (einstellungen.txt, "
-                      "Zeile anthropic_key=). Bitte das Ergebnis prüfen.")
+                      "Anthropic-Schlüssel gebraucht ("
+                      + _wo_der_schluessel_hingehoert()
+                      + "). Bitte das Ergebnis prüfen.")
     return False, ("Fotos und Scans können auf diesem Rechner nicht gelesen "
                    "werden. PDF mit Textebene geht ohne Weiteres; für Scans "
-                   "wird ein Anthropic-Schlüssel gebraucht (einstellungen.txt "
-                   "neben dem Programm, Zeile anthropic_key=).")
+                   "wird ein Anthropic-Schlüssel gebraucht ("
+                   + _wo_der_schluessel_hingehoert() + ").")
 
 
 # ---------------------------------------------------------------------------
