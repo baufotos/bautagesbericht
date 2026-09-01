@@ -30,14 +30,59 @@ export function ServiceWorkerRegistrierung() {
     // beim Programmieren dauernd veraltete Dateien ausliefern.
     if (process.env.NODE_ENV !== "production") return;
 
+    /* ── Warum hier neu geladen wird ───────────────────────────────────────
+     *
+     * Ohne diesen Block kommt ein Update nicht beim Anwender an, und zwar aus
+     * einem Grund, den man der App nicht ansieht:
+     *
+     *   Der neue Service Worker installiert sich, ruft skipWaiting() und
+     *   clients.claim() und steuert damit ab sofort die Seite. Das JavaScript
+     *   der Oberfläche ist zu diesem Zeitpunkt aber längst geladen — und zwar
+     *   das ALTE. Die Seite läuft also mit dem alten Bundle weiter, bis
+     *   jemand von sich aus neu lädt.
+     *
+     * Genau so ist die neue Navigation "Baubesprechungen" nach dem Ausrollen
+     * nicht aufgetaucht: ausgeliefert war sie, angezeigt wurde die alte
+     * Fassung. Deshalb lädt die App jetzt selbst neu, sobald ein neuer
+     * Service Worker das Ruder übernimmt.
+     *
+     * Zwei Vorsichtsmaßnahmen:
+     *   - Nur, wenn vorher schon einer die Seite gesteuert hat. Beim allerersten
+     *     Besuch übernimmt clients.claim() ebenfalls, aber da ist die Seite
+     *     bereits die neueste — ein Neuladen wäre nur Flackern.
+     *   - Nur einmal. Ohne den Riegel könnte aus einem Fehlerfall eine
+     *     Schleife werden, und eine Baustellen-App, die sich im Kreis dreht,
+     *     ist schlimmer als eine veraltete.
+     */
+    let neuLaden = false;
+    const hatteSchonEinen = navigator.serviceWorker.controller !== null;
+
+    const beiWechsel = () => {
+      if (!hatteSchonEinen || neuLaden) return;
+      neuLaden = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", beiWechsel);
+
     const anmelden = () => {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
-        // Kein Grund, die App zu stören — sie läuft auch ohne Offline-Speicher.
-      });
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((registrierung) => {
+          // Sucht beim Start aktiv nach einer neuen Fassung. Ohne das prüft
+          // der Browser je nach Laune erst Stunden später.
+          registrierung.update().catch(() => undefined);
+        })
+        .catch(() => {
+          // Kein Grund, die App zu stören — sie läuft auch ohne Offline-Speicher.
+        });
     };
 
     if (document.readyState === "complete") anmelden();
     else window.addEventListener("load", anmelden, { once: true });
+
+    return () => {
+      navigator.serviceWorker.removeEventListener("controllerchange", beiWechsel);
+    };
   }, []);
 
   return null;
