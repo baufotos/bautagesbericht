@@ -249,3 +249,75 @@ def delete_projektberichte_for(db: Session, *, projekt_id: int) -> int:
     for bericht in berichte:
         delete_projektbericht_cascade(db, bericht)
     return len(berichte)
+
+
+def count_besprechungsprotokolle_for(db: Session, *, projekt_id: int) -> int:
+    from app.models import Besprechungsprotokoll
+
+    return (
+        db.query(Besprechungsprotokoll)
+        .filter(Besprechungsprotokoll.projekt_id == projekt_id)
+        .count()
+    )
+
+
+def delete_besprechungen_for(db: Session, *, projekt_id: int) -> int:
+    """Alles, was am Projekt zu den Baubesprechungen gehört.
+
+    Die Reihenfolge ist nicht beliebig, sondern folgt den Fremdschlüsseln —
+    andernfalls verweigert die Datenbank das Löschen und der Aufruf endet in
+    einem 500er:
+
+        Zeilen (thema_updates)  ->  zeigen auf Protokoll UND Thema
+        Teilnehmer, Anlagen     ->  zeigen auf Protokoll
+        Themen                  ->  zeigen auf Kapitel und auf Protokolle
+                                    (erstmals/zuletzt)
+        Protokolle              ->  zeigen auf das Projekt
+        Kapitel                 ->  zeigen auf Projekt und Gewerk
+        Projektbeteiligte       ->  zeigen auf das Projekt
+
+    Die Kapitel müssen weg, BEVOR ``delete_maengel_for`` die Gewerke entfernt:
+    Ein Kapitel merkt sich, aus welchem Gewerk es entstanden ist.
+    """
+    from app.models import (
+        BesprechungsAnlage,
+        BesprechungsKapitel,
+        BesprechungsTeilnehmer,
+        BesprechungsThema,
+        BesprechungsThemaUpdate,
+        Besprechungsprotokoll,
+        Projektbeteiligter,
+    )
+
+    protokoll_ids = [
+        p.id
+        for p in db.query(Besprechungsprotokoll.id)
+        .filter(Besprechungsprotokoll.projekt_id == projekt_id)
+        .all()
+    ]
+
+    if protokoll_ids:
+        for modell in (BesprechungsThemaUpdate, BesprechungsTeilnehmer,
+                       BesprechungsAnlage):
+            db.query(modell).filter(
+                modell.protokoll_id.in_(protokoll_ids)
+            ).delete(synchronize_session=False)
+
+    db.query(BesprechungsThema).filter(
+        BesprechungsThema.projekt_id == projekt_id
+    ).delete(synchronize_session=False)
+
+    db.query(Besprechungsprotokoll).filter(
+        Besprechungsprotokoll.projekt_id == projekt_id
+    ).delete(synchronize_session=False)
+
+    db.query(BesprechungsKapitel).filter(
+        BesprechungsKapitel.projekt_id == projekt_id
+    ).delete(synchronize_session=False)
+
+    db.query(Projektbeteiligter).filter(
+        Projektbeteiligter.projekt_id == projekt_id
+    ).delete(synchronize_session=False)
+
+    db.flush()
+    return len(protokoll_ids)

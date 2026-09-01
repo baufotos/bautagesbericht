@@ -5,10 +5,12 @@ from app.database import get_db
 from app.models import Projekt
 from app.schemas import ProjektCreate, ProjektResponse, ProjektUpdate
 from app.services.cleanup import (
+    count_besprechungsprotokolle_for,
     count_einreichungen_for,
     count_fotosaetze_for,
     count_projektberichte_for,
     count_maengel_for,
+    delete_besprechungen_for,
     delete_einreichungen_for,
     delete_fotosaetze_for,
     delete_projektberichte_for,
@@ -88,7 +90,9 @@ def delete_projekt(projekt_id: int, force: bool = False, db: Session = Depends(g
     anzahl_maengel = count_maengel_for(db, projekt_id=projekt_id)
     anzahl_fotosaetze = count_fotosaetze_for(db, projekt_id=projekt_id)
     anzahl_berichte = count_projektberichte_for(db, projekt_id=projekt_id)
-    if (anzahl or anzahl_maengel or anzahl_fotosaetze or anzahl_berichte) and not force:
+    anzahl_protokolle = count_besprechungsprotokolle_for(db, projekt_id=projekt_id)
+    if (anzahl or anzahl_maengel or anzahl_fotosaetze or anzahl_berichte
+            or anzahl_protokolle) and not force:
         teile = []
         if anzahl:
             teile.append(f"{anzahl} Einreichung(en)")
@@ -98,15 +102,19 @@ def delete_projekt(projekt_id: int, force: bool = False, db: Session = Depends(g
             teile.append(f"{anzahl_fotosaetze} Fotosatz/Fotosätze")
         if anzahl_berichte:
             teile.append(f"{anzahl_berichte} Projektbericht(e)")
+        if anzahl_protokolle:
+            teile.append(f"{anzahl_protokolle} Besprechungsprotokoll(e)")
         raise HTTPException(
             409,
             detail={
                 "grund": "abhaengige_daten_vorhanden",
-                "anzahl": anzahl + anzahl_maengel + anzahl_fotosaetze + anzahl_berichte,
+                "anzahl": (anzahl + anzahl_maengel + anzahl_fotosaetze
+                           + anzahl_berichte + anzahl_protokolle),
                 "anzahl_einreichungen": anzahl,
                 "anzahl_maengel": anzahl_maengel,
                 "anzahl_fotosaetze": anzahl_fotosaetze,
                 "anzahl_projektberichte": anzahl_berichte,
+                "anzahl_besprechungsprotokolle": anzahl_protokolle,
                 "nachricht": (
                     f"Zu diesem Projekt gehören noch {', '.join(teile)}. "
                     "Beim Löschen werden sie mit entfernt."
@@ -120,6 +128,10 @@ def delete_projekt(projekt_id: int, force: bool = False, db: Session = Depends(g
         delete_fotosaetze_for(db, projekt_id=projekt_id)
     if anzahl_berichte:
         delete_projektberichte_for(db, projekt_id=projekt_id)
+    # Vor delete_maengel_for: Die Besprechungskapitel verweisen auf Gewerke,
+    # und die raeumt der Mangel-Aufruf ab. Immer aufrufen — auch ohne
+    # Protokolle kann ein Projekt Kapitel und Projektbeteiligte haben.
+    delete_besprechungen_for(db, projekt_id=projekt_id)
     # Immer aufrufen: Auch ein Projekt ohne Mängel kann Gewerke und Pläne
     # haben, die per Fremdschlüssel darauf verweisen und mit weg müssen.
     delete_maengel_for(db, projekt_id=projekt_id)
