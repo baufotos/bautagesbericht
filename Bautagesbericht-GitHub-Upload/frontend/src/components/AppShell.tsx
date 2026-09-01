@@ -35,10 +35,12 @@ import {
   Images,
   LayoutDashboard,
   ListChecks,
+  ListTree,
   Mail,
   Map,
   MapPin,
   Menu,
+  MessagesSquare,
   Moon,
   Plus,
   RefreshCw,
@@ -67,12 +69,14 @@ export type Ansicht =
   | "maengel-neu"
   | "maengel-anzeige"
   | "projektberichte"
+  | "besprechungen"
   | "btb-einreichen"
   | "btb-uebersicht"
   | "stamm-projekte"
   | "stamm-empfaenger"
   | "stamm-firmen"
   | "stamm-plaene"
+  | "stamm-besprechung"
   | "stamm-listen";
 
 export interface NavEintrag {
@@ -165,6 +169,19 @@ export const NAVIGATION: NavGruppe[] = [
     ],
   },
   {
+    label: "Baubesprechungen",
+    eintraege: [
+      {
+        key: "besprechungen",
+        label: "Protokolle",
+        kurz: "Protokoll",
+        icon: MessagesSquare,
+        titel: "Baubesprechungsprotokolle",
+        bereich: "Baubesprechungen",
+      },
+    ],
+  },
+  {
     label: "Bautagesberichte",
     eintraege: [
       {
@@ -213,6 +230,13 @@ export const NAVIGATION: NavGruppe[] = [
         label: "Empfänger",
         icon: Mail,
         titel: "Empfänger",
+        bereich: "Stammdaten",
+      },
+      {
+        key: "stamm-besprechung",
+        label: "Besprechungen",
+        icon: ListTree,
+        titel: "Kapitel und Projektbeteiligte",
         bereich: "Stammdaten",
       },
       {

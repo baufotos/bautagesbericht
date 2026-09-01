@@ -35,10 +35,14 @@
  * einfachste verlässliche Regel.
  */
 
-// Bei jeder Gestaltungsänderung hochzählen: Die Programmhülle liegt im
-// Cache, und ohne neue Kennung würden Rückkehrer weiter das alte Aussehen
-// sehen. "v2" ist die dunkle Fassung.
-const VERSION = "hpp-v2";
+// NICHT VON HAND ÄNDERN — scripts/sw-version.mjs stempelt hier vor jedem
+// Build den Zeitpunkt hinein (npm-Skript "prebuild").
+//
+// Der Browser installiert einen neuen Service Worker nur, wenn sich DIESE
+// DATEI ändert. Blieb die Kennung stehen, sah der Anwender nach einem Update
+// weiter die alte Oberfläche — genau so ist beim Einbau der
+// Baubesprechungsprotokolle die neue Navigation nicht angekommen.
+const VERSION = "hpp-260901-221508";
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 const MEDIEN_CACHE = `${VERSION}-medien`;

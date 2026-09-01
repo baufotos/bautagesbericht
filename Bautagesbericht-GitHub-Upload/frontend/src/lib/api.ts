@@ -1,6 +1,12 @@
 import type {
+  AnalyseErgebnis,
   Baufoto,
   Bearbeiter,
+  BesprechungsAnlage,
+  BesprechungsKapitel,
+  BesprechungStatus,
+  BesprechungsTeilnehmer,
+  BesprechungsThema,
   Einreichung,
   EinreichungFaehigkeiten,
   Empfaenger,
@@ -31,12 +37,17 @@ import type {
   MangelUpdateInput,
   MangelVersandErgebnis,
   Projekt,
+  Projektbeteiligter,
   Projektbericht,
   ProjektberichtEingabe,
   ProjektberichtFoto,
   ProjektberichtListItem,
   ProjektberichtVorschau,
   ProjektPlan,
+  Protokoll,
+  ProtokollAnlegen,
+  ProtokollListItem,
+  ThemaUpdate,
   WochenAnalyse,
   WochenErgebnis,
   WochenTag,
@@ -275,6 +286,15 @@ export const api = {
       }),
     createBearbeiter: (data: { name: string; email?: string }) =>
       fetchAPI<Bearbeiter>("/mangel-stammdaten/bearbeiter", json("POST", data)),
+    /** Kürzel und Durchwahl für die Kopfzeile des Besprechungsprotokolls. */
+    updateBearbeiter: (
+      id: number,
+      data: Partial<Pick<Bearbeiter, "name" | "email" | "kuerzel" | "durchwahl">>
+    ) =>
+      fetchAPI<Bearbeiter>(
+        `/mangel-stammdaten/bearbeiter/${id}`,
+        json("PATCH", data)
+      ),
     deleteBearbeiter: (id: number) =>
       fetchAPI<void>(`/mangel-stammdaten/bearbeiter/${id}`, { method: "DELETE" }),
   },
@@ -521,5 +541,201 @@ export const api = {
     /** Nur eines der beiden — für den Nachschub, wenn eines schon verschickt ist. */
     dokument: (data: MaengelanzeigeAnfrage, nur: "anschreiben" | "anlage") =>
       fetchDatei(`/maengelanzeige/dokumente?nur=${nur}`, json("POST", data)),
+  },
+
+  /**
+   * Baubesprechungsprotokolle.
+   *
+   * `kapitel`, `beteiligte` und `themen` hängen am **Projekt**, nicht am
+   * Protokoll — die Themenliste läuft über alle Sitzungen hinweg weiter.
+   * Alles darunter gehört zu genau einem Protokoll.
+   */
+  besprechungen: {
+    kapitel: (projektId: number) =>
+      fetchAPI<BesprechungsKapitel[]>(
+        `/besprechungsprotokolle/kapitel${query({ projekt_id: projektId })}`
+      ),
+    kapitelAnlegen: (data: {
+      projekt_id: number;
+      nummer: string;
+      titel: string;
+      sortierung?: number;
+    }) =>
+      fetchAPI<BesprechungsKapitel>(
+        "/besprechungsprotokolle/kapitel",
+        json("POST", data)
+      ),
+    kapitelAusGewerken: (projektId: number) =>
+      fetchAPI<BesprechungsKapitel[]>(
+        `/besprechungsprotokolle/kapitel/aus-gewerken${query({
+          projekt_id: projektId,
+        })}`,
+        { method: "POST" }
+      ),
+    kapitelAendern: (
+      id: number,
+      data: Partial<Pick<BesprechungsKapitel, "nummer" | "titel" | "sortierung">>
+    ) =>
+      fetchAPI<BesprechungsKapitel>(
+        `/besprechungsprotokolle/kapitel/${id}`,
+        json("PATCH", data)
+      ),
+    kapitelLoeschen: (id: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/kapitel/${id}`, {
+        method: "DELETE",
+      }),
+
+    beteiligte: (projektId: number) =>
+      fetchAPI<Projektbeteiligter[]>(
+        `/besprechungsprotokolle/beteiligte${query({ projekt_id: projektId })}`
+      ),
+    beteiligterAnlegen: (
+      data: Omit<Projektbeteiligter, "id" | "sortierung"> & { sortierung?: number }
+    ) =>
+      fetchAPI<Projektbeteiligter>(
+        "/besprechungsprotokolle/beteiligte",
+        json("POST", data)
+      ),
+    beteiligterAendern: (id: number, data: Partial<Projektbeteiligter>) =>
+      fetchAPI<Projektbeteiligter>(
+        `/besprechungsprotokolle/beteiligte/${id}`,
+        json("PATCH", data)
+      ),
+    beteiligterLoeschen: (id: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/beteiligte/${id}`, {
+        method: "DELETE",
+      }),
+
+    /** Die laufende Themenliste des Projekts, unabhängig von einer Sitzung. */
+    themen: (projektId: number, nurOffen = true) =>
+      fetchAPI<BesprechungsThema[]>(
+        `/besprechungsprotokolle/themen${query({
+          projekt_id: projektId,
+          nur_offen: nurOffen,
+        })}`
+      ),
+
+    list: (projektId?: number) =>
+      fetchAPI<ProtokollListItem[]>(
+        `/besprechungsprotokolle${query({ projekt_id: projektId })}`
+      ),
+    get: (id: number) => fetchAPI<Protokoll>(`/besprechungsprotokolle/${id}`),
+    create: (data: ProtokollAnlegen) =>
+      fetchAPI<Protokoll>("/besprechungsprotokolle", json("POST", data)),
+    update: (id: number, data: Partial<ProtokollAnlegen>) =>
+      fetchAPI<Protokoll>(`/besprechungsprotokolle/${id}`, json("PATCH", data)),
+    delete: (id: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/${id}`, { method: "DELETE" }),
+
+    tldvImport: (
+      id: number,
+      data: { transkript: string; notizen: string; analysieren?: boolean }
+    ) =>
+      fetchAPI<AnalyseErgebnis>(
+        `/besprechungsprotokolle/${id}/tldv-import`,
+        json("POST", data)
+      ),
+    analysieren: (id: number) =>
+      fetchAPI<AnalyseErgebnis>(`/besprechungsprotokolle/${id}/analysieren`, {
+        method: "POST",
+      }),
+
+    themaHinzufuegen: (
+      id: number,
+      data: {
+        thema_id?: number | null;
+        kapitel_id?: number | null;
+        thema_text: string;
+        zustaendig?: string;
+        bearb_bis?: string;
+        status?: BesprechungStatus;
+        hervorheben?: boolean;
+      }
+    ) =>
+      fetchAPI<ThemaUpdate>(
+        `/besprechungsprotokolle/${id}/themen`,
+        json("POST", data)
+      ),
+    themaAendern: (
+      id: number,
+      updateId: number,
+      data: Partial<
+        Pick<
+          ThemaUpdate,
+          | "thema_text"
+          | "zustaendig"
+          | "bearb_bis"
+          | "status"
+          | "hervorheben"
+          | "sortierung"
+          | "bestaetigt"
+          | "thema_id"
+        >
+      >
+    ) =>
+      fetchAPI<ThemaUpdate>(
+        `/besprechungsprotokolle/${id}/themen/${updateId}`,
+        json("PATCH", data)
+      ),
+    themaEntfernen: (id: number, updateId: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/${id}/themen/${updateId}`, {
+        method: "DELETE",
+      }),
+
+    teilnehmerHinzufuegen: (
+      id: number,
+      data: { name: string; firma_kuerzel?: string; telefon?: string }
+    ) =>
+      fetchAPI<BesprechungsTeilnehmer>(
+        `/besprechungsprotokolle/${id}/teilnehmer`,
+        json("POST", data)
+      ),
+    teilnehmerAendern: (
+      id: number,
+      teilnehmerId: number,
+      data: Partial<Pick<BesprechungsTeilnehmer, "name" | "firma_kuerzel" | "telefon" | "anwesend">>
+    ) =>
+      fetchAPI<BesprechungsTeilnehmer>(
+        `/besprechungsprotokolle/${id}/teilnehmer/${teilnehmerId}`,
+        json("PATCH", data)
+      ),
+    teilnehmerLoeschen: (id: number, teilnehmerId: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/${id}/teilnehmer/${teilnehmerId}`, {
+        method: "DELETE",
+      }),
+    teilnehmerAusBeteiligten: (id: number) =>
+      fetchAPI<BesprechungsTeilnehmer[]>(
+        `/besprechungsprotokolle/${id}/teilnehmer/aus-beteiligten`,
+        { method: "POST" }
+      ),
+
+    /** Anlage hochladen — meist die unterschriebene, eingescannte Liste. */
+    anlageHochladen: (id: number, datei: File, bezeichnung = "") => {
+      const formData = new FormData();
+      formData.append("datei", datei);
+      formData.append("bezeichnung", bezeichnung);
+      return fetchAPI<BesprechungsAnlage>(
+        `/besprechungsprotokolle/${id}/anlagen`,
+        { method: "POST", body: formData }
+      );
+    },
+    anlageLoeschen: (id: number, anlageId: number) =>
+      fetchAPI<void>(`/besprechungsprotokolle/${id}/anlagen/${anlageId}`, {
+        method: "DELETE",
+      }),
+
+    freigeben: (id: number, data: { geprueft_von_id?: number | null; trotz_ungeprueft?: boolean } = {}) =>
+      fetchAPI<Protokoll>(
+        `/besprechungsprotokolle/${id}/freigeben`,
+        json("POST", data)
+      ),
+    neuErzeugen: (id: number) =>
+      fetchAPI<Protokoll>(`/besprechungsprotokolle/${id}/generieren`, {
+        method: "POST",
+      }),
+    dokument: (id: number, alsPdf = false) =>
+      fetchDatei(
+        `/besprechungsprotokolle/${id}/dokument${query({ als_pdf: alsPdf })}`
+      ),
   },
 };

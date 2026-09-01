@@ -61,7 +61,7 @@ ERLAUBTE_ENDUNGEN = bildformate.BILD_ENDUNGEN
 
 #: Maximale Anzahl Fotos in einem Upload-Aufruf. Das Frontend schickt einzeln;
 #: die Grenze schützt nur vor Ausrutschern.
-MAX_FOTOS_PRO_UPLOAD = 80
+MAX_FOTOS_PRO_UPLOAD = 40
 
 
 class BaufotoFehler(Exception):

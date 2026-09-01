@@ -134,6 +134,9 @@ export interface Bearbeiter {
   id: number;
   name: string;
   email: string | null;
+  /** Kürzel und Durchwahl für die Kopfzeile des Besprechungsprotokolls. */
+  kuerzel: string;
+  durchwahl: string;
 }
 
 export interface MangelStammdaten {
@@ -551,4 +554,165 @@ export interface FotosatzFilter {
   projekt_id?: number;
   kategorie?: string;
   suche?: string;
+}
+
+/* ───────────────────────── Baubesprechungsprotokolle ─────────────────────────
+ *
+ * Der Zuschnitt spiegelt das Backend: Ein `BesprechungsThema` lebt am Projekt
+ * und überdauert beliebig viele Sitzungen, ein `ThemaUpdate` ist sein Stand in
+ * genau einem Protokoll — und damit die Zeile, die gedruckt wird.
+ */
+
+/** k kritisch · b in Bearbeitung · e erledigt · n neu · i informativ */
+export type BesprechungStatus = "k" | "b" | "e" | "n" | "i";
+
+export type ProtokollStatus = "entwurf" | "geprueft" | "freigegeben";
+
+export interface BesprechungsKapitel {
+  id: number;
+  projekt_id: number;
+  nummer: string;
+  titel: string;
+  sortierung: number;
+  gewerk_id: number | null;
+  anzahl_themen: number;
+}
+
+export interface Projektbeteiligter {
+  id: number;
+  projekt_id: number;
+  kuerzel: string;
+  name: string;
+  rolle: string;
+  ansprechpartner: string;
+  telefon: string;
+  sortierung: number;
+}
+
+/** Ein Sachverhalt der laufenden Themenliste des Projekts. */
+export interface BesprechungsThema {
+  id: number;
+  projekt_id: number;
+  kapitel_id: number;
+  kapitel_nummer: string;
+  kapitel_titel: string;
+  inhalt_nr: string;
+  thema: string;
+  zustaendig: string;
+  bearb_bis: string;
+  status: BesprechungStatus;
+  erledigt_am: string | null;
+  zuletzt_bb: number | null;
+  erstmals_bb: number | null;
+  /** "02. 08." — Kapitel und laufende Nummer ohne die BB-Nummer. */
+  kennung: string;
+}
+
+/** Eine Druckzeile: der Stand eines Themas in diesem Protokoll. */
+export interface ThemaUpdate {
+  id: number;
+  protokoll_id: number;
+  thema_id: number;
+  thema_text: string;
+  zustaendig: string;
+  bearb_bis: string;
+  status: BesprechungStatus;
+  hervorheben: boolean;
+  sortierung: number;
+  bestaetigt: boolean;
+  herkunft: "ki" | "mensch" | "fortschreibung";
+  /** Vollständig, wie gedruckt: "02. 08. 16". */
+  nummer: string;
+  /** Die Sitzung, aus der die Zeile stammt — bei Übernahmen eine ältere. */
+  bb_nr: string;
+  uebernommen: boolean;
+  kapitel_id: number;
+  kapitel_nummer: string;
+  kapitel_titel: string;
+  inhalt_nr: string;
+  vorher_text: string;
+  vorher_status: string;
+  vorher_bb: number | null;
+}
+
+export interface BesprechungsTeilnehmer {
+  id: number;
+  protokoll_id: number;
+  name: string;
+  firma_kuerzel: string;
+  telefon: string;
+  anwesend: boolean;
+  reihenfolge: number;
+  aus_transkript: boolean;
+}
+
+export interface BesprechungsAnlage {
+  id: number;
+  protokoll_id: number;
+  dateiname: string;
+  bezeichnung: string;
+  reihenfolge: number;
+  hochgeladen_am: string | null;
+}
+
+export interface ProtokollListItem {
+  id: number;
+  projekt_id: number;
+  projekt_name: string;
+  nummer: number;
+  leistung: string;
+  besprechungsort: string;
+  besprechungsdatum: string;
+  ersteller_name: string;
+  ersteller_kuerzel: string;
+  status: ProtokollStatus;
+  anzahl_themen: number;
+  anzahl_offen: number;
+  anzahl_teilnehmer: number;
+  anzahl_anlagen: number;
+  anzahl_ungeprueft: number;
+  hat_transkript: boolean;
+  hat_dokument: boolean;
+  hat_pdf: boolean;
+  analyse_am: string | null;
+  erzeugt_am: string | null;
+  erstellt_am: string | null;
+  geaendert_am: string | null;
+}
+
+export interface Protokoll extends ProtokollListItem {
+  ersteller_id: number | null;
+  ersteller_durchwahl: string;
+  ersteller_email: string;
+  tldv_transkript_roh: string;
+  tldv_notizen_roh: string;
+  analyse_hinweise: string[];
+  geprueft_am: string | null;
+  freigegeben_am: string | null;
+  themen_updates: ThemaUpdate[];
+  teilnehmer: BesprechungsTeilnehmer[];
+  anlagen: BesprechungsAnlage[];
+  projekt_nummer: string;
+  bauherr: string;
+  projekt_adresse: string;
+}
+
+export interface ProtokollAnlegen {
+  projekt_id: number;
+  besprechungsdatum: string;
+  leistung?: string;
+  besprechungsort?: string;
+  ersteller_id?: number | null;
+  ersteller_name?: string;
+  ersteller_kuerzel?: string;
+  ersteller_durchwahl?: string;
+  ersteller_email?: string;
+  offene_punkte_uebernehmen?: boolean;
+}
+
+export interface AnalyseErgebnis {
+  neue_themen: number;
+  fortschreibungen: number;
+  teilnehmer: number;
+  hinweise: string[];
 }

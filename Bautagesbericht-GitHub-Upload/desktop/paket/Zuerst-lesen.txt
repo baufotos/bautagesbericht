@@ -1,0 +1,124 @@
+HPP BAUMANAGEMENT
+=================
+
+Bautagesberichte, Mängelberichte, Baubesprechungsprotokolle und Baufotos in
+einem Programm.
+
+
+SO GEHT ES LOS
+--------------
+1. Diesen Ordner an eine feste Stelle kopieren, zum Beispiel
+   C:\Programme-HPP\HPP-Baumanagement  oder auf den Desktop.
+2. HPP-Baumanagement.exe doppelklicken.
+3. Beim ersten Start dauert es einige Sekunden — danach öffnet sich das
+   Programmfenster.
+
+Wer das Programm oft braucht: Rechtsklick auf HPP-Baumanagement.exe →
+"An Taskleiste anheften".
+
+Es wird nichts installiert. Keine Administratorrechte, kein Python, kein
+Node.js. Alles Nötige liegt in diesem Ordner.
+
+
+BEIM ERSTEN START MELDET WINDOWS "UNBEKANNTER HERAUSGEBER"
+---------------------------------------------------------
+Auf "Weitere Informationen" klicken, dann "Trotzdem ausführen". Grund: Das
+Programm ist nicht mit einem kostenpflichtigen Zertifikat signiert. Der
+komplette Quellcode liegt im Projektordner unter desktop\quelle.
+
+
+WAS DAS PROGRAMM KANN
+---------------------
+Baufotos            Fotos hochladen. Sie werden automatisch umbenannt zu
+                    {JJMMTT}_{Kategorie}_{Nummer}.jpg, auf 1600 Pixel
+                    verkleinert und als
+                    {Datum}_{Projekt}_{Kategorie}.zip zum Ablegen im
+                    Projektordner bereitgestellt — dieselben Regeln wie im
+                    bisherigen Baustellenfotos-Tool.
+
+                    Das Ausgangsformat ist egal: HEIC vom iPhone, PNG, TIFF,
+                    WEBP, BMP, GIF. Herauskommt immer eine JPEG-Datei, damit
+                    jeder Empfänger sie ohne Zusatzsoftware öffnen kann. Das
+                    gilt genauso für Mängelfotos und Fotos im Monatsbericht.
+
+                    Per Mail verschicken geht auch: "Per Mail" auf der Karte
+                    des Fotosatzes. Die App baut eine fertige Mail mit dem ZIP
+                    im Anhang und legt sie als Datei ab — doppelklicken, und
+                    Outlook öffnet sie als Entwurf, in dem nur noch "Senden"
+                    fehlt. Wer im Büronetz einen Postausgangsserver in
+                    einstellungen.txt einträgt, kann direkt aus der App senden.
+
+Mängelberichte      Mängel auf der Baustelle erfassen, Fristen und Nachfristen
+                    verwalten, Stelle im Plan markieren, Mängelliste als
+                    Word-Dokument exportieren.
+
+Baubesprechungen    Protokolle im HPP-Layout, aus der Aufzeichnung der
+                    Besprechung. Transkript und Notizen aus tl;dv einfügen,
+                    "Analysieren" drücken — die App ordnet jeden Punkt einem
+                    laufenden Thema zu oder legt ein neues an. Danach jede
+                    Zeile prüfen und freigeben; erst dann entsteht das
+                    Word-Dokument. Ohne Prüfung geht nichts heraus.
+
+                    Wichtig ist die Themenliste dahinter: Sie gehört dem
+                    Projekt, nicht der einzelnen Sitzung. Ein offener Punkt
+                    steht im nächsten Protokoll von selbst wieder drin, mit
+                    seiner alten Nummer, bis jemand ihn auf "erledigt" setzt.
+                    Nicht besprochen heißt nicht erledigt.
+
+                    Die Teilnehmerliste kommt als eigene Seite mit heraus.
+                    Ausdrucken, vor Ort unterschreiben lassen, einscannen und
+                    unter "Anlagen" hochladen — der Scan hängt dann hinten am
+                    Protokoll.
+
+                    Für "Analysieren" wird unten anthropic_key gebraucht. Ohne
+                    Schlüssel lassen sich die Themen von Hand erfassen, alles
+                    andere bleibt gleich.
+
+Bautagesberichte    Berichte der Firmen einreichen. Wetterdaten und die
+                    Word-Erzeugung laufen im Hintergrund.
+                    Mit "Ganze Woche" den Zeitraum von-bis eintragen und die
+                    Berichte auf einmal hochladen - auch als ein einziges
+                    Dokument, egal ob eine Seite je Tag oder mehrere Tage auf
+                    einem Blatt. Die App sucht die Daten heraus, trennt die
+                    Tage, zeigt sie zum Prüfen an und macht daraus einzelne
+                    Bautagesberichte, jeden mit eigenen Wetterdaten. Am Ende
+                    gibt es jeden einzeln als Word und alle zusammen als ZIP.
+
+                    Gescannte Berichte ohne Textebene liest die App über die
+                    Texterkennung von Windows - ohne Internet und ohne
+                    Zusatzprogramm. Das klappt bei gedruckten Formblättern,
+                    also bei fast allen Firmenberichten.
+                    HANDSCHRIFT kann Windows nicht. Dafür unten anthropic_key
+                    ausfüllen. Die App sagt beim Hochladen, was auf diesem
+                    Rechner geht.
+
+
+WO DIE DATEN LIEGEN
+-------------------
+Im Ordner "daten" neben dem Programm:
+
+  daten\hpp-baumanagement.db   die Datenbank
+  daten\uploads                Fotos, Pläne, hochgeladene Berichte
+  daten\output                 erzeugte Word-Dokumente
+  daten\protokoll.txt          Protokoll, falls einmal etwas schiefgeht
+
+WICHTIG: Diesen Ordner in die Sicherung aufnehmen. Er enthält die ganze
+Arbeit.
+
+
+GEMEINSAM ARBEITEN
+------------------
+So wie ausgeliefert arbeitet jeder Rechner für sich — jeder sieht nur seine
+eigenen Daten. Damit das ganze Team denselben Stand sieht, in
+einstellungen.txt eine zentrale Datenbank und einen gemeinsamen Datenordner
+eintragen. Die Datei erklärt es Zeile für Zeile.
+
+
+WENN ETWAS NICHT GEHT
+---------------------
+Eingabeaufforderung im Programmordner öffnen und eingeben:
+
+    HPP-Baumanagement.exe --pruefen
+
+Das zeigt, ob Programm, Python und Datenbank gefunden werden und ob der
+Server startet. Zusätzlich hilft daten\protokoll.txt weiter.

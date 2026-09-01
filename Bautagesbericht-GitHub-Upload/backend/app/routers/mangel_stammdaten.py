@@ -25,6 +25,7 @@ from app.models import (
 from app.schemas import (
     BearbeiterCreate,
     BearbeiterResponse,
+    BearbeiterUpdate,
     MangelRueckmeldungStatusCreate,
     MangelRueckmeldungStatusResponse,
     MangelStammdaten,
@@ -137,8 +138,32 @@ def delete_rueckmeldung_status(eintrag_id: int, db: Session = Depends(get_db)):
 
 @router.post("/bearbeiter", response_model=BearbeiterResponse, status_code=201)
 def create_bearbeiter(data: BearbeiterCreate, db: Session = Depends(get_db)):
-    eintrag = Bearbeiter(name=data.name.strip(), email=data.email)
+    eintrag = Bearbeiter(
+        name=data.name.strip(),
+        email=data.email,
+        kuerzel=data.kuerzel.strip(),
+        durchwahl=data.durchwahl.strip(),
+    )
     db.add(eintrag)
+    db.commit()
+    db.refresh(eintrag)
+    return eintrag
+
+
+@router.patch("/bearbeiter/{bearbeiter_id}", response_model=BearbeiterResponse)
+def update_bearbeiter(
+    bearbeiter_id: int, data: BearbeiterUpdate, db: Session = Depends(get_db)
+):
+    """Kürzel und Durchwahl nachtragen.
+
+    Beides steht in der Kopfzeile jedes Besprechungsprotokolls ("Ze: kbl",
+    "T - 22"). Einmal hier gepflegt, füllt sich jedes neue Protokoll selbst.
+    """
+    eintrag = db.get(Bearbeiter, bearbeiter_id)
+    if not eintrag:
+        raise HTTPException(404, "Bearbeiter nicht gefunden")
+    for feld, wert in data.model_dump(exclude_unset=True).items():
+        setattr(eintrag, feld, wert.strip() if isinstance(wert, str) else wert)
     db.commit()
     db.refresh(eintrag)
     return eintrag

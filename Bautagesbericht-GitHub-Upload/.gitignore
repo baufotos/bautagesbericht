@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+backend/.venv/
+backend/storage/
+
+# Node / Next
+node_modules/
+.next/
+frontend/.next/
+frontend/node_modules/
+
+# Secrets — nie ins Repo!
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Tools & Logs — der Cloudflare-Tunnel wird nur lokal gebraucht, nicht im Cloud-Deploy
+tools/
+tools/tunnel_out.log
+tools/tunnel_out.log.stdout
+
+# Referenzmaterial (Beispiel-PDFs, Original-Vorlage) — bleibt lokal, nicht nötig
+# für das Deployment. Die vom Backend genutzte Vorlage liegt in backend/templates/.
+reference/
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Statischer Export der Oberflaeche und das daraus gebaute Windows-Paket.
+# Beides entsteht beim Bauen (siehe desktop/paket/erstellen.ps1) und gehoert
+# nicht ins Repo - das Paket ist ein paar hundert Megabyte gross.
+frontend/out/
+backend/static/
+desktop/HPP-Baumanagement-App/
+desktop/HPP-Baumanagement-App.zip

@@ -37,6 +37,11 @@ class Projekt(Base):
     # steht hier und nicht auf den einzelnen PCs, damit ihn jeder abholende
     # Rechner kennt, ohne dass jemand fuenf Textdateien pflegt.
     foto_zielpfad = Column(String, nullable=False, default="")
+    # Kopfdaten des Besprechungsprotokolls (Deckblatt): Die Projektnummer des
+    # Büros ("225100") und der Bauherr ("SBH | Schulbau Hamburg"). Stammdaten
+    # des Projekts, keine Angabe je Protokoll — sie ändern sich nicht.
+    projekt_nummer = Column(String, nullable=False, default="")
+    bauherr = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
 
     einreichungen = relationship("Einreichung", back_populates="projekt")
@@ -45,6 +50,14 @@ class Projekt(Base):
     plaene = relationship("ProjektPlan", back_populates="projekt")
     fotosaetze = relationship("Fotosatz", back_populates="projekt")
     projektberichte = relationship("Projektbericht", back_populates="projekt")
+    besprechungsprotokolle = relationship(
+        "Besprechungsprotokoll", back_populates="projekt"
+    )
+    besprechungs_kapitel = relationship(
+        "BesprechungsKapitel", back_populates="projekt"
+    )
+    besprechungs_themen = relationship("BesprechungsThema", back_populates="projekt")
+    projektbeteiligte = relationship("Projektbeteiligter", back_populates="projekt")
 
 
 class Empfaenger(Base):
@@ -227,6 +240,12 @@ class Bearbeiter(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     email = Column(String, nullable=True)
+    # Für die Kopfzeile des Besprechungsprotokolls: "Ze: kbl  T - 22". Das
+    # Kürzel steht in jedem Bürodokument, die Durchwahl ist die Nummer hinter
+    # der Zentrale. Einmal hier gepflegt, füllt sich jedes Protokoll selbst;
+    # überschreiben lässt es sich am Protokoll trotzdem (Vertretungsfall).
+    kuerzel = Column(String, nullable=False, default="")
+    durchwahl = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
 
 
@@ -541,3 +560,324 @@ class ProjektberichtFoto(Base):
     hochgeladen_am = Column(DateTime, default=func.now())
 
     bericht = relationship("Projektbericht", back_populates="fotos")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Baubesprechungsprotokolle
+#
+# Löst die Excel-Vorlage ``{JJMMTT}_BB_{Nr}.xlsm`` ab. Deren Aufbau ist der
+# Grund für den Zuschnitt dieser Tabellen — vor allem für den, der auf den
+# ersten Blick zu kompliziert wirkt:
+#
+# Das Blatt "LOP" (Liste offener Punkte) der Vorlage ist **keine** Liste zu
+# einer Besprechung. Es ist die laufende Themenliste des Projekts, die von
+# Sitzung zu Sitzung fortgeschrieben wird; im Beispielprotokoll Nr. 16 stehen
+# über 100 Zeilen, gedruckt werden nur die, die an diesem Tag eine Rolle
+# spielten. Die Nummer ``Kapitel.Inhalt.BB`` ist deshalb projektweit und
+# dauerhaft: "02. 08. 16" heißt "Kapitel 2, Thema 8, zuletzt behandelt in
+# Baubesprechung 16" — und "02. 08. 10" ist derselbe Sachverhalt sechs
+# Sitzungen früher.
+#
+# Daraus folgt die Aufteilung:
+#
+#   BesprechungsThema        der Sachverhalt selbst, lebt am Projekt
+#   BesprechungsThemaUpdate  sein Stand in genau einer Sitzung (das ist die
+#                            Zeile, die gedruckt wird — die BB-Nummer steckt
+#                            hier, nicht am Thema)
+#   Besprechungsprotokoll    die Sitzung
+#
+# Ein Protokoll ist damit: der Schnappschuss der Themenliste zu diesem Datum.
+# Genau wie in der Excel-Vorlage, nur ohne Kopieren von Hand.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+#: Statuswerte der Spalte "Status" (Legende auf Seite 3 des Protokolls).
+#: Reihenfolge wie im Blatt "nicht löschen" der Excel-Vorlage.
+BESPRECHUNG_STATUS = ("k", "b", "e", "n", "i")
+
+#: Status, in dem ein Thema als abgeschlossen gilt und beim nächsten Protokoll
+#: nicht mehr von selbst als offener Punkt vorgeschlagen wird.
+BESPRECHUNG_STATUS_ERLEDIGT = ("e",)
+
+
+class BesprechungsKapitel(Base):
+    """Ein Kapitel der Themenliste — die graue Balkenzeile im Protokoll.
+
+    Beispiele aus der Vorlage: "01. Allgemein/ Projektorganisation",
+    "2. VE01 Erweiterte Rohbauarbeiten - Rolfes Bau (VE300.01)".
+
+    Die Kapitel ab dem zweiten sind die Vergabeeinheiten des Projekts, stehen
+    aber trotzdem in einer eigenen Tabelle und nicht als Verweis auf
+    ``Gewerk``: Ein Kapitel überlebt das Gewerk (die Firma wechselt, die
+    Themen bleiben), es gibt Kapitel ohne Gewerk ("Allgemein", "Termine"), und
+    die Reihenfolge im Protokoll ist eine eigene Entscheidung. ``gewerk_id``
+    merkt sich nur, woher der Vorschlag kam.
+    """
+
+    __tablename__ = "besprechungs_kapitel"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projekt_id = Column(Integer, ForeignKey("projekte.id"), nullable=False)
+    #: Wie gedruckt: "01." oder "2." — die Vorlage ist da uneinheitlich, und
+    #: das soll sie bleiben dürfen. Deshalb String und keine Zahl.
+    nummer = Column(String, nullable=False, default="")
+    titel = Column(String, nullable=False, default="")
+    sortierung = Column(Integer, nullable=False, default=0)
+    gewerk_id = Column(Integer, ForeignKey("gewerke.id"), nullable=True)
+    erstellt_am = Column(DateTime, default=func.now())
+
+    projekt = relationship("Projekt", back_populates="besprechungs_kapitel")
+    gewerk = relationship("Gewerk")
+    themen = relationship("BesprechungsThema", back_populates="kapitel")
+
+
+class BesprechungsThema(Base):
+    """Ein Sachverhalt der laufenden Themenliste des Projekts.
+
+    Lebt am Projekt, nicht am Protokoll — analog zu ``Mangel``. Der Text hier
+    ist der *aktuelle* Stand; was in einer bestimmten Sitzung dazu gesagt
+    wurde, steht im zugehörigen ``BesprechungsThemaUpdate``.
+    """
+
+    __tablename__ = "besprechungs_themen"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projekt_id = Column(Integer, ForeignKey("projekte.id"), nullable=False)
+    kapitel_id = Column(Integer, ForeignKey("besprechungs_kapitel.id"), nullable=False)
+    #: Laufende Nummer innerhalb des Kapitels — die mittlere Zahl der
+    #: Protokollnummer ("02. 08. 16" -> "08"). String, weil die Vorlage "08"
+    #: schreibt und nicht 8.
+    inhalt_nr = Column(String, nullable=False, default="")
+
+    thema = Column(Text, nullable=False, default="")
+    zustaendig = Column(String, nullable=False, default="")
+    bearb_bis = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="n")
+
+    erstmals_protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=True
+    )
+    zuletzt_protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=True
+    )
+    erledigt_am = Column(Date, nullable=True)
+    erstellt_am = Column(DateTime, default=func.now())
+    geaendert_am = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    projekt = relationship("Projekt", back_populates="besprechungs_themen")
+    kapitel = relationship("BesprechungsKapitel", back_populates="themen")
+    updates = relationship(
+        "BesprechungsThemaUpdate",
+        back_populates="thema",
+        cascade="all, delete-orphan",
+    )
+
+
+class Besprechungsprotokoll(Base):
+    """Eine Baubesprechung: Kopfdaten, Teilnehmer, Themenstände, Dokument."""
+
+    __tablename__ = "besprechungsprotokolle"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projekt_id = Column(Integer, ForeignKey("projekte.id"), nullable=False)
+    #: "Protokoll-Nr." — fortlaufend je Projekt, zugleich die BB-Nummer, die
+    #: als dritte Zahl in jeder Themenzeile steht.
+    nummer = Column(Integer, nullable=False)
+    leistung = Column(String, nullable=False, default="Baubesprechung")
+    besprechungsort = Column(String, nullable=False, default="")
+    besprechungsdatum = Column(Date, nullable=False, default=date.today)
+
+    ersteller_id = Column(Integer, ForeignKey("bearbeiter.id"), nullable=True)
+    #: Kopfzeile "25.08.2026  Ze: kbl  T - 22  katharina.blanck@hpp.com".
+    #: Beim Anlegen aus dem Bearbeiter vorbelegt, danach frei änderbar — ein
+    #: Protokoll kann in Vertretung geschrieben werden.
+    ersteller_name = Column(String, nullable=False, default="")
+    ersteller_kuerzel = Column(String, nullable=False, default="")
+    ersteller_durchwahl = Column(String, nullable=False, default="")
+    ersteller_email = Column(String, nullable=False, default="")
+
+    #: Rohdaten aus tl;dv. Bleiben erhalten, damit die KI-Analyse
+    #: nachvollziehbar und wiederholbar ist.
+    tldv_transkript_roh = Column(Text, nullable=False, default="")
+    tldv_notizen_roh = Column(Text, nullable=False, default="")
+    analyse_am = Column(DateTime, nullable=True)
+    analyse_hinweise = Column(JSON, default=list)
+
+    #: entwurf -> geprueft -> freigegeben. Erst "freigegeben" schreibt die
+    #: Themenliste fort und erzeugt das Dokument.
+    status = Column(String, nullable=False, default="entwurf")
+    geprueft_von_id = Column(Integer, ForeignKey("bearbeiter.id"), nullable=True)
+    geprueft_am = Column(DateTime, nullable=True)
+    freigegeben_am = Column(DateTime, nullable=True)
+
+    dokument_pfad = Column(String, nullable=True)
+    pdf_pfad = Column(String, nullable=True)
+    erzeugt_am = Column(DateTime, nullable=True)
+
+    erstellt_am = Column(DateTime, default=func.now())
+    geaendert_am = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    projekt = relationship("Projekt", back_populates="besprechungsprotokolle")
+    ersteller = relationship("Bearbeiter", foreign_keys=[ersteller_id])
+    geprueft_von = relationship("Bearbeiter", foreign_keys=[geprueft_von_id])
+    teilnehmer = relationship(
+        "BesprechungsTeilnehmer",
+        back_populates="protokoll",
+        cascade="all, delete-orphan",
+        order_by="BesprechungsTeilnehmer.reihenfolge",
+    )
+    themen_updates = relationship(
+        "BesprechungsThemaUpdate",
+        back_populates="protokoll",
+        cascade="all, delete-orphan",
+        foreign_keys="BesprechungsThemaUpdate.protokoll_id",
+    )
+    anlagen = relationship(
+        "BesprechungsAnlage",
+        back_populates="protokoll",
+        cascade="all, delete-orphan",
+        order_by="BesprechungsAnlage.reihenfolge",
+    )
+
+
+class BesprechungsThemaUpdate(Base):
+    """Der Stand eines Themas in genau einer Besprechung — eine Druckzeile.
+
+    Der Text steht hier noch einmal und nicht nur am Thema: Ein Protokoll ist
+    ein Dokument mit Datum. Was am 25.08. beschlossen wurde, muss auch dann
+    noch nachlesbar sein, wenn das Thema drei Sitzungen später umformuliert
+    wurde.
+    """
+
+    __tablename__ = "besprechungs_thema_updates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: In welchem Protokoll diese Zeile **gedruckt** wird.
+    protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=False
+    )
+    #: Aus welcher Sitzung die Zeile **stammt** — daraus wird die BB-Nummer
+    #: gedruckt, die dritte Zahl von "02. 08. 16".
+    #:
+    #: Das ist nicht dasselbe wie ``protokoll_id``, und der Unterschied ist der
+    #: Kern der ganzen Fortschreibung: Im Beispielprotokoll Nr. 16 stehen die
+    #: Zeilen "02. 08. 10", "02. 08. 15" und "02. 08. 16" untereinander —
+    #: dreimal derselbe Sachverhalt, festgehalten in den Sitzungen 10, 15 und
+    #: 16. Ein offener Punkt, der heute nicht besprochen wurde, wird deshalb
+    #: unverändert mitgenommen und behält seine alte BB-Nummer; eine neue
+    #: bekommt er erst, wenn zu ihm wirklich wieder etwas gesagt wurde.
+    ursprung_protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=True
+    )
+    thema_id = Column(Integer, ForeignKey("besprechungs_themen.id"), nullable=False)
+
+    thema_text = Column(Text, nullable=False, default="")
+    zustaendig = Column(String, nullable=False, default="")
+    #: Freitext: mal "25.08.26", mal "KW 35'26". Beides steht so im Original,
+    #: ein Datumsfeld könnte nur die Hälfte davon.
+    bearb_bis = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="n")
+    #: Hebt die Zelle "Bearb. bis" hell hervor. In der Excel-Vorlage macht das
+    #: die Bearbeiterin von Hand bei Fristen, die sie im Blick behalten will —
+    #: es gibt dafür keine Regel, deshalb hier auch keine.
+    hervorheben = Column(Boolean, nullable=False, default=False)
+
+    sortierung = Column(Integer, nullable=False, default=0)
+    #: Woher die Zeile kommt: "ki" (Vorschlag der Analyse), "mensch" (von Hand
+    #: angelegt), "fortschreibung" (offener Punkt aus einer früheren Sitzung).
+    herkunft = Column(String, nullable=False, default="mensch")
+    #: Vom Menschen angesehen? Solange das falsch ist, zeigt die Prüfansicht
+    #: die Zeile als "bitte prüfen" — und die Freigabe warnt.
+    bestaetigt = Column(Boolean, nullable=False, default=False)
+    erstellt_am = Column(DateTime, default=func.now())
+
+    protokoll = relationship(
+        "Besprechungsprotokoll",
+        back_populates="themen_updates",
+        foreign_keys=[protokoll_id],
+    )
+    ursprung_protokoll = relationship(
+        "Besprechungsprotokoll", foreign_keys=[ursprung_protokoll_id]
+    )
+    thema = relationship("BesprechungsThema", back_populates="updates")
+
+    @property
+    def bb_nr(self) -> str:
+        """Die dritte Zahl der Protokollnummer, zweistellig wie im Original."""
+        quelle = self.ursprung_protokoll or self.protokoll
+        return f"{quelle.nummer:02d}" if quelle else ""
+
+
+class BesprechungsTeilnehmer(Base):
+    """Eine Zeile der Teilnehmerliste (Seite 4 des Protokolls)."""
+
+    __tablename__ = "besprechungs_teilnehmer"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=False
+    )
+    name = Column(String, nullable=False, default="")
+    firma_kuerzel = Column(String, nullable=False, default="")
+    telefon = Column(String, nullable=False, default="")
+    anwesend = Column(Boolean, nullable=False, default=True)
+    reihenfolge = Column(Integer, nullable=False, default=0)
+    #: Kam der Name aus dem tl;dv-Transkript? Dann ist Firma/Telefon aus den
+    #: Stammdaten geraten und gehört angesehen, bevor das Protokoll rausgeht.
+    aus_transkript = Column(Boolean, nullable=False, default=False)
+    erstellt_am = Column(DateTime, default=func.now())
+
+    protokoll = relationship("Besprechungsprotokoll", back_populates="teilnehmer")
+
+
+class BesprechungsAnlage(Base):
+    """Eine hochgeladene Datei, die hinten an das Protokoll gehängt wird.
+
+    Der Normalfall ist die unterschriebene Teilnehmerliste: Sie wird vor dem
+    Termin gedruckt, vor Ort gegengezeichnet, eingescannt und hier hochgeladen
+    — genau so entstand auch die vierte Seite des Beispielprotokolls. PDF und
+    Bilder werden beim Erzeugen als ganzseitige Abbildungen angefügt.
+    """
+
+    __tablename__ = "besprechungs_anlagen"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    protokoll_id = Column(
+        Integer, ForeignKey("besprechungsprotokolle.id"), nullable=False
+    )
+    dateipfad = Column(String, nullable=False)
+    dateiname = Column(String, nullable=False, default="")
+    #: Zeile über der Abbildung, z. B. "Teilnehmerliste, unterschrieben".
+    #: Leer = keine Überschrift.
+    bezeichnung = Column(String, nullable=False, default="")
+    reihenfolge = Column(Integer, nullable=False, default=0)
+    hochgeladen_am = Column(DateTime, default=func.now())
+
+    protokoll = relationship("Besprechungsprotokoll", back_populates="anlagen")
+
+
+class Projektbeteiligter(Base):
+    """Stammdaten für "Abkürzungen Projektbeteiligte" (Seite 3).
+
+    Bewusst nicht ``Gewerk``: Dort stehen die Nachunternehmer mit
+    Vergabeeinheit und Postanschrift. Hier stehen alle, die im Protokoll als
+    Kürzel auftauchen — Bauherr, Fachplaner, SiGeKo, die eigene Bauleitung.
+    Die meisten davon sind kein Gewerk, und ein Gewerk um vier Rollenfelder zu
+    erweitern, würde beide Listen unschärfer machen.
+    """
+
+    __tablename__ = "projektbeteiligte"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projekt_id = Column(Integer, ForeignKey("projekte.id"), nullable=False)
+    kuerzel = Column(String, nullable=False, default="")
+    name = Column(String, nullable=False, default="")
+    rolle = Column(String, nullable=False, default="")
+    #: Für die Teilnehmerliste: Ansprechpartner und Telefon der Firma. tl;dv
+    #: liefert nur Namen, alles Weitere kommt von hier.
+    ansprechpartner = Column(String, nullable=False, default="")
+    telefon = Column(String, nullable=False, default="")
+    sortierung = Column(Integer, nullable=False, default=0)
+    erstellt_am = Column(DateTime, default=func.now())
+
+    projekt = relationship("Projekt", back_populates="projektbeteiligte")

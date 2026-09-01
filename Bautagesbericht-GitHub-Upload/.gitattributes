@@ -1,0 +1,3 @@
+# Shell-Skripte immer mit LF speichern — sonst scheitert das Skript im
+# Linux-Container an Windows-Zeilenenden (CRLF) im Shebang.
+*.sh text eol=lf

@@ -1,0 +1,8 @@
+# Adresse der App. Genau eine Zeile, Kommentare beginnen mit #.
+#
+# Hier steht die Adresse des Render-Dienstes aus render.yaml. Ändert sich der
+# Dienstname, muss nur diese Zeile angepasst werden — das Startskript und die
+# Desktop-Verknüpfung bleiben unverändert.
+#
+# Zum Testen mit lokal laufendem Backend/Frontend:  http://localhost:3000
+https://bautagesbericht-jwga.onrender.com

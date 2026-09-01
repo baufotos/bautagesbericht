@@ -1,0 +1,15 @@
+# Große/lokale Ordner nicht in den Docker-Build-Kontext kopieren.
+# Wichtig, damit ein lokaler Build nicht node_modules/.next/.venv ins Image
+# schaufelt (auf Render existieren diese ohnehin nicht, weil sie nicht im
+# GitHub-Repo liegen).
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/*.py[cod]
+backend/storage
+**/.env
+**/.env.local
+.git
+tools
+reference

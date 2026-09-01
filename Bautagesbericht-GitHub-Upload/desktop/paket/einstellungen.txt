@@ -1,0 +1,67 @@
+# Einstellungen für HPP Baumanagement
+# ===================================
+# Alle Zeilen mit # sind Kommentare. Ohne Eintrag läuft alles lokal:
+# Datenbank und Fotos liegen im Ordner "daten" neben dem Programm.
+#
+# ── Einzelplatz (Standard) ───────────────────────────────────────────────────
+# Nichts ausfüllen. Das Programm läuft vollständig auf diesem Rechner, auch
+# ohne Internet. Die Daten sieht nur dieser Rechner.
+#
+# ── Gemeinsam im Team ────────────────────────────────────────────────────────
+# Damit alle denselben Stand sehen, brauchen BEIDE Zeilen einen Wert:
+#
+#   datenbank    zentrale Postgres-Datenbank (z. B. die Neon-Datenbank, die
+#                auch der Render-Dienst benutzt). Muss mit
+#                postgresql+psycopg:// beginnen.
+#   datenordner  gemeinsamer Ordner auf dem Netzlaufwerk für Fotos, Pläne und
+#                erzeugte Word-Dokumente.
+#
+# Wird nur die Datenbank eingetragen, sehen alle die Mängel und Fristen — die
+# Fotos aber jeweils nur die des eigenen Rechners. Deshalb beides setzen.
+#
+# Beispiel:
+#   datenbank=postgresql+psycopg://benutzer:kennwort@ep-xyz.eu-central-1.aws.neon.tech/hpp?sslmode=require
+#   datenordner=\\hpp-server\Baumanagement\Daten
+
+datenbank=
+datenordner=
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+# teams_webhook   Teams-Kanal für Meldungen, wenn am Projekt keiner hinterlegt
+#                 ist (Kanal → "…" → Workflows → "Send webhook alerts to a
+#                 channel" → Link kopieren).
+# anthropic_key   Schlüssel für das Auslesen eingescannter Bautagesberichte
+#                 und für das Auswerten der tl;dv-Texte im
+#                 Besprechungsprotokoll. Ohne Schlüssel funktioniert alles
+#                 andere unverändert; die Themen lassen sich dann von Hand
+#                 erfassen.
+
+teams_webhook=
+anthropic_key=
+
+# ── Baufotos per E-Mail direkt senden ────────────────────────────────────────
+# OHNE diese Zeilen geht der Mailversand trotzdem: Die App baut dann einen
+# fertigen Outlook-Entwurf mit ZIP im Anhang, den man selbst abschickt. Das
+# funktioniert auf jedem Rechner und braucht keinen Server.
+#
+# MIT Postausgangsserver erscheint zusätzlich "Direkt senden" — die Mail geht
+# dann ohne Outlook los. Im Büronetz genügt meist das hausinterne Relay:
+#
+#   smtp_server=mail.hpp.local
+#   smtp_port=25
+#   smtp_tls=false
+#   smtp_absender=baumanagement@hpp.com
+#
+# Bei einem Anbieter mit Anmeldung zusätzlich smtp_benutzer und smtp_kennwort;
+# smtp_port=465 schaltet auf SSL um, sonst greift STARTTLS.
+#
+# ACHTUNG: Ein Kennwort steht hier im Klartext. Liegt der Ordner auf einem
+# Netzlaufwerk, dann bitte nur ein Postfach eintragen, das ausschließlich
+# verschickt — kein persönliches Konto.
+
+smtp_server=
+smtp_port=
+smtp_tls=
+smtp_absender=
+smtp_benutzer=
+smtp_kennwort=

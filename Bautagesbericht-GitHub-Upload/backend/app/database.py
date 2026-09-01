@@ -80,6 +80,14 @@ NACHTRAEGLICHE_SPALTEN: dict[str, dict[str, str]] = {
         "teams_webhook_url": "VARCHAR NOT NULL DEFAULT ''",
         # Zielordner der Baufotos im Netzlaufwerk (siehe Kommentar am Modell).
         "foto_zielpfad": "VARCHAR NOT NULL DEFAULT ''",
+        # Kopfdaten des Besprechungsprotokoll-Deckblatts.
+        "projekt_nummer": "VARCHAR NOT NULL DEFAULT ''",
+        "bauherr": "VARCHAR NOT NULL DEFAULT ''",
+    },
+    "bearbeiter": {
+        # Kopfzeile des Besprechungsprotokolls: "Ze: kbl  T - 22".
+        "kuerzel": "VARCHAR NOT NULL DEFAULT ''",
+        "durchwahl": "VARCHAR NOT NULL DEFAULT ''",
     },
     "gewerke": {
         # Postanschrift der Firma fuer den Adressblock der Maengelanzeige.

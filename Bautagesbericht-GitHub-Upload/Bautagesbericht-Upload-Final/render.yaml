@@ -1,0 +1,42 @@
+# Render Blueprint — richtet die komplette App als EINEN Docker-Dienst ein
+# (Backend + Frontend im selben Container, siehe Dockerfile + start.sh).
+#
+# So wird es benutzt:
+#   1. Code zu GitHub hochladen (siehe ANLEITUNG-ONLINE-STELLEN.md).
+#   2. Auf https://dashboard.render.com -> New -> Blueprint das Repo auswählen.
+#      Render liest diese Datei und legt den Dienst an.
+#   3. Beim Anlegen fragt Render nach den mit "sync: false" markierten Werten
+#      (Datenbank-URL, optional Teams-Webhook, optional Anthropic-Key).
+#
+# Die Datenbank läuft bei Neon (dauerhaft kostenlos). Kein databases-Block —
+# die Neon-URL kommt als BTB_DATABASE_URL rein.
+
+services:
+  - type: web
+    name: bautagesbericht
+    runtime: docker
+    plan: free
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Interner Proxy: Frontend -> Backend im selben Container.
+      - key: BACKEND_URL
+        value: http://127.0.0.1:8000
+      # Neon-Postgres-URL — MUSS mit "postgresql+psycopg://" beginnen.
+      - key: BTB_DATABASE_URL
+        sync: false
+      # Optional: Anthropic-Key nur für das Auslesen eingescannter Berichte.
+      - key: BTB_ANTHROPIC_API_KEY
+        sync: false
+      # Optional: gemeinsamer Teams-Kanal-Webhook als Fallback, falls ein
+      # Empfänger keinen eigenen Kanal hinterlegt hat (siehe Stammdaten ·
+      # Empfänger in der App). Leer lassen = keine Teams-Benachrichtigung,
+      # der Bericht bleibt trotzdem in der Übersichtsseite als Download
+      # verfügbar. Einrichtung: im Teams-Kanal "..." -> Workflows -> Vorlage
+      # "Send webhook alerts to a channel" -> Webhook-URL kopieren und hier
+      # eintragen.
+      - key: BTB_TEAMS_WEBHOOK_URL
+        sync: false

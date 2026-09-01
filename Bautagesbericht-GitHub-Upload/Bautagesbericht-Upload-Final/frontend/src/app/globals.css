@@ -1,0 +1,345 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGNSYSTEM HPP BAUMANAGEMENT
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Dunkles Arbeitsprogramm im Stil moderner Fintech-Dashboards: tiefer,
+   leicht verlaufender Hintergrund, davor Karten in einem Ton heller, mit
+   1px-Kante aus 8 % Weiß und weichem Schatten für Tiefe.
+
+   WARUM DER AKZENT MONOCHROM IST
+   ==============================
+   HPP hat keine Hausfarbe. Weder das Logo noch die Word-Vorlagen noch ein
+   echter Bautagesbericht enthalten einen einzigen Farbwert — nur Schwarz,
+   Grau und Weiß (nachgezählt, nicht geschätzt). Eine erfundene Markenfarbe
+   wäre also genau das: erfunden. Deshalb ist der Akzent hell auf dunkel
+   (und dunkel auf hell), und Farbe bleibt den **Zuständen** vorbehalten:
+   grün für erledigt und positive Trends, rot für überfällig, gelb für
+   Fristen. So heißt Farbe in dieser App immer etwas.
+
+   ZWEI FASSUNGEN, EIN SATZ NAMEN
+   ==============================
+   Dunkel ist der Standard. ``data-theme="hell"`` am <html> schaltet um; die
+   Wahl merkt sich lib/thema.ts im localStorage. Möglich wird das durch
+   ``@theme inline``: Die Tailwind-Klassen zeigen damit direkt auf die
+   ``--t-*``-Variablen, und die tauschen wir pro Fassung aus. Kein
+   ``dark:``-Präfix an tausend Stellen, kein zweiter Satz Klassennamen.
+
+   Bewusst folgt die App NICHT der Systemeinstellung: Dunkel ist die
+   Hausfassung, hell die Ausnahme für draußen bei Sonne.
+
+   BEIM ÄNDERN
+   ===========
+   Farben immer hier ändern, nie in einer View. Wer eine neue braucht, legt
+   ein Token an — sonst steht dieselbe Entscheidung nach einem halben Jahr in
+   sechs Dateien und ist in fünf davon veraltet.
+
+   Kontraste sind gegen WCAG AA geprüft — nicht geschätzt, sondern gerechnet:
+
+       python frontend/_kontrast-pruefen.py
+
+   Das Skript liest genau diese Tokens, rechnet halbdurchsichtige Werte über
+   ihren Untergrund und meldet jede Paarung unter 4.5:1 (Text) bzw. 3:1
+   (große Zahlen, Diagrammflächen) als Fehler. Wer hier eine Farbe ändert,
+   lässt es einmal laufen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+
+  /* ── app-* — Programmhülle: Seitenleiste, Kopfzeile, Karten ────────────── */
+  --color-app-sidebar: var(--t-sidebar);
+  --color-app-sidebar-tief: var(--t-sidebar-tief);
+  --color-app-sidebar-linie: var(--t-sidebar-linie);
+  --color-app-sidebar-text: var(--t-sidebar-text);
+  --color-app-sidebar-text-hell: var(--t-sidebar-text-hell);
+  --color-app-sidebar-label: var(--t-sidebar-label);
+  /* Für Hover und aktiven Eintrag: Deckkraft statt Volltonfarbe, damit die
+     Leiste ruhig bleibt und der Akzent den Buttons vorbehalten ist. */
+  --color-app-sidebar-hover: var(--t-sidebar-hover);
+  --color-app-sidebar-aktiv: var(--t-sidebar-aktiv);
+  --color-app-sidebar-kante: var(--t-sidebar-kante);
+
+  --color-app-bg: var(--t-bg);
+  --color-app-flaeche: var(--t-flaeche);
+  --color-app-flaeche-still: var(--t-flaeche-still);
+  --color-app-flaeche-hoch: var(--t-flaeche-hoch);
+  --color-app-linie: var(--t-linie);
+  --color-app-linie-stark: var(--t-linie-stark);
+
+  --color-app-text: var(--t-text);
+  --color-app-text-still: var(--t-text-still);
+  --color-app-text-leise: var(--t-text-leise);
+
+  /* Akzent monochrom: hell auf dunkel, dunkel auf hell.
+     -text ist die Schriftfarbe AUF dem Akzent — nie „weiß" hart schreiben,
+     sonst steht im hellen Theme Weiß auf Weiß. */
+  --color-app-akzent: var(--t-akzent);
+  --color-app-akzent-hover: var(--t-akzent-hover);
+  --color-app-akzent-sanft: var(--t-akzent-sanft);
+  --color-app-akzent-text: var(--t-akzent-text);
+
+  /* Zustände: die einzigen Farben mit Bedeutung. */
+  --color-app-ok: var(--t-ok);
+  --color-app-ok-sanft: var(--t-ok-sanft);
+  --color-app-warn: var(--t-warn);
+  --color-app-warn-sanft: var(--t-warn-sanft);
+  --color-app-gefahr: var(--t-gefahr);
+  --color-app-gefahr-sanft: var(--t-gefahr-sanft);
+  --color-app-info: var(--t-info);
+  --color-app-info-sanft: var(--t-info-sanft);
+
+  /* Diagramme: die Linie in Akzenthelligkeit, Vergleichswerte grau. */
+  --color-app-chart: var(--t-chart);
+  --color-app-chart-still: var(--t-chart-still);
+  --color-app-chart-spur: var(--t-chart-spur);
+
+  --radius-app: 16px;
+  --radius-app-lg: 20px;
+  --radius-app-sm: 10px;
+
+  /* ── ui-* — Formular- und Listenbausteine (components/ui.tsx) ──────────── */
+  --color-ui-bg: var(--t-bg);
+  --color-ui-surface: var(--t-flaeche);
+  --color-ui-surface-muted: var(--t-flaeche-still);
+  --color-ui-text: var(--t-text);
+  --color-ui-text-muted: var(--t-text-still);
+  --color-ui-text-faint: var(--t-text-leise);
+  --color-ui-line: var(--t-linie);
+  --color-ui-line-strong: var(--t-linie-stark);
+
+  --color-ui-accent: var(--t-akzent);
+  --color-ui-accent-hover: var(--t-akzent-hover);
+  --color-ui-accent-soft: var(--t-akzent-sanft);
+  --color-ui-accent-text: var(--t-akzent-text);
+
+  --color-ui-danger: var(--t-gefahr);
+  --color-ui-danger-soft: var(--t-gefahr-sanft);
+  --color-ui-warn: var(--t-warn);
+  --color-ui-warn-soft: var(--t-warn-sanft);
+  --color-ui-ok: var(--t-ok);
+  --color-ui-ok-soft: var(--t-ok-sanft);
+
+  --radius-ui: 12px;
+  --radius-ui-sm: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DUNKEL — die Hausfassung
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Seitenleiste tiefer als der Inhalt: Sie tritt zurück und rahmt. */
+  --t-sidebar: #0B0B0D;
+  --t-sidebar-tief: #08080A;
+  --t-sidebar-linie: rgba(255, 255, 255, 0.07);
+  --t-sidebar-text: #A2A3AB;
+  --t-sidebar-text-hell: #FAFAFA;
+  --t-sidebar-label: #82838C;
+  --t-sidebar-hover: rgba(255, 255, 255, 0.055);
+  --t-sidebar-aktiv: rgba(255, 255, 255, 0.12);
+  --t-sidebar-kante: rgba(255, 255, 255, 0.16);
+
+  --t-bg: #0D0E10;
+  --t-flaeche: #16171A;
+  --t-flaeche-still: #1B1C20;
+  --t-flaeche-hoch: #202126;
+  --t-linie: rgba(255, 255, 255, 0.08);
+  --t-linie-stark: rgba(255, 255, 255, 0.16);
+
+  --t-text: #F4F4F5;
+  --t-text-still: #A0A1A9;   /* 6.1:1 auf #16171A */
+  --t-text-leise: #8A8B94;   /* 5.3:1 auf der Karte, 4.7:1 auf der Hauptkachel */
+
+  --t-akzent: #F2F2F0;
+  --t-akzent-hover: #FFFFFF;
+  --t-akzent-sanft: rgba(255, 255, 255, 0.11);
+  --t-akzent-text: #121316;
+
+  --t-ok: #34D399;
+  --t-ok-sanft: rgba(52, 211, 153, 0.14);
+  --t-warn: #FBBF24;
+  --t-warn-sanft: rgba(251, 191, 36, 0.14);
+  --t-gefahr: #F87171;
+  --t-gefahr-sanft: rgba(248, 113, 113, 0.14);
+  --t-info: #93C5FD;
+  --t-info-sanft: rgba(147, 197, 253, 0.14);
+
+  --t-chart: #F2F2F0;
+  --t-chart-still: #6E7079;
+  --t-chart-spur: rgba(255, 255, 255, 0.06);
+
+  /* Verlauf des Hintergrunds — eine Spur Tiefe, kein Effektgewitter. */
+  --t-bg-verlauf:
+    radial-gradient(1100px 600px at 18% -8%, rgba(255, 255, 255, 0.045), transparent 62%),
+    linear-gradient(168deg, #0F1013 0%, #0C0D0F 46%, #101116 100%);
+
+  --t-schatten-karte:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 12px 28px -18px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  --t-schatten-hoch:
+    0 24px 60px -20px rgba(0, 0, 0, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --t-schatten-akzent: 0 6px 20px -8px rgba(255, 255, 255, 0.28);
+
+  --t-scroll-daumen: rgba(255, 255, 255, 0.14);
+  --t-scroll-daumen-aktiv: rgba(255, 255, 255, 0.24);
+
+  /* Aufhellung für die frei konfigurierten Status-Farben aus den Stammdaten.
+     Die sind für Weiß gewählt und wären hier zu dunkel — siehe lib/farben.ts. */
+  --t-tint: #FFFFFF;
+  --t-tint-anteil: 52%;
+
+  color-scheme: dark;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HELL — für draußen bei Sonne
+   ═══════════════════════════════════════════════════════════════════════════
+   Die Seitenleiste bleibt dunkel: Sie trägt die weiße Wortmarke und rahmt
+   den Arbeitsbereich in beiden Fassungen gleich.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="hell"] {
+  --t-sidebar: #131418;
+  --t-sidebar-tief: #0E0F12;
+  --t-sidebar-linie: rgba(255, 255, 255, 0.09);
+  --t-sidebar-text: #B4B6BE;
+  --t-sidebar-text-hell: #FFFFFF;
+  --t-sidebar-label: #8A8C95;
+  --t-sidebar-hover: rgba(255, 255, 255, 0.07);
+  --t-sidebar-aktiv: rgba(255, 255, 255, 0.14);
+  --t-sidebar-kante: rgba(255, 255, 255, 0.2);
+
+  --t-bg: #F2F3F5;
+  --t-flaeche: #FFFFFF;
+  --t-flaeche-still: #F7F8FA;
+  --t-flaeche-hoch: #FFFFFF;
+  --t-linie: #E4E6EA;
+  --t-linie-stark: #CFD3DA;
+
+  --t-text: #14161A;
+  --t-text-still: #5C616B;   /* 6.4:1 auf Weiß */
+  --t-text-leise: #6B7280;   /* 4.8:1 auf Weiß */
+
+  --t-akzent: #17181C;
+  --t-akzent-hover: #000000;
+  --t-akzent-sanft: rgba(20, 22, 26, 0.07);
+  --t-akzent-text: #FFFFFF;
+
+  --t-ok: #047857;
+  --t-ok-sanft: #D9F2E6;
+  --t-warn: #95530A;
+  --t-warn-sanft: #FDF0D5;
+  --t-gefahr: #B42318;
+  --t-gefahr-sanft: #FDE4E1;
+  --t-info: #1D4ED8;
+  --t-info-sanft: #E2E9FE;
+
+  --t-chart: #17181C;
+  --t-chart-still: #8A8F99;
+  --t-chart-spur: rgba(20, 22, 26, 0.06);
+
+  --t-bg-verlauf:
+    radial-gradient(1100px 600px at 18% -10%, rgba(255, 255, 255, 0.9), transparent 60%),
+    linear-gradient(168deg, #F4F5F7 0%, #EFF0F3 55%, #F5F6F8 100%);
+
+  --t-schatten-karte:
+    0 1px 2px rgba(16, 24, 40, 0.06),
+    0 12px 24px -20px rgba(16, 24, 40, 0.28);
+  --t-schatten-hoch:
+    0 24px 60px -24px rgba(16, 24, 40, 0.28),
+    0 2px 8px rgba(16, 24, 40, 0.08);
+  --t-schatten-akzent: 0 6px 18px -8px rgba(20, 22, 26, 0.35);
+
+  --t-scroll-daumen: rgba(20, 22, 26, 0.18);
+  --t-scroll-daumen-aktiv: rgba(20, 22, 26, 0.3);
+
+  /* Anteil 0 %: In der hellen Fassung gilt genau die Farbe aus den Stammdaten. */
+  --t-tint: #000000;
+  --t-tint-anteil: 0%;
+
+  color-scheme: light;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Grundlagen
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html {
+  background: var(--t-bg);
+}
+
+body {
+  /* fixed: Der Verlauf gehört zum Fenster, nicht zum Dokument — sonst
+     wiederholt er sich beim Scrollen langer Mängellisten. */
+  background: var(--t-bg-verlauf) var(--t-bg) fixed;
+  color: var(--t-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--t-akzent);
+  color: var(--t-akzent-text);
+}
+
+/* Sichtbar, aber nicht laut — und in beiden Fassungen passend. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--t-scroll-daumen) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--t-scroll-daumen);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--t-scroll-daumen-aktiv);
+  background-clip: content-box;
+}
+
+/* Tastaturbedienung muss sichtbar bleiben — auf Dunkel erst recht. */
+:focus-visible {
+  outline: 2px solid var(--t-akzent);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Hilfsklassen
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Karte: Kante aus 8 % Weiß, weicher Schatten, oben eine Spur Lichtkante —
+   das ist der ganze „Glas"-Effekt. Mehr würde bei zwanzig Karten flimmern. */
+@utility schatten-karte {
+  box-shadow: var(--t-schatten-karte);
+}
+
+/* Dialoge und Menüs, die über den Karten liegen. */
+@utility schatten-hoch {
+  box-shadow: var(--t-schatten-hoch);
+}
+
+/* Primärknöpfe: ein Hauch Streulicht, damit sie auf Dunkel abheben. */
+@utility schatten-akzent {
+  box-shadow: var(--t-schatten-akzent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

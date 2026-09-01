@@ -253,6 +253,18 @@ class MangelRueckmeldungStatusResponse(BaseModel):
 class BearbeiterCreate(BaseModel):
     name: str
     email: EmailStr | None = None
+    # Kopfzeile des Besprechungsprotokolls: "Ze: kbl  T - 22".
+    kuerzel: str = ""
+    durchwahl: str = ""
+
+    _norm_email = field_validator("email", mode="before")(_leer_zu_none)
+
+
+class BearbeiterUpdate(BaseModel):
+    name: str | None = None
+    email: EmailStr | None = None
+    kuerzel: str | None = None
+    durchwahl: str | None = None
 
     _norm_email = field_validator("email", mode="before")(_leer_zu_none)
 
@@ -261,6 +273,8 @@ class BearbeiterResponse(BaseModel):
     id: int
     name: str
     email: str | None
+    kuerzel: str = ""
+    durchwahl: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -1011,3 +1025,299 @@ class ProjektberichtVorschau(BaseModel):
     entfallen: list[str] = []
     anzahl_fotos: int = 0
     pdf_moeglich: bool = False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Baubesprechungsprotokolle
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Die fünf Statuswerte der Legende (Seite 3 des Protokolls).
+BesprechungStatus = Literal["k", "b", "e", "n", "i"]
+
+#: entwurf -> geprueft -> freigegeben.
+ProtokollStatus = Literal["entwurf", "geprueft", "freigegeben"]
+
+
+class ProjektbeteiligterBasis(BaseModel):
+    kuerzel: str = ""
+    name: str = ""
+    rolle: str = ""
+    ansprechpartner: str = ""
+    telefon: str = ""
+    sortierung: int = 0
+
+
+class ProjektbeteiligterCreate(ProjektbeteiligterBasis):
+    projekt_id: int
+
+
+class ProjektbeteiligterUpdate(ProjektbeteiligterBasis):
+    pass
+
+
+class ProjektbeteiligterResponse(ProjektbeteiligterBasis):
+    id: int
+    projekt_id: int
+
+    model_config = {"from_attributes": True}
+
+
+class BesprechungsKapitelBasis(BaseModel):
+    nummer: str = ""
+    titel: str = ""
+    sortierung: int = 0
+    gewerk_id: int | None = None
+
+
+class BesprechungsKapitelCreate(BesprechungsKapitelBasis):
+    projekt_id: int
+
+
+class BesprechungsKapitelUpdate(BesprechungsKapitelBasis):
+    pass
+
+
+class BesprechungsKapitelResponse(BesprechungsKapitelBasis):
+    id: int
+    projekt_id: int
+    #: Wie viele Themen in diesem Kapitel hängen (offene und erledigte).
+    anzahl_themen: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class BesprechungsThemaResponse(BaseModel):
+    """Ein Sachverhalt der laufenden Themenliste — der Projektstand."""
+
+    id: int
+    projekt_id: int
+    kapitel_id: int
+    kapitel_nummer: str = ""
+    kapitel_titel: str = ""
+    inhalt_nr: str = ""
+    thema: str = ""
+    zustaendig: str = ""
+    bearb_bis: str = ""
+    status: str = "n"
+    erledigt_am: date | None = None
+    #: Protokollnummer, in der das Thema zuletzt behandelt wurde — die dritte
+    #: Zahl der Protokollnummer.
+    zuletzt_bb: int | None = None
+    erstmals_bb: int | None = None
+    #: "02. 08." — Kapitel und Inhalt, ohne die BB-Nummer.
+    kennung: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+class ThemaUpdateBasis(BaseModel):
+    thema_text: str = ""
+    zustaendig: str = ""
+    bearb_bis: str = ""
+    status: BesprechungStatus = "n"
+    hervorheben: bool = False
+    sortierung: int = 0
+    bestaetigt: bool = False
+
+
+class ThemaUpdateCreate(ThemaUpdateBasis):
+    """Eine Zeile für dieses Protokoll.
+
+    Entweder Fortschreibung eines bestehenden Themas (``thema_id`` gesetzt)
+    oder ein neues Thema; dann sagt ``kapitel_id``, wohin es gehört. Genau
+    einer der beiden Fälle muss zutreffen — die Prüfung steht im Router,
+    damit die Fehlermeldung auf Deutsch und konkret sein kann.
+    """
+
+    thema_id: int | None = None
+    kapitel_id: int | None = None
+
+
+class ThemaUpdateAendern(ThemaUpdateBasis):
+    """Alle Felder freiwillig — die Prüfansicht speichert einzeln nach."""
+
+    thema_text: str | None = None
+    zustaendig: str | None = None
+    bearb_bis: str | None = None
+    status: BesprechungStatus | None = None
+    hervorheben: bool | None = None
+    sortierung: int | None = None
+    bestaetigt: bool | None = None
+    #: Umhängen: doch ein anderes bestehendes Thema als gedacht.
+    thema_id: int | None = None
+
+
+class ThemaUpdateResponse(ThemaUpdateBasis):
+    id: int
+    protokoll_id: int
+    thema_id: int
+    herkunft: str = "mensch"
+    #: Die vollständige Nummer, wie sie gedruckt wird: "02. 08. 16".
+    nummer: str = ""
+    #: Die BB-Nummer der Sitzung, aus der die Zeile stammt. Bei einem
+    #: fortgeschriebenen offenen Punkt ist das eine ältere Nummer als die des
+    #: Protokolls, in dem die Zeile gerade steht.
+    bb_nr: str = ""
+    #: Wurde die Zeile in diesem Protokoll nur unverändert mitgenommen?
+    #: Die Prüfansicht darf sie dann ruhiger darstellen.
+    uebernommen: bool = False
+    kapitel_id: int = 0
+    kapitel_nummer: str = ""
+    kapitel_titel: str = ""
+    inhalt_nr: str = ""
+    #: Stand dieses Themas im vorherigen Protokoll — damit in der Prüfansicht
+    #: sichtbar ist, was sich heute geändert hat.
+    vorher_text: str = ""
+    vorher_status: str = ""
+    vorher_bb: int | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TeilnehmerBasis(BaseModel):
+    name: str = ""
+    firma_kuerzel: str = ""
+    telefon: str = ""
+    anwesend: bool = True
+    reihenfolge: int = 0
+
+
+class TeilnehmerCreate(TeilnehmerBasis):
+    pass
+
+
+class TeilnehmerUpdate(TeilnehmerBasis):
+    name: str | None = None
+    firma_kuerzel: str | None = None
+    telefon: str | None = None
+    anwesend: bool | None = None
+    reihenfolge: int | None = None
+
+
+class TeilnehmerResponse(TeilnehmerBasis):
+    id: int
+    protokoll_id: int
+    aus_transkript: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class AnlageResponse(BaseModel):
+    id: int
+    protokoll_id: int
+    dateiname: str = ""
+    bezeichnung: str = ""
+    reihenfolge: int = 0
+    hochgeladen_am: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ProtokollBasis(BaseModel):
+    leistung: str = "Baubesprechung"
+    besprechungsort: str = ""
+    besprechungsdatum: date
+    ersteller_id: int | None = None
+    ersteller_name: str = ""
+    ersteller_kuerzel: str = ""
+    ersteller_durchwahl: str = ""
+    ersteller_email: str = ""
+
+
+class ProtokollCreate(ProtokollBasis):
+    projekt_id: int
+    #: Leer lassen: Die nächste freie Nummer des Projekts wird vergeben.
+    nummer: int | None = None
+    #: Offene Punkte (Status b, k, n, i) aus dem letzten Protokoll als
+    #: Fortschreibung übernehmen. Genau das macht die Excel-Vorlage von Hand.
+    offene_punkte_uebernehmen: bool = True
+
+
+class ProtokollUpdate(BaseModel):
+    leistung: str | None = None
+    besprechungsort: str | None = None
+    besprechungsdatum: date | None = None
+    ersteller_id: int | None = None
+    ersteller_name: str | None = None
+    ersteller_kuerzel: str | None = None
+    ersteller_durchwahl: str | None = None
+    ersteller_email: str | None = None
+    nummer: int | None = None
+
+
+class ProtokollListItem(BaseModel):
+    id: int
+    projekt_id: int
+    projekt_name: str = ""
+    nummer: int
+    leistung: str = "Baubesprechung"
+    besprechungsort: str = ""
+    besprechungsdatum: date
+    ersteller_name: str = ""
+    ersteller_kuerzel: str = ""
+    status: ProtokollStatus = "entwurf"
+    anzahl_themen: int = 0
+    anzahl_offen: int = 0
+    anzahl_teilnehmer: int = 0
+    anzahl_anlagen: int = 0
+    #: Zeilen, die noch niemand angesehen hat — die Freigabe warnt danach.
+    anzahl_ungeprueft: int = 0
+    hat_transkript: bool = False
+    hat_dokument: bool = False
+    hat_pdf: bool = False
+    analyse_am: datetime | None = None
+    erzeugt_am: datetime | None = None
+    erstellt_am: datetime | None = None
+    geaendert_am: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ProtokollResponse(ProtokollListItem):
+    ersteller_durchwahl: str = ""
+    ersteller_email: str = ""
+    ersteller_id: int | None = None
+    tldv_transkript_roh: str = ""
+    tldv_notizen_roh: str = ""
+    analyse_hinweise: list[str] = []
+    geprueft_am: datetime | None = None
+    freigegeben_am: datetime | None = None
+    themen_updates: list[ThemaUpdateResponse] = []
+    teilnehmer: list[TeilnehmerResponse] = []
+    anlagen: list[AnlageResponse] = []
+    #: Kopfdaten des Deckblatts, aus dem Projekt — damit die Oberfläche sie
+    #: anzeigen kann, ohne das Projekt einzeln zu laden.
+    projekt_nummer: str = ""
+    bauherr: str = ""
+    projekt_adresse: str = ""
+
+
+class TldvImport(BaseModel):
+    """Rohtext aus tl;dv: Transkript und KI-Notizen.
+
+    Beides ist freiwillig, aber eines von beiden muss da sein — nur aus den
+    Notizen entsteht schon eine brauchbare Themenliste, nur aus dem Transkript
+    auch. Zusammen wird es besser.
+    """
+
+    transkript: str = ""
+    notizen: str = ""
+    #: Nach dem Import gleich analysieren. Ausschalten, wenn erst noch
+    #: Kapitel gepflegt werden sollen.
+    analysieren: bool = True
+
+
+class AnalyseErgebnis(BaseModel):
+    """Was die KI-Analyse vorgeschlagen hat — nichts davon ist schon gültig."""
+
+    neue_themen: int = 0
+    fortschreibungen: int = 0
+    teilnehmer: int = 0
+    hinweise: list[str] = []
+
+
+class ProtokollFreigabe(BaseModel):
+    geprueft_von_id: int | None = None
+    #: Auch freigeben, wenn noch Zeilen ungeprüft sind. Standard: nein — die
+    #: ganze Funktion existiert, damit nichts Ungeprüftes hinausgeht.
+    trotz_ungeprueft: bool = False

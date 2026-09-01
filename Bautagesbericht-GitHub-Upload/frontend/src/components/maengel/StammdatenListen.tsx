@@ -116,6 +116,54 @@ export function StammdatenListen({
           }
           hinweis="Auswahl für „Aufgenommen von“ und das User-Feld am Mangel."
         />
+
+        {/* Kürzel und Durchwahl stehen in der Kopfzeile jedes
+            Besprechungsprotokolls ("Ze: kbl   T - 22"). Einmal hier gepflegt,
+            füllt sich jedes neue Protokoll selbst. */}
+        {(stammdaten?.bearbeiter.length ?? 0) > 0 && (
+          <div className="mt-4 border-t border-ui-line pt-3">
+            <p className="mb-2 text-[12.5px] text-ui-text-muted">
+              Kürzel und Durchwahl für die Kopfzeile des
+              Besprechungsprotokolls — „Ze: kbl“ und „T - 22“.
+            </p>
+            <div className="flex flex-col gap-2">
+              {(stammdaten?.bearbeiter || []).map((b) => (
+                <div
+                  key={b.id}
+                  className="flex flex-wrap items-center gap-2 text-[13px]"
+                >
+                  <span className="min-w-[9rem] flex-1 text-ui-text">{b.name}</span>
+                  <input
+                    defaultValue={b.kuerzel}
+                    placeholder="Kürzel"
+                    className="w-24 rounded-ui border border-ui-line bg-ui-surface px-2 py-1"
+                    onBlur={(e) =>
+                      e.target.value !== b.kuerzel &&
+                      fuehreAus(() =>
+                        api.mangelStammdaten.updateBearbeiter(b.id, {
+                          kuerzel: e.target.value,
+                        })
+                      )
+                    }
+                  />
+                  <input
+                    defaultValue={b.durchwahl}
+                    placeholder="Durchwahl"
+                    className="w-28 rounded-ui border border-ui-line bg-ui-surface px-2 py-1"
+                    onBlur={(e) =>
+                      e.target.value !== b.durchwahl &&
+                      fuehreAus(() =>
+                        api.mangelStammdaten.updateBearbeiter(b.id, {
+                          durchwahl: e.target.value,
+                        })
+                      )
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Section>
     </div>
   );

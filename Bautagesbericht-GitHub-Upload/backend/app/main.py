@@ -8,6 +8,7 @@ from app.config import settings
 from app.database import init_db
 from app.routers import (
     baufotos,
+    besprechungsprotokolle,
     einreichungen,
     empfaenger,
     gewerke,
@@ -55,6 +56,9 @@ app.include_router(plaene.router, prefix="/api")
 app.include_router(projektberichte.router, prefix="/api")
 app.include_router(maengel.router, prefix="/api")
 app.include_router(maengelanzeige.router, prefix="/api")
+
+# Baubesprechungsprotokolle
+app.include_router(besprechungsprotokolle.router, prefix="/api")
 
 # Baufotos
 app.include_router(baufotos.router, prefix="/api")

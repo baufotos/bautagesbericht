@@ -44,6 +44,8 @@ import { MangelErfassung } from "@/components/maengel/MangelErfassung";
 import { MaengelanzeigeErstellen } from "@/components/maengel/MaengelanzeigeErstellen";
 import { MangelDetail } from "@/components/maengel/MangelDetail";
 import { ProjektberichteVerwaltung } from "@/components/projektberichte/ProjektberichteVerwaltung";
+import { BesprechungenUebersicht } from "@/components/besprechungen/BesprechungenUebersicht";
+import { BesprechungStammdaten } from "@/components/besprechungen/BesprechungStammdaten";
 import { StammdatenGewerke } from "@/components/maengel/StammdatenGewerke";
 import { StammdatenPlaene } from "@/components/maengel/StammdatenPlaene";
 import { StammdatenListen } from "@/components/maengel/StammdatenListen";
@@ -346,6 +348,17 @@ function Inhalt({
 
     case "projektberichte":
       return mitProjekt((p) => <ProjektberichteVerwaltung projekt={p} />);
+
+    case "besprechungen":
+      return mitProjekt((p) => (
+        <BesprechungenUebersicht
+          projekt={p}
+          bearbeiter={daten.stammdaten?.bearbeiter ?? []}
+        />
+      ));
+
+    case "stamm-besprechung":
+      return mitProjekt((p) => <BesprechungStammdaten projekt={p} />);
 
     case "btb-einreichen":
       return (
