@@ -158,7 +158,7 @@ try {
   Write-Host "Gesendet." -ForegroundColor Green
   Write-Host "   Render baut jetzt neu. Dauer 5 bis 10 Minuten."
   Write-Host "   Fortschritt: https://dashboard.render.com"
-  Write-Host "   Danach:      https://bautagesbericht-jwga.onrender.com  (einmal Strg+F5)"
+  Write-Host "   Danach:      https://bautagesbericht.onrender.com  (einmal Strg+F5)"
 } finally {
   Pop-Location
 }

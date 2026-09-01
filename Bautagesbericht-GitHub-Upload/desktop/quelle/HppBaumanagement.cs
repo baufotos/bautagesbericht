@@ -65,7 +65,7 @@ internal static class Programm
     /// <summary>
     /// Adresse für den Fernmodus, wenn keine app-url.txt daneben liegt.
     /// </summary>
-    private const string StandardAdresse = "https://bautagesbericht-jwga.onrender.com";
+    private const string StandardAdresse = "https://bautagesbericht.onrender.com";
 
     private const string Titel = "HPP Baumanagement";
     private const string Fenstergroesse = "--window-size=1400,920";

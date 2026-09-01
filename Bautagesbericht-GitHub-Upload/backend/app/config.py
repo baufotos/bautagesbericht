@@ -143,7 +143,7 @@ class Settings(BaseSettings):
 
     # Öffentlich erreichbare Basis-URL der App, um im Teams-Post einen
     # funktionierenden Download-Link zu erzeugen, z. B.
-    # "https://bautagesbericht-jwga.onrender.com". Wird bei Render automatisch
+    # "https://bautagesbericht.onrender.com". Wird bei Render automatisch
     # aus RENDER_EXTERNAL_URL übernommen, falls nicht explizit gesetzt.
     public_base_url: str = ""
 
