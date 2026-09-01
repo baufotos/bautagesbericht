@@ -58,7 +58,11 @@ Schritt "Quellcode spiegeln"
 
 $ausschluss = @(
   "node_modules", ".next", "out", "__pycache__", ".venv", "storage", "static",
-  "HPP-Baumanagement-App"
+  "HPP-Baumanagement-App",
+  # Im Quellordner liegt eine aeltere, verschachtelte Kopie des Projekts
+  # gleichen Namens. Ohne diesen Ausschluss wandert sie als 112 ueberfluessige
+  # Dateien ins Repo und verwirrt jeden, der dort nachsieht.
+  "Bautagesbericht-Upload-Final"
 )
 $dateiAusschluss = @("*.pyc", "*.tsbuildinfo", "*.zip", "*.db", "*.db-shm", "*.db-wal")
 
