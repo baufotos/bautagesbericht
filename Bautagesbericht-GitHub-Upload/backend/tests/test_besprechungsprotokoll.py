@@ -43,6 +43,7 @@ sys.path.insert(0, str(BACKEND))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.config import settings  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services import besprechung_analyse as analyse  # noqa: E402
@@ -325,8 +326,6 @@ pruefe(wert == "ROL/\nSBH" and not unbekannt,
 pruefe(analyse._pruefe_kuerzel("ALL", {"ROL"})[0] == "ALL",
        "'ALL' ist kein Firmenkuerzel und bleibt stehen")
 
-from app.config import settings  # noqa: E402
-
 alt = settings.anthropic_api_key
 settings.anthropic_api_key = ""
 try:
@@ -372,8 +371,15 @@ async def gestellt(**kw):
     )
 
 
+# Der Router nimmt ohne Schluessel die regelbasierte Auswertung
+# (app.services.besprechung_lokal) und ruft die KI gar nicht erst auf. Fuer
+# DIESEN Fall soll aber der KI-Weg geprueft werden, also wird ein Schluessel
+# vorgetaeuscht — der Aufruf selbst ist ja gestellt und geht nie ins Netz.
+# Den schluessellosen Weg deckt tests/test_besprechung_lokal.py ab.
 echt = analyse.analysiere
+alter_schluessel = settings.anthropic_api_key
 analyse.analysiere = gestellt
+settings.anthropic_api_key = "sk-ant-test"
 try:
     bericht = j(c.post(f"/api/besprechungsprotokolle/{p4['id']}/tldv-import", json={
         "transkript": "[00:02] ROL: Geruest ist fertig.",
@@ -381,6 +387,7 @@ try:
     }))
 finally:
     analyse.analysiere = echt
+    settings.anthropic_api_key = alter_schluessel
 
 pruefe(bericht["fortschreibungen"] == 1 and bericht["neue_themen"] == 1,
        f"1 Fortschreibung + 1 neues Thema: {bericht}")

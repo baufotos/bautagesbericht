@@ -70,9 +70,13 @@ Baubesprechungen    Protokolle im HPP-Layout, aus der Aufzeichnung der
                     unter "Anlagen" hochladen — der Scan hängt dann hinten am
                     Protokoll.
 
-                    Für "Analysieren" wird unten anthropic_key gebraucht. Ohne
-                    Schlüssel lassen sich die Themen von Hand erfassen, alles
-                    andere bleibt gleich.
+                    "Analysieren" läuft ohne Internet und ohne Schlüssel: Die
+                    App liest die tl;dv-Notizen als Stichpunkte, erkennt
+                    Fristen wie "KW 36'26" und Zuständige an ihrem Kürzel und
+                    ordnet jeden Punkt über die Wortwahl einem laufenden Thema
+                    zu. Ist unten ein anthropic_key eingetragen, übernimmt
+                    stattdessen die KI — die formuliert runder und versteht
+                    auch Umschreibungen. Gebraucht wird sie nicht.
 
 Bautagesberichte    Berichte der Firmen einreichen. Wetterdaten und die
                     Word-Erzeugung laufen im Hintergrund.

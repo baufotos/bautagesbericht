@@ -80,6 +80,7 @@ from app.schemas import (
     TldvImport,
 )
 from app.services import besprechung_analyse as analyse
+from app.services import besprechung_lokal as lokal
 from app.services import besprechungsprotokoll_generation as erzeugung
 from app.services import word_pdf
 from app.utils.file_storage import get_absolute_path, save_upload_in
@@ -697,7 +698,10 @@ def _analyse_kontext(db: Session, protokoll: Besprechungsprotokoll):
         offene,
         [analyse.KapitelInfo(id=k.id, nummer=k.nummer, titel=k.titel) for k in kapitel],
         [
-            analyse.BeteiligterInfo(kuerzel=b.kuerzel, name=b.name, rolle=b.rolle)
+            analyse.BeteiligterInfo(
+                kuerzel=b.kuerzel, name=b.name, rolle=b.rolle,
+                ansprechpartner=b.ansprechpartner,
+            )
             for b in beteiligte
         ],
     )
@@ -804,18 +808,51 @@ async def _fuehre_analyse(
             "erzeugen oder von Hand anlegen.",
         )
 
-    try:
-        ergebnis = await analyse.analysiere(
-            transkript=protokoll.tldv_transkript_roh,
-            notizen=protokoll.tldv_notizen_roh,
-            offene_themen=offene,
-            kapitel=kapitel,
-            beteiligte=beteiligte,
-            projektname=protokoll.projekt.name if protokoll.projekt else "",
-            besprechungsdatum=protokoll.besprechungsdatum.strftime("%d.%m.%Y"),
+    argumente = dict(
+        transkript=protokoll.tldv_transkript_roh,
+        notizen=protokoll.tldv_notizen_roh,
+        offene_themen=offene,
+        kapitel=kapitel,
+        beteiligte=beteiligte,
+        projektname=protokoll.projekt.name if protokoll.projekt else "",
+        besprechungsdatum=protokoll.besprechungsdatum.strftime("%d.%m.%Y"),
+    )
+
+    # ── Welcher Weg? ──
+    #
+    # Die Auswertung funktioniert IMMER. Ein Anthropic-Schlüssel macht sie
+    # besser, ist aber keine Voraussetzung: Ohne ihn übernimmt die
+    # regelbasierte Auswertung (app.services.besprechung_lokal), die
+    # dieselben Vorschläge in derselben Form liefert — nur mechanisch statt
+    # mit Sprachverständnis. Früher stand hier ein 422 und die Funktion war
+    # für jeden ohne Schlüssel tot.
+    if not analyse.ist_verfuegbar():
+        return _als_bericht(
+            protokoll, lokal.analysiere(**argumente), db
         )
+
+    try:
+        ergebnis = await analyse.analysiere(**argumente)
     except analyse.AnalyseFehler as fehler:
-        raise HTTPException(422, str(fehler)) from fehler
+        # Netz weg, Kontingent leer, Schlüssel abgelaufen: Statt den Anwender
+        # vor einer toten Schaltfläche stehen zu lassen, wird ohne KI
+        # ausgewertet — und im Hinweis steht, warum.
+        ergebnis = lokal.analysiere(**argumente)
+        ergebnis.hinweise.insert(
+            0, f"Die KI-Auswertung war nicht möglich ({fehler}). Es wurde "
+               f"ohne KI ausgewertet."
+        )
+        return _als_bericht(protokoll, ergebnis, db)
+
+    return _als_bericht(protokoll, ergebnis, db)
+
+
+def _als_bericht(
+    protokoll: Besprechungsprotokoll,
+    ergebnis: analyse.AnalyseErgebnis,
+    db: Session,
+) -> AnalyseErgebnis:
+    """Vorschläge speichern und zusammenfassen — für beide Auswertungswege."""
 
     neu, fortgeschrieben = _verarbeite_vorschlaege(db, protokoll, ergebnis)
     protokoll.analyse_am = datetime.now()

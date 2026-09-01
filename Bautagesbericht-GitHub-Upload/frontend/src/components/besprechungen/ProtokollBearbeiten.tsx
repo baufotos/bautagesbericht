@@ -376,8 +376,11 @@ function TldvImport({
           )}
         </div>
         <p className="text-[12.5px] text-ui-text-faint">
-          Die Analyse ordnet jeden Punkt einem bestehenden offenen Thema zu oder
-          legt ein neues an. Nichts davon geht ungeprüft ins Dokument.
+          Die Auswertung ordnet jeden Punkt einem bestehenden offenen Thema zu
+          oder legt ein neues an. Sie läuft auch ohne Anthropic-Schlüssel — dann
+          nach Regeln statt mit KI: Stichpunkte der tl;dv-Notizen, Fristen wie
+          „KW 36’26“, Zuständige an ihrem Kürzel. Nichts davon geht ungeprüft
+          ins Dokument.
         </p>
       </div>
     </Section>

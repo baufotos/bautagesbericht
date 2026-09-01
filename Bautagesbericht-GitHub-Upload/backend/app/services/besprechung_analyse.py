@@ -84,6 +84,10 @@ class BeteiligterInfo:
     kuerzel: str
     name: str
     rolle: str = ""
+    #: Nur für die Auswertung ohne KI (``besprechung_lokal``): Steht in den
+    #: tl;dv-Notizen "Frau Stark" statt "ROL", findet sie darüber trotzdem
+    #: die richtige Firma.
+    ansprechpartner: str = ""
 
 
 @dataclass

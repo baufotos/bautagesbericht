@@ -30,11 +30,15 @@ datenordner=
 # teams_webhook   Teams-Kanal für Meldungen, wenn am Projekt keiner hinterlegt
 #                 ist (Kanal → "…" → Workflows → "Send webhook alerts to a
 #                 channel" → Link kopieren).
-# anthropic_key   Schlüssel für das Auslesen eingescannter Bautagesberichte
-#                 und für das Auswerten der tl;dv-Texte im
-#                 Besprechungsprotokoll. Ohne Schlüssel funktioniert alles
-#                 andere unverändert; die Themen lassen sich dann von Hand
-#                 erfassen.
+# anthropic_key   Optional. Zwei Dinge werden damit besser:
+#                 - Handschriftliche Bautagesberichte lassen sich auslesen
+#                   (gedruckte gehen auch ohne).
+#                 - Das Auswerten der tl;dv-Texte im Besprechungsprotokoll
+#                   formuliert runder und erkennt auch Umschreibungen.
+#                 OHNE Schlüssel läuft beides trotzdem: Die Besprechung wird
+#                 dann nach Regeln ausgewertet — Stichpunkte, Fristen,
+#                 Zuständige, Zuordnung zu laufenden Themen. Kein Internet
+#                 nötig, keine Kosten, und es verlässt kein Text das Büro.
 
 teams_webhook=
 anthropic_key=
