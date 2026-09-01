@@ -98,10 +98,18 @@ if ($NurZeigen) {
 # robocopy meldet Erfolg mit Codes 0-7; ab 8 ist wirklich etwas schiefgegangen.
 if ($LASTEXITCODE -ge 8) { throw "Kopieren fehlgeschlagen (robocopy $LASTEXITCODE)." }
 
-# Die .exe und das Startprogramm gehoeren nicht auf die Website.
-foreach ($weg in @("desktop\HPP-Baumanagement.exe", "desktop\hpp-app.ico")) {
+# Was im Ziel nichts zu suchen hat, aber von /MIR nicht erwischt wird.
+#
+# Wichtig zu wissen: Ein mit /XD ausgeschlossener Ordner wird von robocopy
+# weder kopiert NOCH geloescht - /MIR fasst ihn gar nicht an. Was einmal im
+# Ziel liegt, bliebe also ewig. Deshalb hier von Hand weg.
+foreach ($weg in @(
+  "desktop\HPP-Baumanagement.exe",
+  "desktop\hpp-app.ico",
+  "Bautagesbericht-Upload-Final"
+)) {
   $p = Join-Path $ziel $weg
-  if (Test-Path $p) { Remove-Item $p -Force }
+  if (Test-Path $p) { Remove-Item $p -Recurse -Force }
 }
 
 # ---------------------------------------------------------------------------
