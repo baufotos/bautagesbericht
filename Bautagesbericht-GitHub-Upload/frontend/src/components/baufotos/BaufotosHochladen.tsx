@@ -40,6 +40,17 @@ import { FotoAuswahl } from "@/components/maengel/FotoAufnahme";
 import { FotosatzMailDialog } from "@/components/baufotos/FotosatzMailDialog";
 
 /**
+ * Wie viele Fotos ein Bautag auf einmal fassen darf.
+ *
+ * Ein Rundgang über eine Baustelle bringt 50 bis 80 Aufnahmen mit; wird hier
+ * abgeschnitten, fehlt der halbe Tag im Projektordner. Der Wert entspricht
+ * ``MAX_FOTOS_PRO_UPLOAD`` in services/baufotos.py — die Fotos gehen zwar
+ * einzeln raus (siehe ``hochladen``), aber beide Grenzen sollen dieselbe
+ * Aussage treffen, damit sie nicht auseinanderlaufen.
+ */
+const MAX_BAUFOTOS = 80;
+
+/**
  * Dieselbe Bereinigung wie im Backend (``sanitize`` in services/baufotos.py):
  * Leerzeichen werden zu "_", Sonderzeichen fallen weg, Umlaute bleiben.
  * Hier NUR für die Vorschau — verbindlich ist der Server.
@@ -338,6 +349,7 @@ export function BaufotosHochladen({
             <FotoAuswahl
               dateien={fotos}
               onChange={setFotos}
+              maxFotos={MAX_BAUFOTOS}
               hinweis="Noch keine Fotos. Alles, was auf die Baustelle gehört — sie werden beim Hochladen umbenannt und verkleinert."
             />
 

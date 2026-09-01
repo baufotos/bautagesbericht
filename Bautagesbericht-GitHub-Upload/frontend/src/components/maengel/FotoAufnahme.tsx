@@ -24,6 +24,11 @@ import { ladeFotosHoch } from "@/lib/fotoupload";
 import type { MangelFoto } from "@/lib/types";
 import { Button, EmptyState, Label, Meldung } from "@/components/ui";
 
+/**
+ * Vorgabe für die Mängelrüge: Dort belegen ein paar Aufnahmen eine Stelle,
+ * mehr macht die Rüge nicht besser. Die Baufotos setzen über ``maxFotos`` eine
+ * höhere Grenze — dort kommt ein ganzer Bautag auf einmal herein.
+ */
 const MAX_FOTOS = 20;
 
 /* ───────── Auswahl vor dem Speichern ───────── */
@@ -32,6 +37,7 @@ export function FotoAuswahl({
   dateien,
   onChange,
   hinweis = "Noch keine Fotos. Für die Mängelrüge zählt vor allem, dass die Stelle erkennbar ist.",
+  maxFotos = MAX_FOTOS,
 }: {
   dateien: File[];
   onChange: (dateien: File[]) => void;
@@ -41,10 +47,22 @@ export function FotoAuswahl({
    * Mängelrüge, und ein falscher Hinweis ist schlimmer als keiner.
    */
   hinweis?: string;
+  /**
+   * Wie viele Fotos höchstens ausgewählt werden dürfen. Als Prop, weil eine
+   * Mängelrüge und ein Bautag verschieden viele brauchen. Was darüber liegt,
+   * wird abgeschnitten — aber sichtbar gemeldet, siehe ``verworfen``.
+   */
+  maxFotos?: number;
 }) {
   const kameraRef = useRef<HTMLInputElement>(null);
   const galerieRef = useRef<HTMLInputElement>(null);
   const [vorschauen, setVorschauen] = useState<string[]>([]);
+  /**
+   * Wie viele Fotos die Grenze zuletzt abgeschnitten hat. Ohne diese Meldung
+   * verschwanden sie stumm: Wer 39 Fotos auswählt und 20 angezeigt bekommt,
+   * merkt es erst im Projektordner, wenn der halbe Bautag fehlt.
+   */
+  const [verworfen, setVerworfen] = useState(0);
 
   useEffect(() => {
     const urls = dateien.map((datei) => URL.createObjectURL(datei));
@@ -54,7 +72,9 @@ export function FotoAuswahl({
 
   function hinzufuegen(event: React.ChangeEvent<HTMLInputElement>) {
     const neue = Array.from(event.target.files || []);
-    onChange([...dateien, ...neue].slice(0, MAX_FOTOS));
+    const zusammen = [...dateien, ...neue];
+    setVerworfen(Math.max(0, zusammen.length - maxFotos));
+    onChange(zusammen.slice(0, maxFotos));
     event.target.value = "";
   }
 
@@ -120,7 +140,10 @@ export function FotoAuswahl({
                 )}
                 <button
                   type="button"
-                  onClick={() => onChange(dateien.filter((_, j) => j !== i))}
+                  onClick={() => {
+                    setVerworfen(0);
+                    onChange(dateien.filter((_, j) => j !== i));
+                  }}
                   aria-label={`Foto ${i + 1} entfernen`}
                   className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
                 >
@@ -132,6 +155,15 @@ export function FotoAuswahl({
               </div>
             ))}
           </div>
+          {verworfen > 0 && (
+            <div className="mt-2">
+              <Meldung art="hinweis">
+                {verworfen} Foto(s) wurden nicht übernommen — mehr als{" "}
+                {maxFotos} auf einmal gehen nicht. Die übrigen bitte in einem
+                zweiten Durchgang hochladen.
+              </Meldung>
+            </div>
+          )}
           <p className="mt-2 text-[12px] text-ui-text-muted">
             {dateien.length} Foto(s) ausgewählt. Sie werden beim Speichern
             verkleinert und einzeln übertragen — das funktioniert auch bei
