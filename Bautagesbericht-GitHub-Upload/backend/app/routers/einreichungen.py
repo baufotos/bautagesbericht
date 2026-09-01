@@ -201,6 +201,19 @@ async def woche_analysieren(
     funde, lese_hinweise = await wa.finde_seitendaten_genau(
         gespeichert, erlaubt, bekannte)
     funde = _abschnitte_auslagern(funde, ordner)
+
+    # Kein einziges Datum lesbar? Dann ist die Aufteilung nicht erkennbar,
+    # aber oft ausrechenbar: zwölf Blätter auf sechs Tage sind zwei je Tag.
+    # Ohne diesen Vorschlag landeten alle Seiten in EINEM Block mit EINEM
+    # Datumsfeld — für eine Woche eine Sackgasse, weil man allen zwölf
+    # Seiten nur denselben Tag hätte geben können.
+    vorgeschlagen = False
+    if erlaubt and not any(f.datum for f in funde):
+        vorschlag = wa.gleichmaessig_aufteilen(funde, sorted(erlaubt))
+        if vorschlag:
+            funde = vorschlag
+            vorgeschlagen = True
+
     bloecke = wa.gruppiere_nach_tag(funde)
     geteilte_seiten = sum(1 for f in funde if f.herkunft == "abschnitt")
 
@@ -228,6 +241,15 @@ async def woche_analysieren(
         hinweise.append(
             "In den hochgeladenen Dateien wurde kein Datum gefunden. Bitte "
             "jeder Datei unten von Hand einen Tag zuweisen."
+        )
+
+    if vorgeschlagen:
+        seiten_je_tag = sum(t.anzahl_seiten for t in tage) // max(1, len(tage))
+        hinweise.append(
+            f"Kein Datum lesbar — die Seiten wurden gleichmäßig auf die "
+            f"{len(tage)} Tage des Zeitraums verteilt, {seiten_je_tag} je Tag, "
+            "in der Reihenfolge des Dokuments. Bitte die Zuordnung prüfen und "
+            "bei Bedarf ändern."
         )
     if ohne_datum:
         hinweise.append(

@@ -612,6 +612,52 @@ def _aus_befunden(name: str, befunde, erlaubt: set[date] | None) -> list[Seitenf
     return ergebnis
 
 
+def gleichmaessig_aufteilen(
+    funde: list[Seitenfund], tage: list[date]
+) -> list[Seitenfund] | None:
+    """Verteilt Seiten ohne erkennbares Datum gleichmäßig auf die Tage.
+
+    WOFÜR
+    =====
+    Ein handschriftliches Bautagebuch ohne lesbares Datum landete bisher als
+    **ein** Block in der Oberfläche: zwölf Seiten, eine einzige Zeile, ein
+    einziges Datumsfeld. Für eine Woche mit sechs Tagen war das eine
+    Sackgasse — man konnte allen zwölf Seiten nur denselben Tag geben.
+
+    Dabei ist die Aufteilung offensichtlich, sobald man die Zahlen ansieht:
+    Zwölf Blätter, sechs Arbeitstage, und ein Bautagebuch verteilt einen Tag
+    auf zwei Seiten. Genau diese Rechnung macht diese Funktion.
+
+    WANN NICHT
+    ==========
+    ``None``, wenn die Seitenzahl nicht glatt aufgeht. Bei sieben Seiten auf
+    fünf Tage wäre jede Aufteilung geraten, und ein falscher Vorschlag ist
+    schlimmer als keiner: Er sieht aus wie ein Ergebnis. Der Zeitraum lässt
+    sich dann eingrenzen, bis die Rechnung aufgeht.
+
+    Der Vorschlag ist ausdrücklich ein Vorschlag — er steht in der Oberfläche
+    zum Prüfen, nicht als Erkenntnis.
+    """
+    offen = [f for f in funde if f.datum is None]
+    if not offen or not tage:
+        return None
+    if len(offen) % len(tage) != 0:
+        return None
+
+    je_tag = len(offen) // len(tage)
+    # Reihenfolge ist die des Dokuments: Datei, dann Seitenzahl. Ein
+    # Wochenstapel wird der Reihe nach abgeheftet.
+    offen = sorted(offen, key=lambda f: (f.datei, f.seite))
+
+    vorschlag: list[Seitenfund] = []
+    for i, fund in enumerate(offen):
+        tag = tage[i // je_tag]
+        vorschlag.append(
+            Seitenfund(fund.datei, fund.seite, tag, "vorschlag", fund.abschnitt)
+        )
+    return vorschlag
+
+
 def gruppiere_nach_tag(funde: list[Seitenfund]) -> list[Tagesblock]:
     """Fasst die Seitenfunde zu Tagesblöcken zusammen, aufsteigend nach Datum.
 
