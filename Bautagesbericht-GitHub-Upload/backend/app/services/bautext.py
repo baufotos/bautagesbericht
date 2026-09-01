@@ -31,10 +31,21 @@ import re
 # "4.0G", "4.O6", "406" oder "4 OG".
 # ─────────────────────────────────────────────────────────────────────────────
 
-#: "4.0G." / "4.O6." / "4,0g" → "4.OG."   (Ziffer, Trenner, zwei Zeichen)
+#: Mit Punkt oder Komma als Trenner: "4.0G." / "4.O6." / "4,0g" → "4.OG."
+#: Hier dürfen O und G auch als Ziffern verlesen sein — der Trenner sichert
+#: die Deutung ab.
 _OG = re.compile(r"\b(\d)\s*[.,]\s*[O0o]\s*[G6g]\b")
-#: "4.U6." / "1.Ug" → "1.UG."
 _UG = re.compile(r"\b(\d)\s*[.,]\s*[U u]\s*[G6g]\b")
+
+#: Ohne Punkt, dafür mit Leerzeichen: "4 OG" → "4.OG". Auf gescannten
+#: Formblättern verschluckt die Erkennung den Punkt regelmäßig; im Bericht
+#: stand dann "4 OG. West Achse 1 A-D".
+#:
+#: Hier müssen O und G echte Buchstaben sein. Mit Ziffern erlaubt wäre
+#: "Notkestraße 4 06" ein viertes Obergeschoss — eine Hausnummer bleibt eine
+#: Hausnummer.
+_OG_LUECKE = re.compile(r"\b(\d)\s+([Oo][Gg])\b")
+_UG_LUECKE = re.compile(r"\b(\d)\s+([Uu][Gg])\b")
 #: "406." mitten im Text, wo ein Geschoss stehen muss: Ziffer + "06" + Punkt,
 #: gefolgt von einem Wort. Eine echte Zahl 406 stünde nicht vor "Ost".
 _OG_KOMPAKT = re.compile(r"\b(\d)0[6G]\.\s+(?=[A-ZÄÖÜ])")
@@ -65,6 +76,8 @@ def geschosse(text: str) -> str:
     """Geschossangaben geraderücken. Der häufigste Erkennungsfehler."""
     text = _OG.sub(lambda m: f"{m.group(1)}.OG", text)
     text = _UG.sub(lambda m: f"{m.group(1)}.UG", text)
+    text = _OG_LUECKE.sub(lambda m: f"{m.group(1)}.OG", text)
+    text = _UG_LUECKE.sub(lambda m: f"{m.group(1)}.UG", text)
     text = _OG_KOMPAKT.sub(lambda m: f"{m.group(1)}.OG. ", text)
     text = _EG.sub("EG", text)
     text = _UG_KURZ.sub("UG", text)

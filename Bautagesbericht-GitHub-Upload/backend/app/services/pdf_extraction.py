@@ -456,6 +456,12 @@ MIN_FIRMENLAENGE = 4
 #: Daraus darf nie ein Firmenname werden.
 _FORMULARNUMMER = re.compile(r"\b[A-Z]{1,3}[-_ ]?\d{2,5}[-_/][A-Z0-9]{1,6}\b")
 
+#: Dieselbe Kennung, aber von der anderen Seite gelesen: Der Buchstabenteil
+#: HINTER der Nummer gehört der Firma, die den Vordruck herausgibt
+#: ("FO377_RF" -> RF). Als Trenner ist hier auch ein Leerzeichen erlaubt —
+#: die Texterkennung macht aus dem Unterstrich gern eines.
+_KENNUNG_FIRMA = re.compile(r"\b[A-Z]{1,3}[-_ ]?\d{2,5}[-_/ ]([A-Z]{2,4})\b")
+
 
 def _kuerzel_ausschreiben(kuerzel: str, text: str) -> str:
     """Aus "RF" wird "RF Fassaden", wenn das Blatt den Zusatz hergibt.
@@ -501,6 +507,20 @@ def _formblatt_firma(text: str, ersatz: str,
         kuerzel = treffer.group(1).strip(" .:-")
         if kuerzel and not _FORMULARNUMMER.search(kuerzel):
             kandidaten.append(_kuerzel_ausschreiben(kuerzel, text))
+
+    # Letzte Rückfallebene: das Kürzel in der Formularkennung. Firmen nummerieren
+    # ihre Vordrucke als "FO377_RF" — die Nummer gehört dem Formular, der
+    # Buchstabenteil dahinter der Firma, die es herausgibt.
+    #
+    # Warum das gebraucht wird: Auf einem Blatt derselben Woche hatte die
+    # Erkennung neben "Unterschrift" das "RF" verschluckt. Vier Tage trugen
+    # die Firma, der fünfte den Platzhalter "Firma bitte ergänzen" — im
+    # selben Stapel, vom selben Unternehmen. Die Kennung steht dagegen im
+    # Kopf jedes Blattes und wird zuverlässig gelesen.
+    if not kandidaten:
+        treffer = _KENNUNG_FIRMA.search(text)
+        if treffer:
+            kandidaten.append(treffer.group(1).upper())
 
     if not kandidaten:
         return ersatz
@@ -899,12 +919,29 @@ async def _extract_scan_via_claude(
     from app.services import seitenlesung
 
     if seitenlesung.verfuegbar():
+        befunde = []
         try:
-            tage = await seitenlesung.lies_dokument(file_path, bekannte_firmen)
-        except Exception:
-            tage = []
+            befunde = await seitenlesung.lies_seiten(file_path, bekannte_firmen)
+        except Exception as fehler:
+            befunde = [seitenlesung.SeitenBefund(
+                seite=1, fehler=seitenlesung.fehlertext(fehler))]
+
+        # Scheitert die Schnittstelle, muss das im Bericht stehen. Vorher
+        # verschwand ein abgelehnter Schlüssel lautlos und der Anwender sah
+        # nur einen leeren Bericht.
+        probleme = seitenlesung.fehlermeldungen(befunde)
+        if probleme and not any(not b.fehler for b in befunde):
+            return [{
+                "firma": f"(Erkennung fehlgeschlagen: {file_path.name})",
+                "ort": "",
+                "personen": 0,
+                "leistung": " ".join(probleme),
+                "besonderes": None,
+                "quelle": "ocr",
+            }]
+
         eintraege: list[dict] = []
-        for tag in tage:
+        for tag in seitenlesung.zu_tagen(befunde, bekannte_firmen):
             eintraege.extend(seitenlesung.als_firmeneintraege(tag))
         if eintraege:
             return eintraege

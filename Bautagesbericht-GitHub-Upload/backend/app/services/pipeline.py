@@ -217,6 +217,33 @@ async def process_einreichung(einreichung_id: int, db: Session):
                 "blockiert": False,
             })
 
+        # Nur ein Kürzel gelesen? Auf manchen Formblättern steht der volle
+        # Firmenname bloß im Logo, und ein Logo ist ein Bild — die
+        # Texterkennung sieht dort nichts. Im Bericht an den Bauherrn steht
+        # dann "Firma: RF". Das lässt sich nicht erraten, aber es lässt sich
+        # sagen: Wer die Firma einmal beim Projekt hinterlegt, bekommt ab
+        # dann in jedem Bericht den vollen Namen.
+        for eintrag in all_firmen:
+            name = str(eintrag.get("firma", "")).strip()
+            if not name or name.startswith("("):
+                continue
+            if len(name) <= 3 and not any(
+                firmennamen.normalisiere(name) == firmennamen.normalisiere(b)
+                for b in bekannte
+            ):
+                warnungen.append({
+                    "feld": "firmen",
+                    "problem": (
+                        f"Vom Firmennamen war nur das Kürzel „{name}“ zu lesen "
+                        "— der volle Name steht auf diesem Formblatt "
+                        "vermutlich nur im Logo. Einmal unter Stammdaten → "
+                        "Firmen/Gewerke hinterlegen, dann steht er ab dem "
+                        "nächsten Bericht vollständig da."
+                    ),
+                    "quelle_datei": "",
+                    "blockiert": False,
+                })
+
     # Step 3: Build validated JSON
     firmen_entries = []
     for i, f in enumerate(all_firmen):

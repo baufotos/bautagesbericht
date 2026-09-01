@@ -67,8 +67,17 @@ _RECHTSFORMEN = (
     "e.k.", "ek", "e.v.", "ev", "co.", "co",
 )
 
-#: Was am Anfang eines Firmennamens nichts verloren hat.
-_VORSATZ = re.compile(r"^\s*(fa\.?|firma|nu|nachunternehmer)\s*[:.\-]?\s+", re.I)
+#: Was am Anfang eines Firmennamens nichts verloren hat. Danach muss ein
+#: Großbuchstabe folgen — sonst würde aus dem Platzhalter "Firma bitte
+#: ergänzen" ein Firmenname namens "bitte ergänzen", und der stand dann so
+#: im Bericht.
+#: Der Blick nach vorn steht ausdrücklich unter ``(?-i:…)``: Das ``re.I`` des
+#: Musters gilt sonst auch für ihn, und dann wäre jeder Kleinbuchstabe ein
+#: Großbuchstabe — der Platzhalter würde wieder zerlegt.
+_VORSATZ = re.compile(
+    r"^\s*(fa\.?|firma|nu|nachunternehmer)\s*[:.\-]?\s+(?=(?-i:[A-ZÄÖÜ0-9]))",
+    re.I,
+)
 
 #: Unsicherheitszeichen der Erkennung. Für den Vergleich weg, im Ergebnis bleibt
 #: es stehen, damit man sieht, was unsicher gelesen wurde.

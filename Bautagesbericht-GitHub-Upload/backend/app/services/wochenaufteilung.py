@@ -88,6 +88,21 @@ _DATUMSWORTE = re.compile(
     re.IGNORECASE,
 )
 
+#: Zeilen, deren Datum zum Vordruck gehört und nicht zum Bautag. Auf jedem
+#: Formblatt steht unten klein, wann die Vorlage erstellt oder zuletzt
+#: geändert wurde ("erstellt: 31.01.2020 CZ", "Rev.: 01", "Stand 06/2020").
+#: Ohne diese Ausnahme trug ein Bericht vom April 2024 das Datum Januar 2020,
+#: sobald kein Zeitraum angegeben war, der es aussortiert hätte.
+_VORDRUCKDATUM = re.compile(
+    r"\b(erstellt|erstellungsdatum|stand|rev\.?|revision|version|"
+    r"formblatt|vorlage|freigegeben|gedruckt)\b",
+    re.IGNORECASE,
+)
+
+#: So viele Zeilen am Seitenende gelten als Fußbereich. Dort steht die
+#: Herkunft des Vordrucks, nie das Berichtsdatum.
+FUSSZEILEN = 3
+
 WOCHENTAGE = ("Montag", "Dienstag", "Mittwoch", "Donnerstag",
               "Freitag", "Samstag", "Sonntag")
 
@@ -160,6 +175,12 @@ def datum_der_seite(text: str, erlaubt: set[date] | None = None) -> date | None:
 
     # 1. Datumszeilen zuerst, von oben nach unten.
     for zeile in zeilen:
+        if _VORDRUCKDATUM.search(zeile):
+            # "erstellt: 31.01.2020 CZ", "Rev.: 01 Stand 06/2020" — das ist
+            # das Alter des Vordrucks, nicht der Tag, über den berichtet wird.
+            # Ohne diese Ausnahme trug ein Bericht von 2024 das Datum 2020,
+            # sobald kein Zeitraum angegeben war, der es aussortiert hätte.
+            continue
         if not _DATUMSWORTE.search(zeile):
             continue
         passende = zulaessig(daten_in_text(zeile))
@@ -170,13 +191,56 @@ def datum_der_seite(text: str, erlaubt: set[date] | None = None) -> date | None:
             # Zeitraum, kein Tag. Nicht raten.
             continue
 
-    # 2. Erstes zulässiges Datum irgendwo auf der Seite.
-    passende = zulaessig(daten_in_text(text))
+    # 2. Erstes zulässiges Datum irgendwo auf der Seite — ohne den Fußbereich.
+    #
+    #    Ganz unten steht auf jedem Formblatt klein, wann die Vorlage erstellt
+    #    wurde ("erstellt: 31.01.2020 CZ"). Auf einem Blatt, dessen Kopfzeile
+    #    nicht sauber gelesen wurde, gewann bisher dieses Datum — der Bericht
+    #    vom April 2024 hieß dann Januar 2020.
+    #
+    #    Zwei Filter, weil einer nicht reicht: Das Schlüsselwort erwischt die
+    #    Zeile nur, wenn es lesbar ankam ("ersten: 31 01 2020 CZ" war es
+    #    nicht). Die Lage tut es immer — das Berichtsdatum steht im Kopf,
+    #    nie in den letzten Zeilen.
+    gefuellt = [z for z in zeilen if z.strip()]
+    rumpf = gefuellt[:-FUSSZEILEN] if len(gefuellt) > FUSSZEILEN else gefuellt
+    ohne_vordruck = "\n".join(z for z in rumpf if not _VORDRUCKDATUM.search(z))
+    passende = zulaessig(daten_in_text(ohne_vordruck))
     if passende:
         return passende[0]
 
     # 3. Letzte Stufe: Tag und Monat ohne brauchbares Jahr. Nur mit Zeitraum.
     return _aus_tag_monat(text, erlaubt)
+
+
+def _mit_jahren_der_nachbarn(text: str, jahre: set[int]) -> date | None:
+    """Tag und Monat aus der Datumszeile, Jahr von den übrigen Blättern.
+
+    Gebraucht, wenn die Jahreszahl verlesen wurde. Auf einem echten Blatt
+    stand "Do. 04.04 9024" — Tag und Monat waren einwandfrei zu lesen, nur
+    die 2 war zur 9 geworden. Die Nachbarblätter derselben Datei tragen das
+    richtige Jahr.
+
+    Bewusst nur bei **einem** plausiblen Jahr: Enthält eine Datei Blätter aus
+    zwei Jahren, wird nicht geraten.
+    """
+    brauchbar = {j for j in jahre if 2000 <= j <= 2100}
+    if len(brauchbar) != 1:
+        return None
+    jahr = brauchbar.pop()
+
+    for zeile in text.splitlines():
+        if _VORDRUCKDATUM.search(zeile) or not _DATUMSWORTE.search(zeile):
+            continue
+        treffer = _TAG_MONAT.search(zeile)
+        if not treffer:
+            continue
+        try:
+            return date(jahr, int(treffer.group("monat")),
+                        int(treffer.group("tag")))
+        except ValueError:
+            continue
+    return None
 
 
 def _aus_tag_monat(text: str, erlaubt: set[date] | None) -> date | None:
@@ -405,6 +469,19 @@ def finde_seitendaten(dateien: list[Path],
             funde.append(Seitenfund(datei=name, seite=1, datum=None))
             continue
 
+        # Welches Jahr tragen die lesbaren Blätter dieser Datei? Damit lässt
+        # sich auf einem Blatt, dessen Jahreszahl verlesen wurde, Tag und
+        # Monat retten: "Do. 04.04 9024" ergibt mit dem Jahr der
+        # Nachbarblätter den 04.04.2024. Ohne das fiel dieses Blatt auf das
+        # Erstelldatum des Vordrucks zurück.
+        #
+        # Gezählt werden nur die Datumsangaben, die als Berichtsdatum
+        # durchgegangen sind — nicht jede Zahl im Text. Sonst zählte das
+        # Erstelljahr des Vordrucks mit, es gäbe zwei Jahre, und die
+        # Rettung unterbliebe genau dort, wo sie gebraucht wird.
+        jahre = {d.year for d in
+                 (datum_der_seite(t, erlaubt) for t in seiten) if d}
+
         letztes: date | None = None
         for nummer, text in enumerate(seiten, start=1):
             # Zuerst die Frage, ob auf DIESER Seite mehrere Tage stehen.
@@ -420,6 +497,8 @@ def finde_seitendaten(dateien: list[Path],
                 continue
 
             gefunden = datum_der_seite(text, erlaubt)
+            if gefunden is None and erlaubt is None:
+                gefunden = _mit_jahren_der_nachbarn(text, jahre)
             if gefunden is not None:
                 letztes = gefunden
                 funde.append(Seitenfund(name, nummer, gefunden, "kopf"))
@@ -476,15 +555,24 @@ async def finde_seitendaten_genau(
                 f"„{pfad.name}“ konnte nicht seitenweise gelesen werden: {fehler}")
             continue
 
+        # Fehlgeschlagene Seiten zuerst: Ein abgelehnter Schlüssel darf nicht
+        # als "kein Datum gefunden" durchgehen. Sonst sucht der Anwender den
+        # Fehler beim Scan, während der Grund die Konfiguration ist.
+        probleme = seitenlesung.fehlermeldungen(befunde)
+        if probleme:
+            for text in probleme:
+                hinweise.append(f"„{pfad.name}“ konnte nicht gelesen werden. {text}")
+            continue
+
         neu_gefunden = _aus_befunden(name, befunde, erlaubt)
-        if not neu_gefunden:
+        anzahl = len({f.datum for f in neu_gefunden if f.datum})
+        if not anzahl:
             hinweise.append(
                 f"Auch beim genauen Lesen war in „{pfad.name}“ kein Datum zu "
                 "erkennen. Bitte die Tage von Hand zuordnen.")
             continue
 
         funde = [f for f in funde if f.datei != name] + neu_gefunden
-        anzahl = len({f.datum for f in neu_gefunden if f.datum})
         hinweise.append(
             f"„{pfad.name}“ ist handschriftlich — jede Seite wurde einzeln "
             f"gelesen und geprüft. {anzahl} Tag(e) erkannt.")

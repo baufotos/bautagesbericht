@@ -418,6 +418,50 @@ def _zu_befund(seite: int, roh: dict) -> SeitenBefund:
     )
 
 
+#: Wortfetzen, an denen sich der Grund eines Fehlschlags erkennen lässt, und
+#: was der Anwender stattdessen lesen soll. Die Schnittstelle meldet auf
+#: Englisch und mit Statuscodes; wer im Büro einen Bautagesbericht hochlädt,
+#: kann damit nichts anfangen.
+_FEHLERDEUTUNG = (
+    (("authentication", "401", "invalid x-api-key", "invalid api key"),
+     "Der Anthropic-Schlüssel wird nicht angenommen. Bitte den Wert hinter "
+     "„anthropic_key=“ prüfen — er beginnt mit „sk-ant-“ und darf keine "
+     "Leerzeichen oder Anführungszeichen enthalten."),
+    (("permission", "403"),
+     "Der Anthropic-Schlüssel darf dieses Modell nicht benutzen."),
+    (("credit", "billing", "quota", "insufficient"),
+     "Das Anthropic-Konto hat kein Guthaben mehr."),
+    (("rate_limit", "429", "overloaded", "529"),
+     "Die Anthropic-Schnittstelle ist gerade überlastet oder das Limit ist "
+     "erreicht. In ein paar Minuten noch einmal versuchen."),
+    (("connection", "timeout", "getaddrinfo", "ssl", "network"),
+     "Keine Verbindung zur Anthropic-Schnittstelle. Internetverbindung oder "
+     "Firewall prüfen."),
+)
+
+
+def fehlertext(fehler: Exception) -> str:
+    """Aus einer Ausnahme der Schnittstelle einen brauchbaren Satz machen."""
+    roh = f"{type(fehler).__name__}: {fehler}".lower()
+    for stichworte, klartext in _FEHLERDEUTUNG:
+        if any(wort in roh for wort in stichworte):
+            return klartext
+    return f"Die Texterkennung meldete: {fehler}"
+
+
+def _endgueltig(fehler: Exception) -> bool:
+    """Hat es keinen Sinn, die übrigen Seiten auch noch zu schicken?
+
+    Ein falscher Schlüssel bleibt bei Seite 12 genauso falsch wie bei Seite 1.
+    Ohne diese Prüfung liefen bei einer Woche Bautagebuch 24 aussichtslose
+    Anfragen durch, bevor am Ende "0 Tage erkannt" herauskam.
+    """
+    roh = f"{type(fehler).__name__}: {fehler}".lower()
+    return any(wort in roh for wort in
+               ("authentication", "401", "403", "permission",
+                "credit", "billing", "quota", "invalid x-api-key"))
+
+
 async def _lies_seite(client, nummer: int, bild: bytes,
                       bekannte: tuple[str, ...]) -> SeitenBefund:
     """Eine Seite: abschreiben, dann prüfen."""
@@ -430,7 +474,7 @@ async def _lies_seite(client, nummer: int, bild: bytes,
             _schema(),
         )
     except Exception as fehler:
-        return SeitenBefund(seite=nummer, fehler=f"Seite {nummer}: {fehler}")
+        return SeitenBefund(seite=nummer, fehler=fehlertext(fehler))
 
     # Zweiter Durchgang. Schlägt er fehl, gilt die erste Abschrift — ein
     # ungeprüftes Ergebnis ist besser als gar keines.
@@ -569,6 +613,16 @@ def _haupteintrag(befund: SeitenBefund) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _grundsaetzlich(meldung: str) -> bool:
+    """Ist dieser Fehlschlag für alle Seiten derselbe?
+
+    Geprüft wird der bereits übersetzte Klartext, nicht die Ausnahme: An
+    dieser Stelle ist die Ausnahme schon zu einem Satz geworden.
+    """
+    return any(wort in meldung for wort in
+               ("Schlüssel", "Guthaben", "Modell nicht benutzen"))
+
+
 def verfuegbar() -> bool:
     """Kann seitenweise gelesen werden? Braucht einen Anthropic-Schlüssel."""
     schluessel = (settings.anthropic_api_key or "").strip()
@@ -622,14 +676,25 @@ async def lies_seiten(pfad: Path,
         return []
 
     client = _client()
+
+    # Die erste Seite allein, bevor die übrigen losgeschickt werden. Scheitert
+    # sie an etwas Grundsätzlichem — falscher Schlüssel, kein Guthaben —,
+    # brauchen die anderen elf gar nicht erst zu fahren. Vorher lief eine
+    # ganze Woche Bautagebuch in 24 aussichtslose Anfragen, und am Ende stand
+    # bloß "0 Tage erkannt", ohne dass jemand den Grund erfuhr.
+    erste = await _lies_seite(client, 1, bilder[0], bekannte)
+    if erste.fehler and _grundsaetzlich(erste.fehler):
+        return [SeitenBefund(seite=i + 1, fehler=erste.fehler)
+                for i in range(len(bilder))]
+
     sperre = asyncio.Semaphore(GLEICHZEITIG)
 
     async def eine(nummer: int, bild: bytes) -> SeitenBefund:
         async with sperre:
             return await _lies_seite(client, nummer, bild, bekannte)
 
-    befunde = list(await asyncio.gather(
-        *(eine(i + 1, bild) for i, bild in enumerate(bilder))
+    befunde = [erste] + list(await asyncio.gather(
+        *(eine(i + 2, bild) for i, bild in enumerate(bilder[1:]))
     ))
 
     if len(_zwischenspeicher) >= _SPEICHER_GRENZE:
@@ -642,6 +707,19 @@ async def lies_dokument(pfad: Path,
                         bekannte: tuple[str, ...] = ()) -> list[Tagesbefund]:
     """Der übliche Weg: Seiten lesen und zu Tagen zusammenfügen."""
     return zu_tagen(await lies_seiten(pfad, bekannte), bekannte)
+
+
+def fehlermeldungen(befunde: list[SeitenBefund]) -> list[str]:
+    """Die Fehlschläge, jeder Grund nur einmal.
+
+    Bei zwölf Seiten mit demselben Problem soll nicht zwölfmal dieselbe Zeile
+    in der Oberfläche stehen.
+    """
+    gesehen: list[str] = []
+    for befund in befunde:
+        if befund.fehler and befund.fehler not in gesehen:
+            gesehen.append(befund.fehler)
+    return gesehen
 
 
 def als_firmeneintraege(tag: Tagesbefund) -> list[dict]:
