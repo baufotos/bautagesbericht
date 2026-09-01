@@ -81,6 +81,34 @@ class Einreichung(Base):
     logs = relationship("VerarbeitungsLog", back_populates="einreichung")
 
 
+class Firmenname(Base):
+    """Firmen, die auf diesem Projekt schon einmal in einem Bericht standen.
+
+    WOZU
+    ====
+    Die Erkennung eines handschriftlichen Firmennamens gelingt viel sicherer,
+    wenn bekannt ist, welche Firmen überhaupt in Frage kommen. Aus "Riedd Bau"
+    wird dann "Riedel Bau" statt einer vierten Schreibweise.
+
+    Die Firmen der Stammdaten (``Gewerk``) sind die eine Quelle. Die zweite
+    wächst von selbst: Was einmal in einem Bericht stand, ist beim nächsten
+    Mal bekannt. Nach der ersten Woche kennt ein Projekt seine Nachunternehmer,
+    ohne dass jemand etwas gepflegt hat.
+
+    ``anzahl`` gewichtet: Eine Firma, die zwanzigmal vorkam, ist ein besserer
+    Anker als eine, die einmal auftauchte und vielleicht selbst ein Lesefehler
+    war.
+    """
+
+    __tablename__ = "firmennamen"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projekt_id = Column(Integer, ForeignKey("projekte.id"), nullable=False)
+    name = Column(String, nullable=False)
+    anzahl = Column(Integer, nullable=False, default=1)
+    zuletzt_am = Column(DateTime, default=func.now())
+
+
 class VerarbeitungsLog(Base):
     __tablename__ = "verarbeitungs_log"
 

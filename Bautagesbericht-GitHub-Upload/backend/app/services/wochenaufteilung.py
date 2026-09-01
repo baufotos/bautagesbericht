@@ -431,6 +431,99 @@ def finde_seitendaten(dateien: list[Path],
     return funde
 
 
+async def finde_seitendaten_genau(
+    dateien: list[Path],
+    erlaubt: set[date] | None = None,
+    bekannte: tuple[str, ...] = (),
+) -> tuple[list[Seitenfund], list[str]]:
+    """Wie ``finde_seitendaten``, sieht sich aber unlesbare Blätter genau an.
+
+    Der Textweg ist schnell und deckt alles ab, was gedruckt vorliegt. Bleibt
+    eine Datei ganz ohne Datum und ist erkennbar nur der Vordruck angekommen,
+    steht dort Schreibschrift — die liest die Windows-Texterkennung
+    grundsätzlich nicht. Dann wird jede Seite einzeln angesehen
+    (services/seitenlesung), was Zeit kostet und deshalb nur hier passiert,
+    wo es wirklich nötig ist.
+
+    Gibt ``(funde, hinweise)`` zurück; die Hinweise gehen in die Oberfläche.
+    """
+    from app.services import bautext, seitenlesung
+
+    funde = finde_seitendaten(dateien, erlaubt)
+    hinweise: list[str] = []
+
+    for pfad in dateien:
+        name = str(pfad)
+        eigene = [f for f in funde if f.datei == name]
+        if any(f.datum is not None for f in eigene):
+            continue
+        if pfad.suffix.lower() not in TEXT_ENDUNGEN:
+            continue
+
+        seiten = seiten_lesen(pfad)
+        if not bautext.handschrift_unlesbar(seiten, False):
+            continue
+
+        if not seitenlesung.verfuegbar():
+            hinweise.append(bautext.unlesbar_hinweis(
+                pfad.name, _wo_der_schluessel()))
+            continue
+
+        try:
+            befunde = await seitenlesung.lies_seiten(pfad, bekannte)
+        except Exception as fehler:
+            hinweise.append(
+                f"„{pfad.name}“ konnte nicht seitenweise gelesen werden: {fehler}")
+            continue
+
+        neu_gefunden = _aus_befunden(name, befunde, erlaubt)
+        if not neu_gefunden:
+            hinweise.append(
+                f"Auch beim genauen Lesen war in „{pfad.name}“ kein Datum zu "
+                "erkennen. Bitte die Tage von Hand zuordnen.")
+            continue
+
+        funde = [f for f in funde if f.datei != name] + neu_gefunden
+        anzahl = len({f.datum for f in neu_gefunden if f.datum})
+        hinweise.append(
+            f"„{pfad.name}“ ist handschriftlich — jede Seite wurde einzeln "
+            f"gelesen und geprüft. {anzahl} Tag(e) erkannt.")
+
+    funde.sort(key=lambda f: (f.datei, f.seite))
+    return funde, hinweise
+
+
+def _wo_der_schluessel() -> str:
+    from app.services.pdf_extraction import _wo_der_schluessel_hingehoert
+
+    return _wo_der_schluessel_hingehoert()
+
+
+def _aus_befunden(name: str, befunde, erlaubt: set[date] | None) -> list[Seitenfund]:
+    """Seitenfunde aus dem genauen Lesen bauen.
+
+    Fortsetzungsseiten erben den Tag der vorigen Seite — dieselbe Regel wie im
+    Textweg, denn ein Bautagebuch verteilt einen Tag über zwei Blätter.
+    """
+    ergebnis: list[Seitenfund] = []
+    letztes: date | None = None
+    for befund in befunde:
+        gefunden = befund.datum
+        if gefunden is not None and erlaubt and gefunden not in erlaubt:
+            # Außerhalb des angegebenen Zeitraums: vermutlich verlesen (eine
+            # 1 als 7). Lieber als Fortsetzung behandeln als einen Tag
+            # anzulegen, den es in dieser Woche nicht gibt.
+            gefunden = None
+        if gefunden is not None:
+            letztes = gefunden
+            ergebnis.append(Seitenfund(name, befund.seite, gefunden, "kopf"))
+        elif letztes is not None:
+            ergebnis.append(Seitenfund(name, befund.seite, letztes, "fortsetzung"))
+        else:
+            ergebnis.append(Seitenfund(name, befund.seite, None, ""))
+    return ergebnis
+
+
 def gruppiere_nach_tag(funde: list[Seitenfund]) -> list[Tagesblock]:
     """Fasst die Seitenfunde zu Tagesblöcken zusammen, aufsteigend nach Datum.
 

@@ -19,6 +19,7 @@ Aufbau und Formatierung sind an den ausgefüllten HPP-Referenzberichten
   Fußzeile      "Bautagebuch - {Projekt} - {TT.MM.JJJJ}"
 """
 
+import threading
 from datetime import date
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -76,17 +77,76 @@ FIRMA_VALUE_W = VALUE_SPAN - FIRMA_LABEL_W
 # Firmen wird der Bericht zweiseitig. Das ist gewollt — ein Wetterdiagramm und
 # fünf Angaben je Firma passen bei ordentlichem Abstand nicht zusammen auf ein
 # Blatt, und gequetscht liest sie auf der Baustelle niemand.
-ZELL_LUFT = 90            # oben und unten je Zelle der Haupttabelle (4,5 pt)
-FELD_ABSTAND = 170        # zwischen Firma, Ort, Personen, Leistung, Besonders (8,5 pt)
-BLOCK_ABSTAND = 220       # zwischen zwei Firmenblöcken (11 pt)
-NOTIZ_ABSTAND = 150       # zwischen den Zeilen des Haupteintrags (7,5 pt)
-ZEILEN_MINDESTHOEHE = 320  # Mindesthöhe einer Tabellenzeile (16 pt)
+#
+# ANGEPASST WIRD DAS PRO BERICHT
+# ------------------------------
+# Ein Tag mit zwei Firmen darf Luft haben. Ein Tag mit sechs Firmen bekommt
+# sonst einen Seitenumbruch mitten im Firmenteil, und weil eine Zeile nicht
+# zerschnitten werden darf, bleibt unten auf Seite 1 eine handbreite Lücke —
+# genau das, was am fertigen Bericht als "komisch" auffällt.
+#
+# Deshalb wird vor dem Bau geschätzt, wie hoch der Inhalt wird, und daraus
+# eines von drei Abstandsmaßen gewählt (siehe ``_luft_waehlen``). Der Bericht
+# bleibt so öfter einseitig, ohne dass etwas gequetscht aussieht.
+LUFT_MASSE = {
+    # Der bisherige Wert: großzügig, für ein bis drei Firmen.
+    "weit": {
+        "zelle": 90,        # Innenabstand je Zelle der Haupttabelle (4,5 pt)
+        "feld": 170,        # zwischen Firma, Ort, Personen, Leistung (8,5 pt)
+        "block": 220,       # zwischen zwei Firmenblöcken (11 pt)
+        "notiz": 150,       # zwischen den Zeilen des Haupteintrags (7,5 pt)
+        "mindesthoehe": 320,
+        "zeilenabstand": 288,   # 1,2-fach
+    },
+    # Spürbar dichter, immer noch ruhig zu lesen.
+    "normal": {
+        "zelle": 70, "feld": 120, "block": 170, "notiz": 120,
+        "mindesthoehe": 260, "zeilenabstand": 264,
+    },
+    # Für lange Tage. Enger als das wird nicht gesetzt — darunter klebt
+    # "Leistung" wieder an "Personen", und auf der Baustelle liest das niemand.
+    "eng": {
+        "zelle": 50, "feld": 90, "block": 130, "notiz": 90,
+        "mindesthoehe": 200, "zeilenabstand": 250,
+    },
+}
 
-#: Zeilenabstand innerhalb eines Werts, der umbricht. 240 wäre einfach; 288
-#: entspricht 1,2-fach. Betrifft vor allem "Leistung" und "Besonders" — dort
-#: stehen ganze Sätze, die über zwei bis vier Zeilen laufen, und einfacher
-#: Abstand lässt sie zu einem Block zusammenkleben.
-ZEILENABSTAND_TEXT = 288
+#: Das gerade gültige Maß. Wird von ``generate_bautagesbericht`` gesetzt.
+#:
+#: Je Thread getrennt: Ein Bericht wird ohne Unterbrechung gebaut, aber zwei
+#: Berichte können in verschiedenen Threads gleichzeitig entstehen (eine Woche
+#: mit fünf Tagen, zwei Einreichungen parallel). Ein gemeinsamer Wert würde
+#: dann mitten im Bau umspringen und einen Bericht mit gemischten Abständen
+#: hinterlassen.
+_luft_je_thread = threading.local()
+
+
+class _LuftZugriff:
+    """Verhält sich wie ein dict, liest aber den Wert des eigenen Threads."""
+
+    def _mass(self) -> dict:
+        vorhanden = getattr(_luft_je_thread, "mass", None)
+        if vorhanden is None:
+            vorhanden = dict(LUFT_MASSE["weit"])
+            _luft_je_thread.mass = vorhanden
+        return vorhanden
+
+    def __getitem__(self, name: str) -> int:
+        return self._mass()[name]
+
+
+_luft = _LuftZugriff()
+
+
+def _luft_setzen(mass: dict) -> None:
+    _luft_je_thread.mass = dict(mass)
+
+ZELL_LUFT = LUFT_MASSE["weit"]["zelle"]
+FELD_ABSTAND = LUFT_MASSE["weit"]["feld"]
+BLOCK_ABSTAND = LUFT_MASSE["weit"]["block"]
+NOTIZ_ABSTAND = LUFT_MASSE["weit"]["notiz"]
+ZEILEN_MINDESTHOEHE = LUFT_MASSE["weit"]["mindesthoehe"]
+ZEILENABSTAND_TEXT = LUFT_MASSE["weit"]["zeilenabstand"]
 
 # Bright-Sky-Icons auf darstellbare Symbole abbilden.
 WETTER_SYMBOLE = {
@@ -172,7 +232,9 @@ def _borders(top: bool, bottom: bool) -> str:
 
 def _cell(width: int, body: str, *, gridspan: int | None = None,
           top: bool = False, bottom: bool = False,
-          valign: str | None = None, luft: int = ZELL_LUFT) -> str:
+          valign: str | None = None, luft: int | None = None) -> str:
+    if luft is None:
+        luft = _luft["zelle"]
     tcpr = f'<w:tcW w:w="{width}" w:type="dxa"/>'
     if gridspan:
         tcpr += f'<w:gridSpan w:val="{gridspan}"/>'
@@ -190,7 +252,7 @@ def _cell(width: int, body: str, *, gridspan: int | None = None,
 
 
 def _row(cells: str, *, height: int | None = None,
-         mindesthoehe: int | None = ZEILEN_MINDESTHOEHE):
+         mindesthoehe: int | None = -1):
     """Eine Tabellenzeile.
 
     ``height`` erzwingt eine exakte Höhe (für die Balkengrafik nötig).
@@ -200,6 +262,8 @@ def _row(cells: str, *, height: int | None = None,
     # cantSplit: Eine Zeile wandert ganz auf die nächste Seite, statt am
     # Seitenrand zerschnitten zu werden. Ohne das stand von der
     # Unterschriftszeile nur das Wort "Datum" auf Seite zwei.
+    if mindesthoehe == -1:
+        mindesthoehe = _luft["mindesthoehe"]
     inhalt = "<w:cantSplit/>"
     if height:
         inhalt += f'<w:trHeight w:val="{height}" w:hRule="exact"/>'
@@ -322,7 +386,7 @@ def _hourly_row(stundenwerte: list):
 
 def _note_row(text: str, *, bottom: bool):
     paras = "".join(
-        _para(_run(line), after=NOTIZ_ABSTAND)
+        _para(_run(line), after=_luft["notiz"])
         for line in text.splitlines() if line.strip()
     )
     cells = _cell(LABEL_COL, _para(""), bottom=bottom)
@@ -347,14 +411,14 @@ def _firma_row(firma, *, bottom: bool = True, zeige_label: bool = True):
     grid = f'<w:gridCol w:w="{FIRMA_LABEL_W}"/><w:gridCol w:w="{FIRMA_VALUE_W}"/>'
     tbl = _nested_table_open(VALUE_SPAN, grid)
     for i, (label, value, value_bold) in enumerate(fields):
-        after = 0 if i == len(fields) - 1 else FELD_ABSTAND
+        after = 0 if i == len(fields) - 1 else _luft["feld"]
         tbl += (
             "<w:tr>"
             f'<w:tc><w:tcPr><w:tcW w:w="{FIRMA_LABEL_W}" w:type="dxa"/>'
             f"{_borders(False, False)}</w:tcPr>{_para(_run(label), after=after)}</w:tc>"
             f'<w:tc><w:tcPr><w:tcW w:w="{FIRMA_VALUE_W}" w:type="dxa"/>'
             f"{_borders(False, False)}</w:tcPr>"
-            f"{_para(_run(value, bold=value_bold), after=after, zeilenabstand=ZEILENABSTAND_TEXT)}</w:tc>"
+            f"{_para(_run(value, bold=value_bold), after=after, zeilenabstand=_luft['zeilenabstand'])}</w:tc>"
             "</w:tr>"
         )
     tbl += "</w:tbl>"
@@ -362,7 +426,7 @@ def _firma_row(firma, *, bottom: bool = True, zeige_label: bool = True):
     # Der Abschlussabsatz trennt diesen Firmenblock vom nächsten. Ohne ihn
     # gingen zwei Firmen ineinander über und man müsste die Zeilen zählen,
     # um zu sehen, wo die eine aufhört.
-    body = (tbl + _para("", after=BLOCK_ABSTAND)) if fields else _para("")
+    body = (tbl + _para("", after=_luft["block"])) if fields else _para("")
     # "Firmen" ist die Überschrift des Abschnitts, nicht die jeder einzelnen
     # Firma — bei drei Nachunternehmern stand es sonst dreimal untereinander.
     beschriftung = _para(_run("Firmen", bold=True)) if zeige_label else _para("")
@@ -573,6 +637,97 @@ def _collapse_cell(tc) -> None:
         tc.remove(para)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Wie hoch wird das?
+#
+# Word rechnet den Umbruch erst beim Öffnen aus; hier muss vorher entschieden
+# werden, wie viel Luft der Bericht verträgt. Die Schätzung ist grob und darf
+# es sein: Sie soll nur zwischen "passt bequem", "wird knapp" und "wird lang"
+# unterscheiden. Liegt sie daneben, sieht der Bericht etwas luftiger oder
+# dichter aus als nötig — es geht nichts verloren.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Zeichen, die bei Arial 9 pt in eine Wertspalte passen. Aus der Spaltenbreite
+#: (6917 Twips) und einer mittleren Zeichenbreite von rund 90 Twips.
+ZEICHEN_JE_ZEILE = 76
+
+#: Nutzbare Höhe einer A4-Seite: 297 mm abzüglich der Ränder der Vorlage und
+#: abzüglich Kopf- und Fußzeile. In Twips.
+SEITENHOEHE_NUTZBAR = 13000
+
+#: Was Datum, Wetterblock und Haupteintrag ungefähr belegen, bevor die erste
+#: Firma kommt.
+KOPF_HOEHE = 1800
+
+
+def _zeilen(text: str) -> int:
+    """Wie viele Zeilen ein Wert in der Wertspalte braucht."""
+    if not text:
+        return 0
+    gesamt = 0
+    for absatz in str(text).splitlines() or [""]:
+        gesamt += max(1, -(-len(absatz) // ZEICHEN_JE_ZEILE))
+    return max(1, gesamt)
+
+
+def _hoehe_firma(firma, mass: dict) -> int:
+    """Geschätzte Höhe eines Firmenblocks in Twips."""
+    felder = [firma.firma, firma.ort, str(firma.personen or ""),
+              firma.leistung, firma.besonderes or ""]
+    gefuellt = [f for f in felder if str(f).strip()]
+    hoehe = 0
+    for wert in gefuellt:
+        hoehe += _zeilen(wert) * mass["zeilenabstand"] + mass["feld"]
+    # Innenabstand der Zelle oben und unten, plus der Trennabsatz zum
+    # nächsten Block.
+    hoehe += 2 * mass["zelle"] + mass["block"]
+    return max(hoehe, mass["mindesthoehe"])
+
+
+def _geschaetzte_hoehe(data, mass: dict) -> int:
+    hoehe = KOPF_HOEHE + 2 * mass["zelle"]
+    if data.haupteintrag:
+        hoehe += _zeilen(data.haupteintrag) * (mass["zeilenabstand"] + mass["notiz"])
+    if data.wetter and data.wetter.stundenwerte:
+        # Der Balkenblock hat eine feste Höhe, unabhängig vom Maß.
+        hoehe += 1900
+    for firma in data.firmen:
+        hoehe += _hoehe_firma(firma, mass)
+    # Unterschriftszeile.
+    hoehe += 700
+    return hoehe
+
+
+def _luft_waehlen(data) -> dict:
+    """Das größte Abstandsmaß, mit dem der Bericht noch auf eine Seite passt.
+
+    Passt er auch eng nicht auf eine Seite — bei sechs Firmen mit langen
+    Leistungstexten ist das normal —, wird ``normal`` genommen: Dann ist der
+    Umbruch ohnehin da, und Enge bringt nichts als schlechtere Lesbarkeit.
+    """
+    for name in ("weit", "normal", "eng"):
+        mass = LUFT_MASSE[name]
+        if _geschaetzte_hoehe(data, mass) <= SEITENHOEHE_NUTZBAR:
+            return dict(mass)
+    return dict(LUFT_MASSE["normal"])
+
+
+def _mit_naechster_zeile(tr) -> None:
+    """Bindet eine Tabellenzeile an die folgende (``keepNext``).
+
+    Gebraucht für die letzte Firma vor der Unterschrift: Ohne das rutscht bei
+    einem zweiseitigen Bericht die Unterschriftszeile allein auf Seite 2 und
+    steht dort verloren unter einer leeren Fläche.
+    """
+    for absatz in tr.iter(qn("w:p")):
+        eigenschaften = absatz.find(qn("w:pPr"))
+        if eigenschaften is None:
+            eigenschaften = parse_xml(f"<w:pPr {nsdecls('w')}/>")
+            absatz.insert(0, eigenschaften)
+        if eigenschaften.find(qn("w:keepNext")) is None:
+            eigenschaften.append(parse_xml(f"<w:keepNext {nsdecls('w')}/>"))
+
+
 def generate_bautagesbericht(
     data: BautagesberichtJSON,
     template_path: Path | None = None,
@@ -581,6 +736,10 @@ def generate_bautagesbericht(
         template_path = settings.template_dir / "Bautagesbericht_HPP_leer.docx"
 
     doc = Document(str(template_path))
+
+    # Muss vor dem ersten Zeilenbau geschehen: Alle Baufunktionen lesen das
+    # gültige Abstandsmaß aus ``_luft``.
+    _luft_setzen(_luft_waehlen(data))
 
     _fill_projekt_header(doc, data.projekt)
     _fill_footer_line(doc, data.projekt, data.datum)
@@ -638,6 +797,11 @@ def generate_bautagesbericht(
             firma_anchor = new_row
         table._tbl.remove(row_firma)
         table._tbl.remove(row_firma_leer)
+        # Die letzte Firma bleibt bei der Unterschrift. Sonst steht die
+        # Unterschriftszeile auf einem zweiseitigen Bericht allein oben auf
+        # Seite 2 — mit einer leeren Seite darunter.
+        if firma_anchor is not row_firma:
+            _mit_naechster_zeile(firma_anchor)
 
     # Unterschriftsdatum über das graue Label setzen
     unterschrift_cells = row_unterschrift.findall(qn("w:tc"))

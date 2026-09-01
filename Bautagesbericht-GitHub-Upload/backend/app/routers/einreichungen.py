@@ -20,6 +20,7 @@ from app.schemas import (
     WochenQuelle,
     WochenTag,
 )
+from app.services import firmennamen
 from app.services import wochenaufteilung as wa
 from app.services import wochenpaket_ablage as ablage
 from app.services.pipeline import confirm_and_generate, process_einreichung
@@ -140,6 +141,10 @@ async def woche_analysieren(
     dateien: list[UploadFile] = File(...),
     woche_von: Annotated[str, Form()] = "",
     woche_bis: Annotated[str, Form()] = "",
+    # Optional: Ist das Projekt schon gewählt, können die dort bekannten
+    # Firmen beim Lesen helfen. Ohne Angabe funktioniert alles wie bisher.
+    projekt_id: Annotated[int | None, Form()] = None,
+    db: Session = Depends(get_db),
 ):
     """Nimmt die Berichte eines Zeitraums entgegen und meldet, welche Tage drinstecken.
 
@@ -189,7 +194,12 @@ async def woche_analysieren(
             raise HTTPException(400, "Der Zeitraum darf höchstens ein Quartal umfassen")
         erlaubt = {von + timedelta(days=i) for i in range((bis - von).days + 1)}
 
-    funde = wa.finde_seitendaten(gespeichert, erlaubt)
+    # Handschriftliche Blätter werden hier seitenweise angesehen, wenn aus dem
+    # Text kein Datum kam. Das dauert — bei einer Woche Bautagebuch gut eine
+    # Minute — ist aber der einzige Weg, Schreibschrift überhaupt zu lesen.
+    bekannte = firmennamen.bekannte_firmen(db, projekt_id) if projekt_id else ()
+    funde, lese_hinweise = await wa.finde_seitendaten_genau(
+        gespeichert, erlaubt, bekannte)
     funde = _abschnitte_auslagern(funde, ordner)
     bloecke = wa.gruppiere_nach_tag(funde)
     geteilte_seiten = sum(1 for f in funde if f.herkunft == "abschnitt")
@@ -207,7 +217,7 @@ async def woche_analysieren(
         else:
             tage.append(eintrag)
 
-    hinweise: list[str] = []
+    hinweise: list[str] = list(lese_hinweise)
     if tage:
         hinweise.append(
             f"{len(tage)} Tag(e) erkannt: "

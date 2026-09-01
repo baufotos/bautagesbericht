@@ -15,6 +15,7 @@ from pathlib import Path
 import pdfplumber
 
 from app.config import settings
+from app.services import bautext, firmennamen
 
 #: Modell für das Auslesen eingescannter Bautagesberichte.
 #:
@@ -162,7 +163,7 @@ def _parse_lindner(pdf) -> list[dict]:
                     "idx": f["idx"],
                     "firma": f["name"],
                     "personen": f.get("personen", 0),
-                    "ort": "",
+                    "orte": [],
                     "leistungen": [],
                     "behinderungen": [],
                     "gewerk": f.get("gewerk", ""),
@@ -172,8 +173,12 @@ def _parse_lindner(pdf) -> list[dict]:
         for a in arbeit_rows:
             for f in firmen_map.values():
                 if f["idx"] == a["idx"]:
-                    if a["ort"] and not f["ort"]:
-                        f["ort"] = a["ort"]
+                    # Alle Orte sammeln, nicht nur den ersten. Eine Firma
+                    # arbeitet an einem Tag im 2., 3. und 4. OG; stand bisher
+                    # nur "3.OG" im Bericht, fehlten zwei Geschosse.
+                    ort = " ".join((a["ort"] or "").split())
+                    if ort and ort not in f["orte"]:
+                        f["orte"].append(ort)
                     f["leistungen"].append(a["beschreibung"])
                     break
 
@@ -191,7 +196,7 @@ def _parse_lindner(pdf) -> list[dict]:
         besonderes = " · ".join(f["behinderungen"]) if f["behinderungen"] else None
         result.append({
             "firma": f["firma"],
-            "ort": f["ort"],
+            "ort": " · ".join(f["orte"]),
             "personen": f["personen"],
             "leistung": leistung,
             "besonderes": besonderes,
@@ -442,15 +447,84 @@ _KOPF_ENDE = re.compile(
 )
 
 
-def _formblatt_firma(text: str, ersatz: str) -> str:
+#: Ein Firmenname mit weniger Zeichen ist ein Kürzel, kein Name. "RF" steht so
+#: auf dem Formblatt der RF Fassaden — im Bericht an den Bauherrn hilft das
+#: niemandem weiter.
+MIN_FIRMENLAENGE = 4
+
+#: Formularnummern sehen aus wie Firmenkürzel: "FO377_RF", "F-0377/RF".
+#: Daraus darf nie ein Firmenname werden.
+_FORMULARNUMMER = re.compile(r"\b[A-Z]{1,3}[-_ ]?\d{2,5}[-_/][A-Z0-9]{1,6}\b")
+
+
+def _kuerzel_ausschreiben(kuerzel: str, text: str) -> str:
+    """Aus "RF" wird "RF Fassaden", wenn das Blatt den Zusatz hergibt.
+
+    Firmenkürzel stehen auf Formblättern neben dem Logo, und das Logo trägt
+    den ausgeschriebenen Namen: "RF" groß, "FASSADEN" klein daneben. Die
+    Texterkennung liest beides, nur eben in getrennten Kästchen.
+    """
+    if len(kuerzel) > 3:
+        return kuerzel
+    muster = re.compile(
+        rf"{re.escape(kuerzel)}[\s\-–|]*([A-ZÄÖÜ][A-ZÄÖÜa-zäöüß]{{3,20}})",
+    )
+    for treffer in muster.finditer(text):
+        zusatz = treffer.group(1)
+        # Nur echte Zusätze, keine Formularwörter ("RF Bautagesbericht").
+        if zusatz.lower().strip() in bautext.VORDRUCK_WOERTER:
+            continue
+        return f"{kuerzel} {zusatz.capitalize()}"
+    return kuerzel
+
+
+def _formblatt_firma(text: str, ersatz: str,
+                     bekannte: tuple[str, ...] = ()) -> str:
+    """Der Firmenname eines Formblatts.
+
+    Reihenfolge der Quellen, absteigend nach Verlässlichkeit:
+
+    1. Eine Firma aus den Projektstammdaten, die im Blatt vorkommt. Dort hat
+       jemand den Namen von Hand richtig eingetragen — besser wird es nicht.
+    2. Eine Zeile mit Rechtsform ("… GmbH & Co. KG").
+    3. Das Kürzel neben der Unterschriftszeile, nach Möglichkeit ausgeschrieben.
+    """
+    kandidaten: list[str] = []
+
     for treffer in _RECHTSFORM.finditer(text):
         name = treffer.group(1).strip(" .:-")
         if name and not name.lower().startswith(("bauvorhaben", "bauherr")):
-            return name
+            kandidaten.append(name)
+
     treffer = _UNTERSCHRIFT_FIRMA.search(text)
     if treffer:
-        return treffer.group(1).strip(" .:-")
-    return ersatz
+        kuerzel = treffer.group(1).strip(" .:-")
+        if kuerzel and not _FORMULARNUMMER.search(kuerzel):
+            kandidaten.append(_kuerzel_ausschreiben(kuerzel, text))
+
+    if not kandidaten:
+        return ersatz
+
+    # Bekannte Firma schlägt alles. Auch ein Kürzel findet so zu seinem vollen
+    # Namen: "RF" trifft "RF Fassaden GmbH" aus den Stammdaten. Die Zuordnung
+    # macht ``firmennamen`` — dort sitzen auch die Sicherungen, damit bei zwei
+    # ähnlichen Firmen nicht geraten wird.
+    if bekannte:
+        zuordnung, _ = firmennamen.vereinheitliche(kandidaten, list(bekannte))
+        for kandidat in kandidaten:
+            zugeordnet = zuordnung.get(kandidat, "")
+            if zugeordnet and any(
+                firmennamen.normalisiere(zugeordnet) == firmennamen.normalisiere(b)
+                for b in bekannte
+            ):
+                return zugeordnet
+
+    # Sonst der längste brauchbare Kandidat — ein Name mit Rechtsform ist
+    # aussagekräftiger als ein Kürzel.
+    brauchbar = [k for k in kandidaten if len(k) >= MIN_FIRMENLAENGE]
+    if brauchbar:
+        return max(brauchbar, key=len)
+    return kandidaten[0]
 
 
 def _formblatt_leistung(text: str) -> str:
@@ -496,7 +570,8 @@ def _formblatt_leistung(text: str) -> str:
     return " · ".join(gesammelt)
 
 
-def parse_formblatt(text: str, quelle: str = "") -> list[dict]:
+def parse_formblatt(text: str, quelle: str = "",
+                    bekannte: tuple[str, ...] = ()) -> list[dict]:
     """Liest ein gedrucktes Firmen-Formblatt aus.
 
     Gibt höchstens einen Eintrag zurück — ein Formblatt gehört zu einer Firma
@@ -541,16 +616,20 @@ def parse_formblatt(text: str, quelle: str = "") -> list[dict]:
                     break
 
     return [{
-        "firma": _formblatt_firma(text, quelle or "Firma bitte ergänzen"),
-        "ort": ort,
+        "firma": _formblatt_firma(text, quelle or "Firma bitte ergänzen", bekannte),
+        # Geschossangaben geraderücken: "406. Ost" ist "4.OG. Ost", und das
+        # steht sonst genauso im Bericht an den Bauherrn (siehe bautext).
+        "ort": bautext.geraderuecken(ort),
         "personen": personen,
-        "leistung": leistung or "Leistungstext nicht lesbar — bitte ergänzen",
+        "leistung": (bautext.geraderuecken(leistung)
+                     or "Leistungstext nicht lesbar — bitte ergänzen"),
         "besonderes": None,
         "quelle": "ocr",
     }]
 
 
-async def _extract_scan_no_key(file_path: Path) -> list[dict]:
+async def _extract_scan_no_key(file_path: Path,
+                               bekannte: tuple[str, ...] = ()) -> list[dict]:
     """Scan ohne Anthropic-Schlüssel: Windows-Texterkennung versuchen.
 
     Windows bringt seit Windows 10 eine eigene Texterkennung mit. Bei
@@ -560,17 +639,30 @@ async def _extract_scan_no_key(file_path: Path) -> list[dict]:
     manuelle Ergänzung.
     """
     from app.services import windows_ocr
+    from app.services.wochenaufteilung import datum_der_seite
 
     if windows_ocr.verfuegbar():
         text = _text_per_windows_ocr(file_path)
         if text.strip():
+            # Zuerst die Frage, ob überhaupt etwas Ausgefülltes angekommen ist.
+            # Bei Schreibschrift liest Windows nur den gedruckten Vordruck —
+            # daraus entstand bisher ein Eintrag, dessen "Leistung" die Liste
+            # "Polier · Werkpolier · Vorarbeiter …" war. Ein Feld, das gefüllt
+            # aussieht, prüft niemand nach; deshalb wird hier lieber offen
+            # gemeldet, dass nichts gelesen wurde.
+            seiten = text.split(chr(10) + chr(10))
+            if bautext.handschrift_unlesbar(
+                seiten, any(datum_der_seite(s) for s in seiten)
+            ):
+                return await _scan_ohne_erkennung(file_path, nur_vordruck=True)
+
             if _detect_format(text) == "simple":
                 firmen = _parse_simple_page(text, None)
                 if firmen:
                     for eintrag in firmen:
                         eintrag["quelle"] = "ocr"
                     return firmen
-            firmen = parse_formblatt(text)
+            firmen = parse_formblatt(text, bekannte=bekannte)
             if firmen:
                 return firmen
 
@@ -592,19 +684,31 @@ def _text_per_windows_ocr(file_path: Path) -> str:
     return "\n".join(seiten_lesen(file_path))
 
 
-async def _scan_ohne_erkennung(file_path: Path) -> list[dict]:
-    """Letzte Stufe: Es ließ sich nichts lesen."""
-    return [{
-        "firma": f"(Handschrift/Scan: {file_path.name})",
-        "ort": "",
-        "personen": 0,
-        "leistung": (
+async def _scan_ohne_erkennung(file_path: Path, *,
+                               nur_vordruck: bool = False) -> list[dict]:
+    """Letzte Stufe: Es ließ sich nichts Ausgefülltes lesen.
+
+    ``nur_vordruck=True`` heißt: Der gedruckte Rahmen kam durch, die
+    Eintragungen nicht. Das ist die typische Lage bei Schreibschrift und
+    verdient eine andere Erklärung als "gar nichts gelesen" — es sagt dem
+    Nutzer nämlich genau, woran es liegt.
+    """
+    if nur_vordruck:
+        text = bautext.unlesbar_hinweis(file_path.name,
+                                        _wo_der_schluessel_hingehoert())
+    else:
+        text = (
             "Aus dieser Datei ließ sich kein Text lesen. Bei gedruckten "
             "Formblättern gelingt das meist; handschriftliche Berichte "
             "brauchen einen Anthropic-Schlüssel ("
             + _wo_der_schluessel_hingehoert()
             + "). Bitte die Angaben hier von Hand ergänzen."
-        ),
+        )
+    return [{
+        "firma": f"(Handschrift/Scan: {file_path.name})",
+        "ort": "",
+        "personen": 0,
+        "leistung": text,
         "besonderes": None,
     }]
 
@@ -782,9 +886,30 @@ OCR_ANWEISUNG = (
 )
 
 
-async def _extract_scan_via_claude(file_path: Path) -> list[dict]:
+async def _extract_scan_via_claude(
+    file_path: Path, bekannte_firmen: tuple[str, ...] = ()
+) -> list[dict]:
     if not settings.anthropic_api_key:
-        return await _extract_scan_no_key(file_path)
+        return await _extract_scan_no_key(file_path, bekannte_firmen)
+
+    # Seitenweise lesen, mit zweitem Durchgang zur Prüfung. Der frühere Weg —
+    # alle Seiten in einer Anfrage — reichte für gedruckte Formblätter, nicht
+    # für ein handschriftliches Bautagebuch über eine ganze Woche. Warum,
+    # steht ausführlich in services/seitenlesung.
+    from app.services import seitenlesung
+
+    if seitenlesung.verfuegbar():
+        try:
+            tage = await seitenlesung.lies_dokument(file_path, bekannte_firmen)
+        except Exception:
+            tage = []
+        eintraege: list[dict] = []
+        for tag in tage:
+            eintraege.extend(seitenlesung.als_firmeneintraege(tag))
+        if eintraege:
+            return eintraege
+        # Nichts herausgekommen: unten weiter mit dem einfachen Weg. Ein
+        # gedrucktes Formblatt ohne Nachunternehmertabelle fällt hier heraus.
 
     import base64
 
@@ -982,16 +1107,27 @@ async def _extract_text_via_claude(text: str, file_name: str) -> list[dict]:
 # Öffentliche API
 # ---------------------------------------------------------------------------
 
-async def extract_from_file(file_path: Path, target_date: date | None = None) -> list[dict]:
-    """Hauptfunktion — erkennt Format und wählt den passenden Extraktor."""
+async def extract_from_file(
+    file_path: Path,
+    target_date: date | None = None,
+    bekannte_firmen: tuple[str, ...] = (),
+) -> list[dict]:
+    """Hauptfunktion — erkennt Format und wählt den passenden Extraktor.
+
+    ``bekannte_firmen`` sind die Firmen, die für dieses Projekt in den
+    Stammdaten stehen. Sie sind die verlässlichste Quelle für einen
+    Firmennamen, weil sie jemand von Hand eingetragen hat: Aus dem gelesenen
+    Kürzel "RF" wird damit "RF Fassaden GmbH", und aus den drei Schreibweisen
+    einer Woche wird eine.
+    """
 
     suffix = file_path.suffix.lower()
 
     # Bilddateien -> Claude Vision (falls Key vorhanden), sonst Warnung
     if suffix in (".jpg", ".jpeg", ".png", ".tiff", ".bmp"):
         if _has_real_key():
-            return await _extract_scan_via_claude(file_path)
-        return await _extract_scan_no_key(file_path)
+            return await _extract_scan_via_claude(file_path, bekannte_firmen)
+        return await _extract_scan_no_key(file_path, bekannte_firmen)
 
     # Reiner Text entsteht, wenn eine Seite mehrere Tage enthielt und je Tag
     # ein Abschnitt ausgeschnitten wurde (siehe services/wochenaufteilung).
@@ -1020,8 +1156,8 @@ async def extract_from_file(file_path: Path, target_date: date | None = None) ->
 
     if not has_text_layer(file_path):
         if _has_real_key():
-            return await _extract_scan_via_claude(file_path)
-        return await _extract_scan_no_key(file_path)
+            return await _extract_scan_via_claude(file_path, bekannte_firmen)
+        return await _extract_scan_no_key(file_path, bekannte_firmen)
 
     with pdfplumber.open(file_path) as pdf:
         full_text = "\n\n".join(p.extract_text() or "" for p in pdf.pages)
@@ -1036,8 +1172,14 @@ async def extract_from_file(file_path: Path, target_date: date | None = None) ->
             if result:
                 return result
 
-    # Unbekanntes Textformat -> Claude-Fallback (falls Key vorhanden)
+    # Unbekanntes Textformat: erst die Formblatt-Regeln, dann Claude.
+    # Das gedruckte RF-Formblatt hat eine Textebene und fällt hier herein —
+    # es ohne Rückfrage an die Schnittstelle zu schicken wäre langsamer und
+    # teurer als nötig.
     text = extract_text_from_pdf(file_path)
+    result = parse_formblatt(text, bekannte=bekannte_firmen)
+    if result:
+        return result
     result = await _extract_text_via_claude(text, file_path.name)
     if result:
         return result

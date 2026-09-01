@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Einreichung, Projekt, VerarbeitungsLog
 from app.schemas import BautagesberichtJSON, FirmaEintrag, WetterBlock, WarnungSchema
+from app.services import firmennamen
 from app.services.pdf_extraction import extract_from_file
 from app.services.weather import fetch_weather
 from app.services.docx_generation import generate_bautagesbericht
@@ -128,6 +129,12 @@ async def process_einreichung(einreichung_id: int, db: Session):
         })
 
     # Step 2: PDF Extraction
+    #
+    # Welche Firmen auf dieser Baustelle arbeiten, ist die stärkste Hilfe für
+    # die Erkennung eines handschriftlichen Namens — aus "Riedd Bau" wird
+    # damit "Riedel Bau" statt einer vierten Schreibweise.
+    bekannte = firmennamen.bekannte_firmen(db, einreichung.projekt_id)
+
     for file_rel_path in (einreichung.quelle_dateien or []):
         file_path = settings.upload_dir.parent / file_rel_path
         if not file_path.exists():
@@ -140,7 +147,8 @@ async def process_einreichung(einreichung_id: int, db: Session):
 
         t0 = time.time()
         try:
-            firmen = await extract_from_file(file_path, einreichung.datum)
+            firmen = await extract_from_file(file_path, einreichung.datum,
+                                             bekannte)
             all_firmen.extend(firmen)
             _log_step(db, einreichung_id, "pdf_extraktion", "erfolg",
                       f"{len(firmen)} Firmen aus {file_path.name}",
@@ -185,6 +193,29 @@ async def process_einreichung(einreichung_id: int, db: Session):
             # bleibt am Bericht stehen, das Dokument entsteht trotzdem.
             "blockiert": False,
         })
+
+    # Schreibweisen zusammenführen: Auf Seite 1 steht "Riedd Bau", auf Seite 2
+    # "Riedel Bau" — im Bericht darf daraus nicht zweimal dieselbe Firma
+    # werden. Was sich nicht sicher zuordnen lässt, bleibt stehen und wird als
+    # Warnung gemeldet, statt geraten zu werden (siehe services/firmennamen).
+    if all_firmen:
+        zuordnung, namenswarnungen = firmennamen.vereinheitliche(
+            [str(f.get("firma", "")) for f in all_firmen], list(bekannte)
+        )
+        for eintrag in all_firmen:
+            roh = str(eintrag.get("firma", ""))
+            neuer = zuordnung.get(roh, "")
+            if neuer:
+                eintrag["firma"] = neuer
+        for text in namenswarnungen:
+            warnungen.append({
+                "feld": "firmen",
+                "problem": text,
+                "quelle_datei": "",
+                # Hält den Bericht nicht auf: Der Name steht drin, wie er
+                # gelesen wurde, er sollte nur gegengelesen werden.
+                "blockiert": False,
+            })
 
     # Step 3: Build validated JSON
     firmen_entries = []
@@ -239,6 +270,19 @@ async def process_einreichung(einreichung_id: int, db: Session):
         einreichung.status = "abgeschlossen"
         einreichung.verarbeitet_am = datetime.now()
         db.commit()
+        # Erst jetzt merken, welche Firmen auf dieser Baustelle vorkommen:
+        # Das Dokument ist entstanden, jemand hat das Ergebnis vor sich. Was
+        # die Erkennung nur vorgeschlagen hat, gehört nicht in den Bestand —
+        # sonst richtet sich die nächste Erkennung auf einen Lesefehler aus.
+        try:
+            firmennamen.merke_firmen(
+                db, einreichung.projekt_id,
+                [e.firma for e in firmen_entries if e.firma],
+            )
+        except Exception:
+            # Das Gedächtnis ist Beiwerk; ein fertiger Bericht darf daran
+            # nicht scheitern.
+            db.rollback()
         _log_step(db, einreichung_id, "docx_erzeugung", "erfolg",
                   f"Datei: {output_path.name}",
                   int((time.time() - t0) * 1000))
