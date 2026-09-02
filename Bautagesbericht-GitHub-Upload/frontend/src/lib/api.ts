@@ -251,11 +251,24 @@ export const api = {
      * eine Einreichung an. Dazwischen wird nichts erneut hochgeladen; die
      * ``kennung`` verweist auf die Zwischenablage auf dem Server.
      */
-    wocheAnalysieren: (dateien: File[], von: string, bis: string) => {
+    wocheAnalysieren: (
+      dateien: File[],
+      von: string,
+      bis: string,
+      /**
+       * Das gewählte Projekt. Wird mitgeschickt, damit der Server beim Lesen
+       * die Firmen dieser Baustelle als Lesehilfe benutzen kann — bei
+       * Handschrift ist das der stärkste einzelne Hebel: Aus einer krakeligen
+       * Schleife wird damit „Riedel Bau" statt einer vierten Schreibweise.
+       * Ohne die Kennung liest der Server ohne diese Hilfe.
+       */
+      projektId?: number | null
+    ) => {
       const formular = new FormData();
       dateien.forEach((datei) => formular.append("dateien", datei));
       if (von) formular.append("woche_von", von);
       if (bis) formular.append("woche_bis", bis);
+      if (projektId) formular.append("projekt_id", String(projektId));
       return fetchAPI<WochenAnalyse>("/einreichungen/woche/analyse", {
         method: "POST",
         body: formular,

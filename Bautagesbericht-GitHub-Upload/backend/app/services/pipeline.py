@@ -1,5 +1,26 @@
+"""Von den hochgeladenen Blättern zum fertigen Bautagesbericht.
+
+DIE BEIDEN WEGE
+===============
+Es gibt zwei Einstiege, und das ist der Grund für den Aufbau dieses Moduls:
+
+* ``process_einreichung`` — der Normalfall, direkt nach dem Hochladen.
+* ``confirm_and_generate`` — nachdem jemand die Warnungen gesehen und
+  bestätigt hat.
+
+Beide brauchen dasselbe: Wetter holen, Blätter auslesen, Firmennamen
+zusammenführen, Word erzeugen. Genau deshalb steht das hier **einmal**
+(``_wetter_sammeln``, ``_firmen_sammeln``, ``_eintraege_bauen``) und nicht
+zweimal. Vorher war es zweimal, und die beiden Fassungen waren
+auseinandergelaufen: Der Bestätigungsweg las die Blätter ohne die Firmen der
+Baustelle und ohne das Zusammenführen der Schreibweisen, und er merkte sich
+die Firmen des fertigen Berichts nicht. Wer also einen Bericht von Hand
+freigab — also gerade den zweifelhaften Fall —, bekam das schlechtere
+Ergebnis von beiden.
+"""
+
 import time
-from datetime import datetime, date
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -78,101 +99,108 @@ async def _send_teams(db: Session, einreichung, projekt) -> None:
         db.commit()
 
 
-async def process_einreichung(einreichung_id: int, db: Session):
-    einreichung = db.query(Einreichung).get(einreichung_id)
-    if not einreichung:
-        return
+# ─────────────────────────────────────────────────────────────────────────────
+# Die Schritte, die sich beide Wege teilen
+# ─────────────────────────────────────────────────────────────────────────────
 
-    einreichung.status = "wird_verarbeitet"
-    db.commit()
 
-    projekt = db.query(Projekt).get(einreichung.projekt_id)
-    warnungen: list[dict] = []
-    all_firmen: list[dict] = []
-
-    # Step 1: Weather
-    wetter_data = None
+async def _wetter_sammeln(db: Session, einreichung, projekt,
+                          warnungen: list[dict]) -> dict | None:
+    """Tageswetter zum Projektstandort. ``None``, wenn es keines gibt."""
     t0 = time.time()
     try:
-        if projekt and projekt.lat and projekt.lon:
-            wetter_data = await fetch_weather(
-                projekt.lat, projekt.lon, einreichung.datum.isoformat()
-            )
-            if wetter_data:
-                _log_step(db, einreichung_id, "wetterdaten", "erfolg",
-                          f"Station: {wetter_data.get('station', '?')}",
-                          int((time.time() - t0) * 1000))
-            else:
-                _log_step(db, einreichung_id, "wetterdaten", "warnung",
-                          "Keine Wetterdaten verfügbar",
-                          int((time.time() - t0) * 1000))
-                warnungen.append({
-                    "feld": "wetter",
-                    "problem": "Keine Wetterdaten von Bright Sky erhalten",
-                    "quelle_datei": "",
-                })
-        else:
-            _log_step(db, einreichung_id, "wetterdaten", "warnung",
+        if not (projekt and projekt.lat and projekt.lon):
+            _log_step(db, einreichung.id, "wetterdaten", "warnung",
                       "Projekt hat keine Koordinaten")
             warnungen.append({
                 "feld": "wetter",
                 "problem": "Projekt hat keine Koordinaten — kein Wetterdaten-Abruf möglich",
                 "quelle_datei": "",
             })
+            return None
+
+        wetter = await fetch_weather(
+            projekt.lat, projekt.lon, einreichung.datum.isoformat())
+        if wetter:
+            _log_step(db, einreichung.id, "wetterdaten", "erfolg",
+                      f"Station: {wetter.get('station', '?')}",
+                      int((time.time() - t0) * 1000))
+            return wetter
+
+        _log_step(db, einreichung.id, "wetterdaten", "warnung",
+                  "Keine Wetterdaten verfügbar", int((time.time() - t0) * 1000))
+        warnungen.append({
+            "feld": "wetter",
+            "problem": "Keine Wetterdaten von Bright Sky erhalten",
+            "quelle_datei": "",
+        })
+        return None
     except Exception as exc:
-        _log_step(db, einreichung_id, "wetterdaten", "fehler", str(exc),
+        _log_step(db, einreichung.id, "wetterdaten", "fehler", str(exc),
                   int((time.time() - t0) * 1000))
         warnungen.append({
             "feld": "wetter",
             "problem": f"Fehler beim Abruf: {exc}",
             "quelle_datei": "",
         })
+        return None
 
-    # Step 2: PDF Extraction
-    #
-    # Welche Firmen auf dieser Baustelle arbeiten, ist die stärkste Hilfe für
-    # die Erkennung eines handschriftlichen Namens — aus "Riedd Bau" wird
-    # damit "Riedel Bau" statt einer vierten Schreibweise.
+
+async def _firmen_sammeln(db: Session, einreichung,
+                          warnungen: list[dict]) -> list[dict]:
+    """Liest alle Quelldateien der Einreichung aus und räumt die Namen auf.
+
+    Welche Firmen auf dieser Baustelle arbeiten, ist die stärkste Hilfe für
+    die Erkennung eines handschriftlichen Namens — aus "Riedd Bau" wird damit
+    "Riedel Bau" statt einer vierten Schreibweise.
+    """
     bekannte = firmennamen.bekannte_firmen(db, einreichung.projekt_id)
+    alle: list[dict] = []
 
-    for file_rel_path in (einreichung.quelle_dateien or []):
-        file_path = settings.upload_dir.parent / file_rel_path
-        if not file_path.exists():
+    for datei_rel in (einreichung.quelle_dateien or []):
+        pfad = settings.upload_dir.parent / datei_rel
+        if not pfad.exists():
             warnungen.append({
                 "feld": "dateien",
-                "problem": f"Datei nicht gefunden: {file_rel_path}",
-                "quelle_datei": file_rel_path,
+                "problem": f"Datei nicht gefunden: {datei_rel}",
+                "quelle_datei": datei_rel,
             })
             continue
 
         t0 = time.time()
         try:
-            firmen = await extract_from_file(file_path, einreichung.datum,
-                                             bekannte)
-            all_firmen.extend(firmen)
-            _log_step(db, einreichung_id, "pdf_extraktion", "erfolg",
-                      f"{len(firmen)} Firmen aus {file_path.name}",
+            firmen = await extract_from_file(pfad, einreichung.datum, bekannte)
+            alle.extend(firmen)
+            _log_step(db, einreichung.id, "pdf_extraktion", "erfolg",
+                      f"{len(firmen)} Firmen aus {pfad.name}",
                       int((time.time() - t0) * 1000))
         except Exception as exc:
-            _log_step(db, einreichung_id, "pdf_extraktion", "fehler",
-                      f"{file_path.name}: {exc}",
-                      int((time.time() - t0) * 1000))
+            _log_step(db, einreichung.id, "pdf_extraktion", "fehler",
+                      f"{pfad.name}: {exc}", int((time.time() - t0) * 1000))
             warnungen.append({
                 "feld": "dateien",
                 "problem": f"Extraktion fehlgeschlagen: {exc}",
-                "quelle_datei": file_rel_path,
+                "quelle_datei": datei_rel,
             })
 
-    if not all_firmen:
+    if not alle:
         warnungen.append({
             "feld": "firmen",
             "problem": "Keine Firmendaten extrahiert",
             "quelle_datei": "",
         })
+        return alle
 
-    # Platzhalter erkennen (Scan ohne OCR / unbekanntes Format) und als Warnung melden
-    for f in all_firmen:
-        name = str(f.get("firma", ""))
+    _namen_pruefen(alle, bekannte, warnungen)
+    return alle
+
+
+def _namen_pruefen(alle: list[dict], bekannte: tuple[str, ...],
+                   warnungen: list[dict]) -> None:
+    """Schreibweisen zusammenführen und melden, was nachzusehen ist."""
+    # Platzhalter erkennen (Scan ohne OCR / unbekanntes Format).
+    for eintrag in alle:
+        name = str(eintrag.get("firma", ""))
         if name.startswith("("):
             warnungen.append({
                 "feld": "firmen",
@@ -180,8 +208,8 @@ async def process_einreichung(einreichung_id: int, db: Session):
                 "quelle_datei": "",
             })
 
-    # OCR-gelesene Einträge (aus Scans) immer zur manuellen Kontrolle melden
-    if any(f.get("quelle") == "ocr" for f in all_firmen):
+    # OCR-gelesene Einträge (aus Scans) immer zur manuellen Kontrolle melden.
+    if any(e.get("quelle") == "ocr" for e in alle):
         warnungen.append({
             "feld": "firmen",
             "problem": "Aus einem Scan gelesen — bitte Firmenangaben und "
@@ -194,90 +222,205 @@ async def process_einreichung(einreichung_id: int, db: Session):
             "blockiert": False,
         })
 
-    # Schreibweisen zusammenführen: Auf Seite 1 steht "Riedd Bau", auf Seite 2
-    # "Riedel Bau" — im Bericht darf daraus nicht zweimal dieselbe Firma
-    # werden. Was sich nicht sicher zuordnen lässt, bleibt stehen und wird als
-    # Warnung gemeldet, statt geraten zu werden (siehe services/firmennamen).
-    if all_firmen:
-        zuordnung, namenswarnungen = firmennamen.vereinheitliche(
-            [str(f.get("firma", "")) for f in all_firmen], list(bekannte)
-        )
-        for eintrag in all_firmen:
-            roh = str(eintrag.get("firma", ""))
-            neuer = zuordnung.get(roh, "")
-            if neuer:
-                eintrag["firma"] = neuer
-        for text in namenswarnungen:
+    # Auf Seite 1 steht "Riedd Bau", auf Seite 2 "Riedel Bau" — im Bericht darf
+    # daraus nicht zweimal dieselbe Firma werden. Was sich nicht sicher
+    # zuordnen lässt, bleibt stehen und wird als Warnung gemeldet, statt
+    # geraten zu werden (siehe services/firmennamen).
+    zuordnung, namenswarnungen = firmennamen.vereinheitliche(
+        [str(e.get("firma", "")) for e in alle], list(bekannte)
+    )
+    for eintrag in alle:
+        neuer = zuordnung.get(str(eintrag.get("firma", "")), "")
+        if neuer:
+            eintrag["firma"] = neuer
+    for text in namenswarnungen:
+        warnungen.append({
+            "feld": "firmen",
+            "problem": text,
+            "quelle_datei": "",
+            # Hält den Bericht nicht auf: Der Name steht drin, wie er
+            # gelesen wurde, er sollte nur gegengelesen werden.
+            "blockiert": False,
+        })
+
+    # Nur ein Kürzel gelesen? Auf manchen Formblättern steht der volle
+    # Firmenname bloß im Logo, und ein Logo ist ein Bild — die Texterkennung
+    # sieht dort nichts. Im Bericht an den Bauherrn steht dann "Firma: RF".
+    # Das lässt sich nicht erraten, aber es lässt sich sagen: Wer die Firma
+    # einmal beim Projekt hinterlegt, bekommt ab dann den vollen Namen.
+    for eintrag in alle:
+        name = str(eintrag.get("firma", "")).strip()
+        if not name or name.startswith("("):
+            continue
+        if len(name) <= 3 and not any(
+            firmennamen.normalisiere(name) == firmennamen.normalisiere(b)
+            for b in bekannte
+        ):
             warnungen.append({
                 "feld": "firmen",
-                "problem": text,
+                "problem": (
+                    f"Vom Firmennamen war nur das Kürzel „{name}“ zu lesen "
+                    "— der volle Name steht auf diesem Formblatt "
+                    "vermutlich nur im Logo. Einmal unter Stammdaten → "
+                    "Firmen/Gewerke hinterlegen, dann steht er ab dem "
+                    "nächsten Bericht vollständig da."
+                ),
                 "quelle_datei": "",
-                # Hält den Bericht nicht auf: Der Name steht drin, wie er
-                # gelesen wurde, er sollte nur gegengelesen werden.
                 "blockiert": False,
             })
 
-        # Nur ein Kürzel gelesen? Auf manchen Formblättern steht der volle
-        # Firmenname bloß im Logo, und ein Logo ist ein Bild — die
-        # Texterkennung sieht dort nichts. Im Bericht an den Bauherrn steht
-        # dann "Firma: RF". Das lässt sich nicht erraten, aber es lässt sich
-        # sagen: Wer die Firma einmal beim Projekt hinterlegt, bekommt ab
-        # dann in jedem Bericht den vollen Namen.
-        for eintrag in all_firmen:
-            name = str(eintrag.get("firma", "")).strip()
-            if not name or name.startswith("("):
-                continue
-            if len(name) <= 3 and not any(
-                firmennamen.normalisiere(name) == firmennamen.normalisiere(b)
-                for b in bekannte
-            ):
-                warnungen.append({
-                    "feld": "firmen",
-                    "problem": (
-                        f"Vom Firmennamen war nur das Kürzel „{name}“ zu lesen "
-                        "— der volle Name steht auf diesem Formblatt "
-                        "vermutlich nur im Logo. Einmal unter Stammdaten → "
-                        "Firmen/Gewerke hinterlegen, dann steht er ab dem "
-                        "nächsten Bericht vollständig da."
-                    ),
-                    "quelle_datei": "",
-                    "blockiert": False,
-                })
 
-    # Step 3: Build validated JSON
-    firmen_entries = []
-    for i, f in enumerate(all_firmen):
+def _eintraege_bauen(alle: list[dict],
+                     warnungen: list[dict]) -> list[FirmaEintrag]:
+    """Aus den gelesenen Angaben geprüfte Firmeneinträge machen."""
+    eintraege: list[FirmaEintrag] = []
+    for i, roh in enumerate(alle):
         try:
-            personen = int(f.get("personen", 0))
+            personen = int(roh.get("personen", 0))
         except (ValueError, TypeError):
             warnungen.append({
                 "feld": f"firmen[{i}].personen",
-                "problem": f"'{f.get('personen')}' ist keine Zahl — auf 0 gesetzt",
+                "problem": f"'{roh.get('personen')}' ist keine Zahl — auf 0 gesetzt",
                 "quelle_datei": "",
             })
             personen = 0
 
-        firmen_entries.append(FirmaEintrag(
-            firma=str(f.get("firma", "")),
-            ort=str(f.get("ort", "")),
+        eintraege.append(FirmaEintrag(
+            firma=str(roh.get("firma", "")),
+            ort=str(roh.get("ort", "")),
             personen=personen,
-            leistung=str(f.get("leistung", "")),
-            besonderes=f.get("besonderes"),
+            leistung=str(roh.get("leistung", "")),
+            besonderes=roh.get("besonderes"),
         ))
+    return eintraege
 
-    wetter_block = None
-    if wetter_data:
-        wetter_block = WetterBlock(**wetter_data)
 
-    bericht_json = BautagesberichtJSON(
+def _tagesnotizen(alle: list[dict]) -> list[str]:
+    """Was auf den Blättern unter "Sonstiges" und "Besuche" stand.
+
+    Frost, mit Folie abgehängte Wände, angelieferte Bauheizungen — Angaben,
+    die den ganzen Tag betreffen und keiner Firma zuzuordnen sind. Im
+    HPP-Bericht gehören sie in das Notizfeld über den Firmenblöcken.
+
+    Bis hierher gingen sie verloren: Die Erkennung liest sie (siehe
+    services/seitenlesung), aber der Haupteintrag kam allein aus dem Textfeld
+    der Oberfläche. Ein zweimal geprüfter Satz über den Frost am Morgen
+    landete also im Papierkorb.
+
+    Doppelte fallen weg: Bei einem Blatt mit drei Nachunternehmern hängt die
+    Notiz an allen drei Einträgen.
+    """
+    gesehen: list[str] = []
+    for eintrag in alle:
+        notiz = str(eintrag.get("tagesnotiz") or "").strip()
+        if notiz and notiz not in gesehen:
+            gesehen.append(notiz)
+    return gesehen
+
+
+def _bericht_bauen(einreichung, projekt, wetter: dict | None,
+                   eintraege: list[FirmaEintrag],
+                   warnungen: list[dict],
+                   notizen: list[str] | None = None) -> BautagesberichtJSON:
+    # Was jemand von Hand eingetragen hat, steht oben — es ist die Aussage
+    # des Bauleiters. Darunter, was von den Blättern kam.
+    zeilen = [einreichung.ergaenzende_angaben or ""] + list(notizen or [])
+    haupteintrag = "\n".join(z for z in zeilen if z.strip())
+
+    return BautagesberichtJSON(
         projekt=projekt.name if projekt else "",
         datum=einreichung.datum,
-        haupteintrag=einreichung.ergaenzende_angaben or "",
-        wetter=wetter_block,
-        firmen=firmen_entries,
+        haupteintrag=haupteintrag,
+        wetter=WetterBlock(**wetter) if wetter else None,
+        firmen=eintraege,
         unterschrift_datum=einreichung.datum,
         warnungen=[WarnungSchema(**w) for w in warnungen],
     )
+
+
+async def _dokument_erzeugen(db: Session, einreichung, projekt,
+                             bericht: BautagesberichtJSON,
+                             eintraege: list[FirmaEintrag],
+                             schritt: str) -> None:
+    """Word erzeugen, Status setzen, Firmen merken, Teams benachrichtigen."""
+    t0 = time.time()
+    try:
+        # Die Kennung der Einreichung gehört in den Dateinamen: Zwei Berichte
+        # für denselben Tag desselben Projekts — etwa ein Nachtrag — schrieben
+        # sich sonst gegenseitig über, und der Download des älteren lieferte
+        # danach den Inhalt des neueren.
+        ausgabe = generate_bautagesbericht(bericht, kennung=str(einreichung.id))
+        einreichung.ergebnis_dokument_pfad = str(
+            ausgabe.relative_to(settings.output_dir.parent))
+        einreichung.status = "abgeschlossen"
+        einreichung.verarbeitet_am = datetime.now()
+        db.commit()
+
+        # Erst jetzt merken, welche Firmen auf dieser Baustelle vorkommen:
+        # Das Dokument ist entstanden, jemand hat das Ergebnis vor sich. Was
+        # die Erkennung nur vorgeschlagen hat, gehört nicht in den Bestand —
+        # sonst richtet sich die nächste Erkennung auf einen Lesefehler aus.
+        try:
+            firmennamen.merke_firmen(
+                db, einreichung.projekt_id,
+                [e.firma for e in eintraege if e.firma],
+            )
+        except Exception:
+            # Das Gedächtnis ist Beiwerk; ein fertiger Bericht darf daran
+            # nicht scheitern.
+            db.rollback()
+
+        _log_step(db, einreichung.id, schritt, "erfolg",
+                  f"Datei: {ausgabe.name}", int((time.time() - t0) * 1000))
+        await _send_teams(db, einreichung, projekt)
+    except Exception as exc:
+        einreichung.status = "fehlgeschlagen"
+        # Den Grund an den Bericht hängen, nicht nur ins Protokoll.
+        #
+        # Vorher stand in der Übersicht eine rote Plakette "fehlgeschlagen"
+        # und sonst nichts: Der Grund lag im Verarbeitungsprotokoll, das die
+        # Oberfläche nicht abruft. Für den Anwender war das eine Sackgasse —
+        # er konnte nur alles noch einmal hochladen, ohne zu wissen, ob das
+        # etwas ändert.
+        warnungen = list(einreichung.warnungen or [])
+        problem = (
+            f"Das Word-Dokument konnte nicht erzeugt werden: {exc}. "
+            "Über „Erneut versuchen“ läuft die Verarbeitung noch einmal — "
+            "die hochgeladenen Dateien liegen weiterhin da."
+        )
+        if not any(w.get("feld") == "dokument" for w in warnungen):
+            warnungen.append({
+                "feld": "dokument",
+                "problem": problem,
+                "quelle_datei": "",
+            })
+        einreichung.warnungen = warnungen
+        db.commit()
+        _log_step(db, einreichung.id, schritt, "fehler", str(exc),
+                  int((time.time() - t0) * 1000))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Die beiden Einstiege
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def process_einreichung(einreichung_id: int, db: Session):
+    einreichung = db.get(Einreichung, einreichung_id)
+    if not einreichung:
+        return
+
+    einreichung.status = "wird_verarbeitet"
+    db.commit()
+
+    projekt = db.get(Projekt, einreichung.projekt_id)
+    warnungen: list[dict] = []
+
+    wetter = await _wetter_sammeln(db, einreichung, projekt, warnungen)
+    alle = await _firmen_sammeln(db, einreichung, warnungen)
+    eintraege = _eintraege_bauen(alle, warnungen)
+    bericht = _bericht_bauen(einreichung, projekt, wetter, eintraege,
+                             warnungen, _tagesnotizen(alle))
 
     einreichung.warnungen = warnungen
 
@@ -288,101 +431,50 @@ async def process_einreichung(einreichung_id: int, db: Session):
                   f"{len(warnungen)} Warnungen")
         return
 
-    # Step 4: Generate Word doc
-    t0 = time.time()
-    try:
-        output_path = generate_bautagesbericht(bericht_json)
-        rel_path = str(output_path.relative_to(settings.output_dir.parent))
-        einreichung.ergebnis_dokument_pfad = rel_path
-        einreichung.status = "abgeschlossen"
-        einreichung.verarbeitet_am = datetime.now()
-        db.commit()
-        # Erst jetzt merken, welche Firmen auf dieser Baustelle vorkommen:
-        # Das Dokument ist entstanden, jemand hat das Ergebnis vor sich. Was
-        # die Erkennung nur vorgeschlagen hat, gehört nicht in den Bestand —
-        # sonst richtet sich die nächste Erkennung auf einen Lesefehler aus.
-        try:
-            firmennamen.merke_firmen(
-                db, einreichung.projekt_id,
-                [e.firma for e in firmen_entries if e.firma],
-            )
-        except Exception:
-            # Das Gedächtnis ist Beiwerk; ein fertiger Bericht darf daran
-            # nicht scheitern.
-            db.rollback()
-        _log_step(db, einreichung_id, "docx_erzeugung", "erfolg",
-                  f"Datei: {output_path.name}",
-                  int((time.time() - t0) * 1000))
-        await _send_teams(db, einreichung, projekt)
-    except Exception as exc:
-        einreichung.status = "fehlgeschlagen"
-        db.commit()
-        _log_step(db, einreichung_id, "docx_erzeugung", "fehler",
-                  str(exc), int((time.time() - t0) * 1000))
+    await _dokument_erzeugen(db, einreichung, projekt, bericht, eintraege,
+                             "docx_erzeugung")
 
 
 async def confirm_and_generate(einreichung_id: int, db: Session):
-    einreichung = db.query(Einreichung).get(einreichung_id)
+    """Nach der Freigabe durch einen Menschen: Bericht trotz Warnungen bauen.
+
+    Gelesen wird auf demselben Weg wie im Normalfall — mit den Firmen der
+    Baustelle und mit dem Zusammenführen der Schreibweisen. Die Warnungen
+    bleiben am Bericht stehen; sie sind ja gesehen und abgenickt worden.
+    """
+    einreichung = db.get(Einreichung, einreichung_id)
     if not einreichung:
         return
-    if einreichung.status not in ("wartet_auf_bestaetigung", "wird_verarbeitet"):
+    # "fehlgeschlagen" gehört dazu: Über denselben Weg läuft der zweite
+    # Versuch nach einem Fehler. Die Dateien liegen ja noch, und der Grund
+    # war oft vorübergehend (Schnittstelle überlastet, Netz kurz weg).
+    if einreichung.status not in ("wartet_auf_bestaetigung",
+                                  "wird_verarbeitet", "fehlgeschlagen"):
         return
 
-    projekt = db.query(Projekt).get(einreichung.projekt_id)
+    projekt = db.get(Projekt, einreichung.projekt_id)
+    warnungen: list[dict] = []
 
-    wetter_block = None
-    wetter_data = None
-    if projekt and projekt.lat and projekt.lon:
-        wetter_data = await fetch_weather(
-            projekt.lat, projekt.lon, einreichung.datum.isoformat()
-        )
-    if wetter_data:
-        wetter_block = WetterBlock(**wetter_data)
+    # Die Meldung des letzten Fehlversuchs gehört weg, bevor es neu losgeht —
+    # sonst klebt "konnte nicht erzeugt werden" am gelungenen Bericht.
+    einreichung.warnungen = [w for w in (einreichung.warnungen or [])
+                             if w.get("feld") != "dokument"]
 
-    all_firmen = []
-    for file_rel_path in (einreichung.quelle_dateien or []):
-        file_path = settings.upload_dir.parent / file_rel_path
-        if file_path.exists():
-            try:
-                firmen = await extract_from_file(file_path, einreichung.datum)
-                all_firmen.extend(firmen)
-            except Exception:
-                pass
+    wetter = await _wetter_sammeln(db, einreichung, projekt, warnungen)
+    alle = await _firmen_sammeln(db, einreichung, warnungen)
+    eintraege = _eintraege_bauen(alle, warnungen)
 
-    firmen_entries = []
-    for f in all_firmen:
-        try:
-            personen = int(f.get("personen", 0))
-        except (ValueError, TypeError):
-            personen = 0
-        firmen_entries.append(FirmaEintrag(
-            firma=str(f.get("firma", "")),
-            ort=str(f.get("ort", "")),
-            personen=personen,
-            leistung=str(f.get("leistung", "")),
-            besonderes=f.get("besonderes"),
-        ))
+    # Die alten Warnungen bleiben stehen und die neuen kommen dazu, sofern sie
+    # nicht dasselbe sagen: Wer den Bericht später ansieht, soll noch erkennen
+    # können, was bei der Freigabe zur Debatte stand.
+    bestehend = list(einreichung.warnungen or [])
+    gesehen = {(w.get("feld"), w.get("problem")) for w in bestehend}
+    for warnung in warnungen:
+        if (warnung.get("feld"), warnung.get("problem")) not in gesehen:
+            bestehend.append(warnung)
+    einreichung.warnungen = bestehend
 
-    bericht_json = BautagesberichtJSON(
-        projekt=projekt.name if projekt else "",
-        datum=einreichung.datum,
-        haupteintrag=einreichung.ergaenzende_angaben or "",
-        wetter=wetter_block,
-        firmen=firmen_entries,
-        unterschrift_datum=einreichung.datum,
-    )
-
-    try:
-        output_path = generate_bautagesbericht(bericht_json)
-        rel_path = str(output_path.relative_to(settings.output_dir.parent))
-        einreichung.ergebnis_dokument_pfad = rel_path
-        einreichung.status = "abgeschlossen"
-        einreichung.verarbeitet_am = datetime.now()
-        db.commit()
-        _log_step(db, einreichung_id, "docx_erzeugung_nach_bestaetigung", "erfolg",
-                  f"Datei: {output_path.name}")
-        await _send_teams(db, einreichung, projekt)
-    except Exception as exc:
-        einreichung.status = "fehlgeschlagen"
-        db.commit()
-        _log_step(db, einreichung_id, "docx_erzeugung_nach_bestaetigung", "fehler", str(exc))
+    bericht = _bericht_bauen(einreichung, projekt, wetter, eintraege,
+                             bestehend, _tagesnotizen(alle))
+    await _dokument_erzeugen(db, einreichung, projekt, bericht, eintraege,
+                             "docx_erzeugung_nach_bestaetigung")

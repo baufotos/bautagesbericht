@@ -419,6 +419,98 @@ with rohbau.open("rb") as a:
     })
 gleich(antwort.status_code, 201, "alter Weg funktioniert weiterhin")
 
+
+print("─── Was gar nicht auszulesen ist, wird gleich abgewiesen ───")
+
+# Vorher lief eine Tabelle durch den ganzen Ablauf und endete in einem leeren
+# Bericht mit der Warnung "Keine Firmendaten extrahiert" — der Grund stand
+# dort nicht.
+tabelle = STORAGE / "kalkulation.xlsx"
+tabelle.write_bytes(b"PK\x03\x04 keine echte Tabelle, aber die Endung zaehlt")
+
+with tabelle.open("rb") as f:
+    antwort = client.post("/api/einreichungen", files=[
+        ("dateien", (tabelle.name, f, "application/vnd.ms-excel")),
+    ], data={
+        "projekt_id": projekt_id, "empfaenger_id": empfaenger_id,
+        "datum": TAGE[1].isoformat(), "ergaenzende_angaben": "",
+    })
+gleich(antwort.status_code, 400, "Tabelle wird abgewiesen")
+pruefe("kalkulation.xlsx" in antwort.text,
+       f"die Meldung nennt die Datei: {antwort.text[:120]}")
+pruefe("PDF" in antwort.text or "Foto" in antwort.text,
+       "…und sagt, was stattdessen gebraucht wird")
+
+with tabelle.open("rb") as f:
+    antwort = client.post(
+        "/api/einreichungen/woche/analyse",
+        files=[("dateien", (tabelle.name, f, "application/vnd.ms-excel"))],
+    )
+gleich(antwort.status_code, 400, "auch im Wochenweg wird sie abgewiesen")
+
+# Ein Handyfoto muss durchgehen, auch als HEIC — die Oberflaeche laesst es zu,
+# und die Auswertung hat es vorher stillschweigend verworfen.
+heic = STORAGE / "bericht.heic"
+heic.write_bytes(b"kein echtes HEIC, aber die Endung zaehlt")
+with heic.open("rb") as f:
+    antwort = client.post("/api/einreichungen", files=[
+        ("dateien", (heic.name, f, "image/heic")),
+    ], data={
+        "projekt_id": projekt_id, "empfaenger_id": empfaenger_id,
+        "datum": TAGE[2].isoformat(), "ergaenzende_angaben": "",
+    })
+gleich(antwort.status_code, 201, "HEIC vom iPhone wird angenommen")
+
+
+print("─── Ein fehlgeschlagener Bericht ist keine Sackgasse ───")
+
+# Vorher: rote Plakette "fehlgeschlagen", kein Grund, kein Knopf — man konnte
+# nur alles noch einmal hochladen. Die Dateien liegen aber weiterhin da.
+from app.database import SessionLocal  # noqa: E402
+from app.models import Einreichung  # noqa: E402
+
+with rohbau.open("rb") as a:
+    antwort = client.post("/api/einreichungen", files=[
+        ("dateien", (rohbau.name, a, "application/pdf")),
+    ], data={
+        "projekt_id": projekt_id, "empfaenger_id": empfaenger_id,
+        "datum": TAGE[3].isoformat(), "ergaenzende_angaben": "",
+    })
+gleich(antwort.status_code, 201, "Bericht fuer den Versuch angelegt")
+versuchs_id = antwort.json()["id"]
+
+# So sieht ein Bericht aus, dessen Word-Erzeugung gescheitert ist.
+sitzung = SessionLocal()
+try:
+    eintrag = sitzung.get(Einreichung, versuchs_id)
+    eintrag.status = "fehlgeschlagen"
+    eintrag.warnungen = [{
+        "feld": "dokument",
+        "problem": "Das Word-Dokument konnte nicht erzeugt werden: Testfall.",
+        "quelle_datei": "",
+    }]
+    sitzung.commit()
+finally:
+    sitzung.close()
+
+zustand = client.get(f"/api/einreichungen/{versuchs_id}").json()
+gleich(zustand["status"], "fehlgeschlagen", "Ausgangslage steht")
+pruefe(any(w["feld"] == "dokument" for w in zustand["warnungen"]),
+       "der Grund steht am Bericht und nicht nur im Protokoll")
+
+antwort = client.post(f"/api/einreichungen/{versuchs_id}/bestaetigen")
+gleich(antwort.status_code, 200, "ein zweiter Versuch ist moeglich")
+zustand = client.get(f"/api/einreichungen/{versuchs_id}").json()
+pruefe(zustand["status"] in ("abgeschlossen", "wird_verarbeitet"),
+       f"der Bericht laeuft wieder: {zustand['status']}")
+if zustand["status"] == "abgeschlossen":
+    pruefe(not any(w["feld"] == "dokument" for w in zustand["warnungen"]),
+           "die alte Fehlermeldung klebt nicht am gelungenen Bericht")
+
+# Ein fertiger Bericht laesst sich nicht erneut anstossen.
+antwort = client.post(f"/api/einreichungen/{versuchs_id}/bestaetigen")
+gleich(antwort.status_code, 400, "ein fertiger Bericht wird nicht neu erzeugt")
+
 print()
 if fehler:
     print(f"{ok} Pruefungen ok, {len(fehler)} Fehler:")

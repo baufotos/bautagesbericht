@@ -31,6 +31,7 @@ from docx.shared import Twips
 
 from app.config import settings
 from app.schemas import BautagesberichtJSON
+from app.services import dokumenttext
 
 FONT = "Arial"
 SYMBOL_FONT = "Segoe UI Symbol"
@@ -184,16 +185,30 @@ def _num(value, unit: str, decimals: int = 1) -> str:
 
 def _run(text: str, *, bold: bool = False, size: int = SZ_NORMAL,
          color: str | None = None, font: str = FONT) -> str:
+    """Ein Textlauf.
+
+    Zwei Dinge passieren hier, die im Aufrufer nicht mehr auftauchen sollen:
+
+    * **Steuerzeichen weg.** XML verbietet sie, und ein einziges davon —
+      etwa der Seitenvorschub aus einem kopierten PDF — ließ bisher das
+      ganze Dokument nicht entstehen (siehe services/dokumenttext).
+    * **Zeilenumbrüche werden welche.** Ein ``\\n`` mitten in ``<w:t>`` ist
+      für Word bloßer Leerraum: Aus drei Leistungszeilen wurde eine lange.
+      Mit ``<w:br/>`` steht wieder das da, was auf dem Blatt stand.
+    """
     rpr = f'<w:rFonts w:ascii="{font}" w:hAnsi="{font}" w:cs="{font}"/>'
     if bold:
         rpr += "<w:b/>"
     if color:
         rpr += f'<w:color w:val="{color}"/>'
     rpr += f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>'
-    return (
-        f"<w:r><w:rPr>{rpr}</w:rPr>"
-        f'<w:t xml:space="preserve">{escape(text)}</w:t></w:r>'
+
+    sauber = dokumenttext.xml_sicher(text)
+    stuecke = "<w:br/>".join(
+        f'<w:t xml:space="preserve">{escape(zeile)}</w:t>'
+        for zeile in sauber.split("\n")
     )
+    return f"<w:r><w:rPr>{rpr}</w:rPr>{stuecke}</w:r>"
 
 
 def _para(runs: str, *, align: str | None = None, after: int = 0,
@@ -308,16 +323,44 @@ def _weather_value_row(w):
     return _row(cells)
 
 
-def _bar_cell(temp: float | None, max_temp: float) -> str:
+def _diagramm_bereich(temps: list[float]) -> tuple[float, float]:
+    """Untere und obere Kante des Temperaturdiagramms.
+
+    Der Boden ist 0 °C, solange der Tag darüber bleibt — damit sind die
+    Diagramme zweier Tage derselben Woche miteinander vergleichbar.
+
+    Bei Frost sinkt der Boden mit. Vorher war er fest auf null: An einem Tag
+    zwischen -5 und -1 Grad war deshalb kein einziger Balken zu sehen, das
+    Diagramm verschwand im Winter stillschweigend, und im Bericht an den
+    Bauherrn blieb an dieser Stelle eine leere Fläche. Ausgerechnet an
+    Frosttagen ist die Temperatur aber die Angabe, auf die es ankommt.
+    """
+    if not temps:
+        return 0.0, 1.0
+    unten = min(0.0, min(temps))
+    # Mindestspanne, damit ein Tag mit durchweg gleicher Temperatur nicht
+    # durch Null geteilt wird und nicht als volle Balkenreihe erscheint.
+    oben = max(max(temps), unten + 1.0)
+    return unten, oben
+
+
+#: Mindesthöhe eines Balkens in Punkt. Der kälteste Wert des Tages liegt auf
+#: dem Boden des Diagramms; ganz ohne Balken sähe diese Stunde aus wie eine,
+#: für die es überhaupt keine Messung gab.
+BAR_MIN_PT = 3
+
+
+def _bar_cell(temp: float | None, unten: float, oben: float) -> str:
     """Ein Balken des Temperaturdiagramms, unten ausgerichtet."""
-    if temp is None or temp <= 0 or max_temp <= 0:
+    if temp is None:
         return _cell(HOURLY_VALUE_W, _para(""), valign="bottom")
-    height_pt = BAR_MAX_PT * (temp / max_temp)
+    anteil = (temp - unten) / (oben - unten)
+    height_pt = BAR_MAX_PT * min(1.0, max(0.0, anteil))
     body = _para(
         "",
         shading=BAR_COLOR,
         indent=BAR_INDENT,
-        exact_height=max(int(height_pt * 20), 20),
+        exact_height=max(int(height_pt * 20), BAR_MIN_PT * 20),
     )
     return _cell(HOURLY_VALUE_W, body, valign="bottom")
 
@@ -326,7 +369,7 @@ def _hourly_table(stundenwerte: list) -> str:
     """Verschachtelte Tabelle: Uhrzeiten, Temperaturdiagramm, Messwerte, Symbole."""
     values = stundenwerte[:12]
     temps = [s.temperatur_c for s in values if s.temperatur_c is not None]
-    max_temp = max(temps) if temps else 0.0
+    unten, oben = _diagramm_bereich(temps)
 
     grid = f'<w:gridCol w:w="{HOURLY_LABEL_W}"/>' + (
         f'<w:gridCol w:w="{HOURLY_VALUE_W}"/>' * 12
@@ -357,7 +400,7 @@ def _hourly_table(stundenwerte: list) -> str:
             f"{_borders(False, False)}</w:tcPr>{_para('')}</w:tc>"
         )
         for s in values:
-            chart += _bar_cell(s.temperatur_c, max_temp)
+            chart += _bar_cell(s.temperatur_c, unten, oben)
         tbl += (
             f'<w:tr><w:trPr><w:trHeight w:val="{BAR_MAX_PT * 20}" '
             f'w:hRule="exact"/></w:trPr>{chart}</w:tr>'
@@ -454,7 +497,8 @@ def _fill_projekt_header(doc, projekt: str) -> None:
                 f"<w:r {nsdecls('w')}>"
                 f'<w:rPr><w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}"/><w:b/>'
                 f'<w:sz w:val="{SZ_PROJEKT}"/><w:szCs w:val="{SZ_PROJEKT}"/></w:rPr>'
-                f'<w:t xml:space="preserve">{escape(projekt)}</w:t></w:r>'
+                f'<w:t xml:space="preserve">'
+                f'{escape(dokumenttext.einzeilig(projekt))}</w:t></w:r>'
             ))
             return
 
@@ -728,9 +772,36 @@ def _mit_naechster_zeile(tr) -> None:
             eigenschaften.append(parse_xml(f"<w:keepNext {nsdecls('w')}/>"))
 
 
+def dateiname(projekt: str, datum: date, kennung: str = "") -> str:
+    """Der Dateiname des erzeugten Berichts.
+
+    ``kennung`` unterscheidet zwei Berichte für denselben Tag desselben
+    Projekts. Ohne sie schrieb der zweite den ersten still über — und weil in
+    der Datenbank beide auf denselben Pfad zeigten, lieferte der Download des
+    älteren Berichts danach den Inhalt des neueren. Das fällt niemandem auf.
+    """
+    sauber = "".join(
+        c if c.isalnum() or c in " -_" else "_"
+        for c in dokumenttext.einzeilig(projekt)
+    ).strip().replace(" ", "_")[:40] or "Projekt"
+    zusatz = f"_{kennung}" if kennung else ""
+    return f"BTB_{datum.isoformat()}_{sauber}{zusatz}.docx"
+
+
+def anzeigename(projekt: str, datum: date) -> str:
+    """Der Name, unter dem der Bericht beim Herunterladen erscheinen soll.
+
+    Getrennt vom Dateinamen auf der Platte: Dort braucht es die Kennung zur
+    Unterscheidung, im Download-Ordner des Anwenders wäre sie nur Ballast.
+    """
+    sauber = dokumenttext.einzeilig(projekt).replace("/", "-") or "Projekt"
+    return f"Bautagesbericht {datum.strftime('%Y-%m-%d')} {sauber}.docx"
+
+
 def generate_bautagesbericht(
     data: BautagesberichtJSON,
     template_path: Path | None = None,
+    kennung: str = "",
 ) -> Path:
     if template_path is None:
         template_path = settings.template_dir / "Bautagesbericht_HPP_leer.docx"
@@ -817,10 +888,8 @@ def generate_bautagesbericht(
     if first_run is not None and not (first_run.text or "").startswith(","):
         first_run.text = f", {first_run.text or ''}"
 
-    safe_projekt = "".join(
-        c if c.isalnum() or c in " -_" else "_" for c in data.projekt
-    ).strip().replace(" ", "_")[:40] or "Projekt"
-    output_path = settings.output_dir / f"BTB_{data.datum.isoformat()}_{safe_projekt}.docx"
+    output_path = settings.output_dir / dateiname(
+        data.projekt, data.datum, kennung)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
 

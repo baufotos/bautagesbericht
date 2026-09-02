@@ -205,13 +205,37 @@ function ZipBauen($ordner) {
 
 # ── 1. Oberfläche statisch exportieren ───────────────────────────────────────
 Schritt "Oberflaeche exportieren (statischer Build)"
-$node = "C:\Users\ben.gagelmann\AppData\Local\Programs\nodejs\node-v22.16.0-win-x64"
-if (-not (Test-Path "$node\npm.cmd")) {
-  # Node liegt bei Bedarf woanders — dann hier den Pfad anpassen.
+# Node wird nur zum Exportieren der Oberfläche gebraucht und liegt hier
+# portabel, also nicht im Suchpfad. Gesucht wird an den Stellen, an denen es
+# auf diesem Rechner schon gelegen hat: Eine neue Node-Fassung landet in einem
+# Ordner mit neuer Versionsnummer, und ein fest eingetragener Pfad ließ das
+# Skript dann mit "npm nicht gefunden" abbrechen — mitten im Update.
+$nodeOrte = @(
+  "$env:LOCALAPPDATA\Programs\nodejs",
+  "$env:LOCALAPPDATA\node",
+  "$env:ProgramFiles\nodejs"
+)
+$node = $null
+foreach ($ort in $nodeOrte) {
+  if (-not (Test-Path $ort)) { continue }
+  if (Test-Path (Join-Path $ort "npm.cmd")) { $node = $ort; break }
+  # Entpackte Fassungen liegen in einem Unterordner "node-vXX...-win-x64".
+  # Absteigend sortiert, damit eine neuere Fassung gewinnt.
+  $unter = Get-ChildItem $ort -Directory -ErrorAction SilentlyContinue |
+    Where-Object { Test-Path (Join-Path $_.FullName "npm.cmd") } |
+    Sort-Object Name -Descending
+  if ($unter) { $node = $unter[0].FullName; break }
+}
+if (-not $node) {
   $gefunden = Get-Command npm -ErrorAction SilentlyContinue
-  if (-not $gefunden) { throw "npm nicht gefunden. Node.js-Pfad in dieser Datei anpassen." }
+  if (-not $gefunden) {
+    throw ("npm nicht gefunden. Gesucht wurde in:`n  " +
+           ($nodeOrte -join "`n  ") +
+           "`nNode.js dorthin entpacken oder in den Suchpfad legen.")
+  }
   $node = Split-Path $gefunden.Source -Parent
 }
+Write-Host "   Node: $node"
 # npm.cmd ruft intern "node" auf und braucht es deshalb im Suchpfad. Bei einer
 # portablen Node-Installation ist es das nicht — hier nachtragen.
 if ($env:PATH -notlike "*$node*") { $env:PATH = "$node;$env:PATH" }

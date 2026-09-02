@@ -23,6 +23,7 @@ from app.schemas import (
 from app.services import firmennamen
 from app.services import wochenaufteilung as wa
 from app.services import wochenpaket_ablage as ablage
+from app.services.docx_generation import anzeigename
 from app.services.pipeline import confirm_and_generate, process_einreichung
 from app.utils.file_storage import save_upload
 
@@ -127,6 +128,42 @@ def _abschnitte_auslagern(funde: list[wa.Seitenfund],
     return ergebnis
 
 
+def _pruefe_dateien(dateien: list[UploadFile]) -> None:
+    """Weist zurück, was die Auswertung ohnehin nicht lesen könnte.
+
+    Zwei Gründe, das hier zu prüfen und nicht erst in der Verarbeitung:
+
+    * **Endung.** Eine Textdatei oder eine Tabelle als "Bautagesbericht" läuft
+      sonst durch den ganzen Ablauf und endet in einem leeren Bericht mit der
+      Warnung "Keine Firmendaten extrahiert" — der Grund steht dort nicht.
+    * **Größe.** Beim Mängelmodul und den Baufotos gilt die Grenze aus den
+      Einstellungen längst; hier fehlte sie, und ein versehentlich
+      hochgeladener 300-MB-Planscan lief bis in die Bilderzeugung.
+    """
+    from app.services import bildformate
+
+    erlaubt = {".pdf", ".txt"} | bildformate.BILD_ENDUNGEN
+    grenze = settings.max_file_size_mb * 1024 * 1024
+
+    for datei in dateien:
+        name = Path(datei.filename or "").name
+        endung = Path(name).suffix.lower()
+        if endung not in erlaubt:
+            raise HTTPException(
+                400,
+                f"„{name or 'Datei ohne Namen'}“ kann nicht ausgelesen werden. "
+                "Gebraucht wird ein PDF oder ein Foto (JPG, PNG, HEIC …).",
+            )
+        # ``size`` liefert Starlette aus dem Upload; fehlt es, wird nicht
+        # geraten — die Grenze greift dann eben nicht.
+        groesse = getattr(datei, "size", None)
+        if groesse is not None and groesse > grenze:
+            raise HTTPException(
+                400,
+                f"„{name}“ ist größer als {settings.max_file_size_mb} MB.",
+            )
+
+
 @router.get("/faehigkeiten")
 def faehigkeiten():
     """Was die App auf diesem Rechner kann — für Hinweise in der Oberfläche."""
@@ -155,6 +192,7 @@ async def woche_analysieren(
     """
     if len(dateien) > settings.max_files_per_submission:
         raise HTTPException(400, f"Maximal {settings.max_files_per_submission} Dateien")
+    _pruefe_dateien(dateien)
 
     ablage.aufraeumen()
 
@@ -285,9 +323,9 @@ def woche_einreichen(
     db: Session = Depends(get_db),
 ):
     """Erzeugt aus den bestätigten Tagen je einen ganz normalen Bautagesbericht."""
-    if not db.query(Projekt).get(daten.projekt_id):
+    if not db.get(Projekt, daten.projekt_id):
         raise HTTPException(400, "Projekt nicht gefunden")
-    if not db.query(Empfaenger).get(daten.empfaenger_id):
+    if not db.get(Empfaenger, daten.empfaenger_id):
         raise HTTPException(400, "Empfänger nicht gefunden")
 
     try:
@@ -412,10 +450,14 @@ def dokumente_als_zip(ids: str, db: Session = Depends(get_db)):
             pfad = settings.output_dir.parent / e.ergebnis_dokument_pfad
             if not pfad.is_file():
                 continue
-            name = pfad.name
+            # Im Archiv steht der lesbare Name, nicht der eindeutige der
+            # Platte: "Bautagesbericht 2026-08-07 Kita Nord.docx" statt
+            # "BTB_2026-08-07_Kita_Nord_31.docx".
+            name = anzeigename(e.projekt.name if e.projekt else "", e.datum)
             zaehler = 1
             while name in vergeben:
-                name = f"{pfad.stem}_{zaehler}{pfad.suffix}"
+                stamm = Path(name).stem
+                name = f"{stamm} ({zaehler}){Path(name).suffix}"
                 zaehler += 1
             vergeben.add(name)
             archiv.write(pfad, name)
@@ -439,7 +481,7 @@ def dokumente_als_zip(ids: str, db: Session = Depends(get_db)):
 
 @router.get("/{einreichung_id}", response_model=EinreichungResponse)
 def get_einreichung(einreichung_id: int, db: Session = Depends(get_db)):
-    e = db.query(Einreichung).get(einreichung_id)
+    e = db.get(Einreichung, einreichung_id)
     if not e:
         raise HTTPException(404, "Einreichung nicht gefunden")
     return _to_response(e)
@@ -455,12 +497,13 @@ async def create_einreichung(
     ergaenzende_angaben: Annotated[str, Form()] = "",
     db: Session = Depends(get_db),
 ):
-    if not db.query(Projekt).get(projekt_id):
+    if not db.get(Projekt, projekt_id):
         raise HTTPException(400, "Projekt nicht gefunden")
-    if not db.query(Empfaenger).get(empfaenger_id):
+    if not db.get(Empfaenger, empfaenger_id):
         raise HTTPException(400, "Empfänger nicht gefunden")
     if len(dateien) > settings.max_files_per_submission:
         raise HTTPException(400, f"Maximal {settings.max_files_per_submission} Dateien")
+    _pruefe_dateien(dateien)
 
     einreichung = Einreichung(
         projekt_id=projekt_id,
@@ -488,17 +531,31 @@ async def create_einreichung(
     return _to_response(einreichung)
 
 
+#: In diesen Zuständen darf die Verarbeitung (noch einmal) laufen.
+#:
+#: "fehlgeschlagen" gehört dazu, und das ist der zweite Versuch nach einem
+#: Fehler. Vorher war ein fehlgeschlagener Bericht eine Sackgasse: rote
+#: Plakette, kein Grund, kein Knopf — man konnte nur alles noch einmal
+#: hochladen. Die Dateien liegen aber weiterhin da, und der Grund war oft
+#: vorübergehend (Schnittstelle überlastet, Netz kurz weg).
+STARTBAR = ("wartet_auf_bestaetigung", "fehlgeschlagen")
+
+
 @router.post("/{einreichung_id}/bestaetigen", response_model=EinreichungResponse)
 def bestaetigen_einreichung(
     einreichung_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    e = db.query(Einreichung).get(einreichung_id)
+    e = db.get(Einreichung, einreichung_id)
     if not e:
         raise HTTPException(404, "Einreichung nicht gefunden")
-    if e.status != "wartet_auf_bestaetigung":
-        raise HTTPException(400, f"Bestätigung nur im Status 'wartet_auf_bestaetigung' möglich (aktuell: {e.status})")
+    if e.status not in STARTBAR:
+        raise HTTPException(
+            400,
+            "Erzeugen ist nur möglich, wenn der Bericht auf Bestätigung "
+            f"wartet oder fehlgeschlagen ist (aktuell: {e.status})",
+        )
 
     e.status = "wird_verarbeitet"
     db.commit()
@@ -509,7 +566,7 @@ def bestaetigen_einreichung(
 
 @router.get("/{einreichung_id}/dokument")
 def download_dokument(einreichung_id: int, db: Session = Depends(get_db)):
-    e = db.query(Einreichung).get(einreichung_id)
+    e = db.get(Einreichung, einreichung_id)
     if not e:
         raise HTTPException(404, "Einreichung nicht gefunden")
     if not e.ergebnis_dokument_pfad:
@@ -519,6 +576,6 @@ def download_dokument(einreichung_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Datei nicht gefunden")
     return FileResponse(
         file_path,
-        filename=file_path.name,
+        filename=anzeigename(e.projekt.name if e.projekt else "", e.datum),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )

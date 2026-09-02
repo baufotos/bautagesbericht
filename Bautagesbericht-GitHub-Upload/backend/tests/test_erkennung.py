@@ -219,6 +219,60 @@ for name in ["(Handschrift/Scan: x.pdf)", "Firma bitte ergänzen", "Ried[?]", "R
 for name in ["Riedel Bau", "Miro Ventig", "RF Fassaden GmbH"]:
     pruefe(not firmennamen._merkwuerdig(name), f"{name!r} darf gemerkt werden")
 
+abschnitt("Jedes Bildformat, das die Oberfläche annimmt, wird auch gelesen")
+# Die Oberfläche lässt HEIC, AVIF und TIF zur Auswahl zu — die Auswertung
+# hatte dafür eine eigene, kürzere Aufzählung. Ein mit dem iPhone
+# abfotografierter Bericht kam damit an, wurde stillschweigend verworfen und
+# der Bericht entstand ohne eine einzige Firma. Beide Listen müssen dieselbe
+# sein, und die eine Quelle dafür ist services/bildformate.
+import asyncio  # noqa: E402
+
+from app.services import bildformate, pdf_extraction  # noqa: E402
+
+for endung in (".heic", ".heif", ".avif", ".tif", ".tiff", ".webp", ".jpg",
+               ".jpeg", ".png", ".bmp", ".gif"):
+    pruefe(endung in bildformate.BILD_ENDUNGEN, f"{endung} gilt als Bild")
+
+# Und die Auswertung nimmt sie wirklich an: Ohne Schlüssel landet ein Bild im
+# Zweig "kann auf diesem Rechner nicht gelesen werden" — und ausdrücklich
+# NICHT bei "gibt einfach nichts zurück", was vorher geschah.
+gemerkt = pdf_extraction.settings.anthropic_api_key
+pdf_extraction.settings.anthropic_api_key = ""
+try:
+    for endung in (".heic", ".avif", ".tif", ".webp"):
+        probe = STORAGE / f"bericht{endung}"
+        probe.write_bytes(b"kein echtes Bild")
+        ergebnis = asyncio.run(pdf_extraction.extract_from_file(probe))
+        pruefe(len(ergebnis) == 1,
+               f"{endung}: ein Hinweis-Eintrag statt nichts ({len(ergebnis)})")
+        pruefe(bool(ergebnis) and bool(ergebnis[0].get("leistung")),
+               f"{endung}: mit einem Text, der sagt, was zu tun ist")
+finally:
+    pdf_extraction.settings.anthropic_api_key = gemerkt
+
+abschnitt("Die Anweisung an die Bilderkennung kennt Tag und Baustelle")
+# Die Grundanweisung sagt "nimm alle Firmen aller Tage auf". Fuer ein Blatt,
+# das fuer EINEN Tag hochgeladen wurde, ist das falsch: Im Bericht vom Montag
+# stand dann die Arbeit der ganzen Woche.
+from datetime import date as _date  # noqa: E402
+
+grund = pdf_extraction._ocr_anweisung()
+pruefe(grund == pdf_extraction.OCR_ANWEISUNG,
+       "ohne Zusaetze bleibt es die Grundanweisung")
+
+mit_tag = pdf_extraction._ocr_anweisung(ziel=_date(2024, 1, 15))
+pruefe("15.01.2024" in mit_tag, "der Tag steht in der Anweisung")
+pruefe("NUR die Firmen dieses einen Tages" in mit_tag,
+       "…und ausdruecklich, dass nur er gemeint ist")
+pruefe("kein Datum zu lesen" in mit_tag,
+       "…aber ohne lesbares Datum wird nichts verworfen")
+
+mit_firmen = pdf_extraction._ocr_anweisung(("Riedel Bau", "Miro Ventig"))
+pruefe("Riedel Bau" in mit_firmen and "Miro Ventig" in mit_firmen,
+       "die Firmen der Baustelle sind Lesehilfe — im Bilderzweig fehlten sie")
+pruefe("keine Auswahlliste" in mit_firmen,
+       "…als Hilfe formuliert, damit keine neue Firma umgedeutet wird")
+
 print()
 print(f"{ok} Pruefungen ok, {len(fehler)} Fehler")
 if fehler:

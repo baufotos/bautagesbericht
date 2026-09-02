@@ -9,13 +9,18 @@ Drei Formate werden erkannt:
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import pdfplumber
 
 from app.config import settings
-from app.services import bautext, firmennamen
+from app.services import bautext, bildformate, firmennamen, schnittstelle
+
+# HEIC/HEIF bei Pillow anmelden, bevor das erste Bild geöffnet wird. Ein
+# handschriftlicher Bericht kommt als Handyfoto, und ein iPhone fotografiert
+# in HEIC.
+bildformate.registriere()
 
 #: Modell für das Auslesen eingescannter Bautagesberichte.
 #:
@@ -794,13 +799,15 @@ def erkennung_beschreibung() -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 #: Auflösung, mit der gescannte PDF-Seiten für die Erkennung gerendert werden.
-#: 200 dpi ist der Punkt, ab dem Handschrift verlässlich lesbar wird, ohne dass
-#: die Bilder die Anfrage sprengen.
-OCR_DPI = 200
+#: 300 dpi: Das Blatt wird anschließend ohnehin verkleinert, und ein Bild aus
+#: einem 300-dpi-Rendering hat nach dem Verkleinern sichtbar sauberere Kanten
+#: als eines aus 200 dpi.
+OCR_DPI = 300
 
-#: Längste Bildkante nach dem Verkleinern. Darüber bringt mehr Auflösung nichts
-#: mehr, kostet aber Übertragung und Zeit.
-OCR_MAX_KANTE = 2200
+#: Längste Bildkante nach dem Verkleinern — dieselbe Begründung wie in
+#: services/seitenlesung: Die Modelle rechnen alles über 1568 Pixel selbst
+#: herunter. Vorher standen hier 2200, die also nie ankamen.
+OCR_MAX_KANTE = 1540
 
 #: Mehr Seiten als das in einer Anfrage zu schicken wird unzuverlässig.
 OCR_MAX_SEITEN = 12
@@ -819,6 +826,8 @@ def _bild_aufbereiten(daten: bytes) -> bytes:
        hebt blasse Bleistiftschrift vom vergilbten Papier ab.
     3. Auf eine sinnvolle Größe bringen. Zu klein ist unlesbar, zu groß bringt
        nichts mehr.
+    4. Leicht nachschärfen. Das Verkleinern verwischt genau die dünnen
+       Striche, auf die es hier ankommt.
 
     Schlägt etwas davon fehl, werden die Originaldaten zurückgegeben — eine
     misslungene Aufbereitung darf die Erkennung nicht verhindern.
@@ -826,13 +835,12 @@ def _bild_aufbereiten(daten: bytes) -> bytes:
     try:
         import io
 
-        from PIL import Image, ImageOps
+        from PIL import Image, ImageFilter, ImageOps
 
         with Image.open(io.BytesIO(daten)) as bild:
             bild = ImageOps.exif_transpose(bild)
             if bild.mode not in ("RGB", "L"):
                 bild = bild.convert("RGB")
-            bild = ImageOps.autocontrast(bild, cutoff=0.5)
 
             laengste = max(bild.size)
             if laengste > OCR_MAX_KANTE:
@@ -841,8 +849,12 @@ def _bild_aufbereiten(daten: bytes) -> bytes:
                        max(1, int(bild.height * faktor)))
                 bild = bild.resize(neu, Image.LANCZOS)
 
+            bild = ImageOps.autocontrast(bild, cutoff=0.5)
+            bild = bild.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80,
+                                                       threshold=3))
+
             puffer = io.BytesIO()
-            bild.convert("RGB").save(puffer, format="JPEG", quality=88,
+            bild.convert("RGB").save(puffer, format="JPEG", quality=92,
                                      optimize=True)
             return puffer.getvalue()
     except Exception:
@@ -906,8 +918,67 @@ OCR_ANWEISUNG = (
 )
 
 
+def _ocr_anweisung(bekannte: tuple[str, ...] = (),
+                   ziel: date | None = None) -> str:
+    """Die Anweisung für diesen einen Aufruf.
+
+    Zwei Zusätze, die je Aufruf verschieden sind:
+
+    * **Der Tag.** Ohne ihn galt die Regel "nimm alle Firmen aller Tage auf"
+      auch dann, wenn dieses Blatt für EINEN Tag hochgeladen wurde. Im Bericht
+      vom Montag stand dann die Arbeit der ganzen Woche.
+    * **Die Firmen der Baustelle.** Derselbe Hebel wie beim seitenweisen Lesen
+      (services/seitenlesung): Wer weiß, welche Firmen hier arbeiten, liest
+      eine krakelige Schleife richtig. Im Bilderzweig fehlte er bisher.
+    """
+    text = OCR_ANWEISUNG
+    if ziel is not None:
+        text += (
+            "\n\nDER TAG DIESES BERICHTS\n"
+            f"Dieses Blatt gehört zum {ziel.strftime('%d.%m.%Y')}. Stehen "
+            "darauf mehrere Tage, nimm NUR die Firmen dieses einen Tages auf "
+            "— die anderen Tage bekommen ihren eigenen Bericht. Ist auf dem "
+            "Blatt kein Datum zu lesen, nimm auf, was dasteht."
+        )
+    if bekannte:
+        text += (
+            "\n\nAUF DIESER BAUSTELLE BEKANNT\n"
+            f"Diese Firmen kommen auf diesem Projekt vor: "
+            f"{', '.join(bekannte[:15])}.\n"
+            "Das ist eine Lesehilfe, keine Auswahlliste: Passt ein Name "
+            "erkennbar zu einem davon, nimm die bekannte Schreibweise. Steht "
+            "dort eine andere Firma, schreib sie so ab, wie sie dasteht."
+        )
+    return text
+
+
+def _tage_fuer(tage: list, ziel: date | None) -> list:
+    """Von den erkannten Tagen die, die zu diesem Bericht gehören.
+
+    WOZU DAS NÖTIG IST
+    Ein handschriftliches Bautagebuch enthält meist die ganze Woche. Bisher
+    wurde das Zieldatum in diesem Zweig nicht beachtet: Aus einem Dokument mit
+    sechs Tagen wurden ALLE Firmen aller Tage in EINEN Bericht geschrieben.
+    Bei einem Wochenpaket, das seitenweise getrennt wurde, fiel das nicht auf;
+    beim direkten Hochladen eines Tagebuchs für einen Tag stand im Bericht vom
+    Montag die Arbeit der ganzen Woche — mit doppelten Firmen und
+    aufaddierten Personenzahlen.
+
+    Passt kein Tag zum Zieldatum, wird nicht gefiltert: Dann ist entweder das
+    Datum auf dem Blatt nicht zu lesen gewesen oder das Blatt gehört zu genau
+    einem Tag, dessen Datum verlesen wurde. In beiden Fällen ist der Inhalt
+    besser als ein leerer Bericht — die Warnung "aus einem Scan gelesen" steht
+    ohnehin daran.
+    """
+    if ziel is None:
+        return tage
+    passend = [t for t in tage if t.datum == ziel]
+    return passend or tage
+
+
 async def _extract_scan_via_claude(
-    file_path: Path, bekannte_firmen: tuple[str, ...] = ()
+    file_path: Path, bekannte_firmen: tuple[str, ...] = (),
+    target_date: date | None = None,
 ) -> list[dict]:
     if not settings.anthropic_api_key:
         return await _extract_scan_no_key(file_path, bekannte_firmen)
@@ -940,8 +1011,9 @@ async def _extract_scan_via_claude(
                 "quelle": "ocr",
             }]
 
+        alle_tage = seitenlesung.zu_tagen(befunde, bekannte_firmen)
         eintraege: list[dict] = []
-        for tag in seitenlesung.zu_tagen(befunde, bekannte_firmen):
+        for tag in _tage_fuer(alle_tage, target_date):
             eintraege.extend(seitenlesung.als_firmeneintraege(tag))
         if eintraege:
             return eintraege
@@ -962,6 +1034,8 @@ async def _extract_scan_via_claude(
     else:
         seitenbilder = [_bild_aufbereiten(file_path.read_bytes())]
 
+    anweisung = _ocr_anweisung(bekannte_firmen, target_date)
+
     if seitenbilder:
         inhalt: list[dict] = [
             {
@@ -974,50 +1048,24 @@ async def _extract_scan_via_claude(
             }
             for bild in seitenbilder
         ]
-        return await _claude_bilder_auswerten(client, inhalt, file_path.name)
+        return await _claude_bilder_auswerten(client, inhalt, file_path.name,
+                                              anweisung=anweisung)
 
-    # Rendern nicht möglich: das Dokument unverändert schicken.
-    data = base64.standard_b64encode(file_path.read_bytes()).decode()
-
-    media_type_map = {
-        ".pdf": "application/pdf",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-    }
-    media_type = media_type_map.get(file_path.suffix.lower(), "application/octet-stream")
-
-    tool_schema = {
-        "name": "report_firms",
-        "description": "Gibt die extrahierten Firmeneinträge zurück",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "firmen": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "firma": {"type": "string"},
-                            "ort": {"type": "string"},
-                            "personen": {"type": "integer"},
-                            "leistung": {"type": "string"},
-                            "besonderes": {"type": ["string", "null"]},
-                        },
-                        "required": ["firma", "ort", "personen", "leistung"],
-                    },
-                },
-            },
-            "required": ["firmen"],
-        },
-    }
-
+    # Rendern nicht möglich — dann ist es ein PDF, das pypdfium2 nicht
+    # aufbekommen hat (beschädigt, verschlüsselt). Bilder landen hier nie:
+    # ``_bild_aufbereiten`` gibt im Zweifel die Rohdaten zurück, nie nichts.
+    # Also das Dokument unverändert schicken und die Gegenseite entscheiden
+    # lassen, ob sie es lesen kann.
     inhalt = [{
-        "type": "document" if media_type == "application/pdf" else "image",
-        "source": {"type": "base64", "media_type": media_type, "data": data},
+        "type": "document",
+        "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": base64.standard_b64encode(file_path.read_bytes()).decode(),
+        },
     }]
     return await _claude_bilder_auswerten(client, inhalt, file_path.name,
-                                          tool_schema=tool_schema)
+                                          anweisung=anweisung)
 
 
 def _ocr_schema() -> dict:
@@ -1048,29 +1096,45 @@ def _ocr_schema() -> dict:
 
 
 async def _claude_bilder_auswerten(client, inhalt: list[dict], quelle: str,
-                                   tool_schema: dict | None = None) -> list[dict]:
-    """Schickt die aufbereiteten Seiten an Claude und räumt das Ergebnis auf."""
-    inhalt = list(inhalt) + [{"type": "text", "text": OCR_ANWEISUNG}]
+                                   anweisung: str | None = None) -> list[dict]:
+    """Schickt die aufbereiteten Seiten an Claude und räumt das Ergebnis auf.
 
-    try:
-        antwort = client.messages.create(
+    Die Anfrage läuft in einem eigenen Thread und wird bei vorübergehenden
+    Störungen wiederholt (services/schnittstelle). Das Anthropic-Paket wird
+    hier synchron benutzt, und eine Bilderkennung dauert zehn Sekunden und
+    mehr — direkt in der Ereignisschleife stünde der ganze Webserver so lange
+    still. Wer in derselben Zeit die Mängelliste öffnet, bekäme eine Seite,
+    die sich nicht lädt.
+    """
+    inhalt = list(inhalt) + [
+        {"type": "text", "text": anweisung or OCR_ANWEISUNG}
+    ]
+
+    def ruf():
+        return client.messages.create(
             model=CLAUDE_MODELL,
             max_tokens=8192,
-            tools=[tool_schema or _ocr_schema()],
+            tools=[_ocr_schema()],
             tool_choice={"type": "tool", "name": "report_firms"},
             messages=[{"role": "user", "content": inhalt}],
         )
+
+    try:
+        antwort = await schnittstelle.mit_wiederholung(ruf)
     except Exception as exc:
         return [{
             "firma": f"(Erkennung fehlgeschlagen: {quelle})",
             "ort": "",
             "personen": 0,
-            "leistung": f"Die Texterkennung meldete: {exc}",
+            # Klartext statt der englischen Rohmeldung — sonst sucht der
+            # Anwender den Fehler beim Scan, während der Grund ein falscher
+            # Schlüssel oder ein leeres Konto ist.
+            "leistung": schnittstelle.fehlertext(exc),
             "besonderes": None,
             "quelle": "ocr",
         }]
 
-    for block in antwort.content:
+    for block in (antwort.content if antwort else []):
         if block.type == "tool_use" and block.name == "report_firms":
             firmen = block.input.get("firmen", []) or []
             # "quelle" markiert die Einträge als maschinell gelesen. Die
@@ -1086,7 +1150,15 @@ async def _claude_bilder_auswerten(client, inhalt: list[dict], quelle: str,
 # Text-Fallback via Claude (nur wenn Regeln greifen nicht)
 # ---------------------------------------------------------------------------
 
-async def _extract_text_via_claude(text: str, file_name: str) -> list[dict]:
+async def _extract_text_via_claude(text: str, file_name: str,
+                                   bekannte_firmen: tuple[str, ...] = (),
+                                   target_date: date | None = None) -> list[dict]:
+    """Letzte Stufe für Text, den keine Regel erkannt hat.
+
+    Auch hier laufen die Firmen der Baustelle mit: Es ist derselbe Hebel wie
+    bei der Bilderkennung, und der Text kommt in diesem Zweig oft genug aus
+    einer Texterkennung, ist also genauso fehlerbehaftet.
+    """
     if not _has_real_key():
         return []
 
@@ -1094,49 +1166,58 @@ async def _extract_text_via_claude(text: str, file_name: str) -> list[dict]:
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-    tool_schema = {
-        "name": "report_firms",
-        "description": "Gibt die extrahierten Firmeneinträge zurück",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "firmen": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "firma": {"type": "string"},
-                            "ort": {"type": "string"},
-                            "personen": {"type": "integer"},
-                            "leistung": {"type": "string"},
-                            "besonderes": {"type": ["string", "null"]},
-                        },
-                        "required": ["firma", "ort", "personen", "leistung"],
-                    },
-                },
-            },
-            "required": ["firmen"],
-        },
-    }
+    hinweise = [
+        "Extrahiere aus dem folgenden Bautagesbericht die Firmeneinträge. "
+        "Mappe auf: firma, ort, personen (Zahl), leistung, besonderes.",
+        "Der Text stammt oft aus einer Texterkennung und enthält deshalb "
+        "Verlesungen. Nichts erfinden: Ist ein Wort unleserlich, den "
+        "erkennbaren Teil schreiben und [?] anhängen.",
+    ]
+    if target_date is not None:
+        hinweise.append(
+            f"Dieser Bericht gehört zum {target_date.strftime('%d.%m.%Y')}. "
+            "Stehen im Text mehrere Tage, nimm nur die Firmen dieses Tages auf."
+        )
+    if bekannte_firmen:
+        hinweise.append(
+            "Auf dieser Baustelle kommen diese Firmen vor: "
+            + ", ".join(bekannte_firmen[:15])
+            + ". Das ist eine Lesehilfe, keine Auswahlliste."
+        )
 
-    response = client.messages.create(
-        model=CLAUDE_MODELL,
-        max_tokens=4096,
-        tools=[tool_schema],
-        tool_choice={"type": "tool", "name": "report_firms"},
-        messages=[{
-            "role": "user",
-            "content": (
-                "Extrahiere aus dem folgenden Bautagesbericht die Firmeneinträge. "
-                "Mappe auf: firma, ort, personen (Zahl), leistung, besonderes.\n\n"
-                f"Bautagesbericht ({file_name}):\n{text[:8000]}"
-            ),
-        }],
-    )
+    def ruf():
+        return client.messages.create(
+            model=CLAUDE_MODELL,
+            max_tokens=4096,
+            tools=[_ocr_schema()],
+            tool_choice={"type": "tool", "name": "report_firms"},
+            messages=[{
+                "role": "user",
+                "content": (
+                    "\n\n".join(hinweise)
+                    + f"\n\nBautagesbericht ({file_name}):\n{text[:8000]}"
+                ),
+            }],
+        )
 
-    for block in response.content:
+    try:
+        response = await schnittstelle.mit_wiederholung(ruf)
+    except Exception:
+        # Der Aufrufer hat für diesen Fall einen Platzhalter mit klarem Text;
+        # hier zu werfen würde die ganze Einreichung scheitern lassen.
+        return []
+
+    for block in (response.content if response else []):
         if block.type == "tool_use" and block.name == "report_firms":
-            return block.input.get("firmen", [])
+            # Auch hier als maschinell gelesen kennzeichnen: Die Pipeline
+            # hängt daran die Bitte ums Gegenlesen. Vorher fehlte die Marke
+            # in diesem Zweig — ein aus fehlerbehaftetem Erkennungstext
+            # gedeuteter Bericht sah damit so verlässlich aus wie einer aus
+            # einer sauberen PDF-Textebene.
+            firmen = block.input.get("firmen", []) or []
+            for eintrag in firmen:
+                eintrag.setdefault("quelle", "ocr")
+            return firmen
     return []
 
 
@@ -1160,10 +1241,19 @@ async def extract_from_file(
 
     suffix = file_path.suffix.lower()
 
-    # Bilddateien -> Claude Vision (falls Key vorhanden), sonst Warnung
-    if suffix in (".jpg", ".jpeg", ".png", ".tiff", ".bmp"):
+    # Bilddateien -> Claude Vision (falls Key vorhanden), sonst Warnung.
+    #
+    # Welche Endungen als Bild gelten, steht in services/bildformate und
+    # nicht hier: Dort ist die Liste, die auch die Baufotos und die
+    # Mängelfotos benutzen. Vorher stand an dieser Stelle eine eigene, kürzere
+    # Aufzählung ohne HEIC, HEIF, AVIF, WEBP und ".tif" — und die Oberfläche
+    # lässt genau diese Dateien zur Auswahl zu. Ein mit dem iPhone
+    # abfotografierter Bericht kam damit an, wurde stillschweigend verworfen
+    # und der Bericht entstand ohne eine einzige Firma.
+    if suffix in bildformate.BILD_ENDUNGEN:
         if _has_real_key():
-            return await _extract_scan_via_claude(file_path, bekannte_firmen)
+            return await _extract_scan_via_claude(file_path, bekannte_firmen,
+                                                  target_date)
         return await _extract_scan_no_key(file_path, bekannte_firmen)
 
     # Reiner Text entsteht, wenn eine Seite mehrere Tage enthielt und je Tag
@@ -1177,7 +1267,10 @@ async def extract_from_file(
             firmen = _parse_simple_page(text, None)
             if firmen:
                 return firmen
-        firmen = await _extract_text_via_claude(text, file_path.name)
+        # Ohne Zieldatum: Der Abschnitt gehört schon zum richtigen Tag, und
+        # ein zweiter Datumsfilter könnte ihn nur fälschlich leeren.
+        firmen = await _extract_text_via_claude(text, file_path.name,
+                                                bekannte_firmen)
         if firmen:
             return firmen
         return [{
@@ -1193,7 +1286,8 @@ async def extract_from_file(
 
     if not has_text_layer(file_path):
         if _has_real_key():
-            return await _extract_scan_via_claude(file_path, bekannte_firmen)
+            return await _extract_scan_via_claude(file_path, bekannte_firmen,
+                                                  target_date)
         return await _extract_scan_no_key(file_path, bekannte_firmen)
 
     with pdfplumber.open(file_path) as pdf:
@@ -1217,7 +1311,8 @@ async def extract_from_file(
     result = parse_formblatt(text, bekannte=bekannte_firmen)
     if result:
         return result
-    result = await _extract_text_via_claude(text, file_path.name)
+    result = await _extract_text_via_claude(text, file_path.name,
+                                            bekannte_firmen, target_date)
     if result:
         return result
 

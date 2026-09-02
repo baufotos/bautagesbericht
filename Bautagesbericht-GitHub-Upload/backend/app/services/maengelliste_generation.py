@@ -51,6 +51,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from app.config import settings
+from app.services import dokumenttext
 from app.schemas import MaengellisteJSON, MangelExportEintrag
 
 # Name der Vorlage im Ordner ``backend/templates`` — beim Austausch gegen die
@@ -147,7 +148,7 @@ def _schreibe(absatz, text: str, *, bold: bool = False, size=SZ_WERT,
     """Setzt Text mit dem Schriftbild der Bürovorlagen in einen Absatz."""
     absatz.paragraph_format.space_before = Pt(1)
     absatz.paragraph_format.space_after = Pt(1)
-    lauf = absatz.add_run(text)
+    lauf = absatz.add_run(dokumenttext.xml_sicher(text))
     lauf.font.name = FONT
     lauf.font.size = SZ_LABEL if klein_grau else size
     lauf.font.bold = bold
@@ -199,7 +200,8 @@ def _ersetze_in_absatz(absatz, werte: dict[str, str]) -> None:
     for lauf in absatz.runs:
         for schluessel, wert in werte.items():
             if schluessel in lauf.text:
-                lauf.text = lauf.text.replace(schluessel, wert)
+                lauf.text = lauf.text.replace(
+                    schluessel, dokumenttext.einzeilig(wert))
 
     # Ist ein Platzhalter in der Vorlage über mehrere Runs verteilt (kommt bei
     # von Hand bearbeiteten Word-Dateien vor), wird der Absatztext als Ganzes
@@ -208,7 +210,7 @@ def _ersetze_in_absatz(absatz, werte: dict[str, str]) -> None:
         return
     text = absatz.text
     for schluessel, wert in werte.items():
-        text = text.replace(schluessel, wert)
+        text = text.replace(schluessel, dokumenttext.einzeilig(wert))
     if absatz.runs:
         absatz.runs[0].text = text
         for lauf in absatz.runs[1:]:

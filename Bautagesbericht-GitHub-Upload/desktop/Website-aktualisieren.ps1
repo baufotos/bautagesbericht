@@ -59,12 +59,20 @@ Schritt "Quellcode spiegeln"
 $ausschluss = @(
   "node_modules", ".next", "out", "__pycache__", ".venv", "storage", "static",
   "HPP-Baumanagement-App",
+  # Zwischenspeicher der Testlaeufe. Entsteht, sobald jemand pytest benutzt,
+  # und hatte im Repo nichts zu suchen.
+  ".pytest_cache",
   # Im Quellordner liegt eine aeltere, verschachtelte Kopie des Projekts
   # gleichen Namens. Ohne diesen Ausschluss wandert sie als 112 ueberfluessige
   # Dateien ins Repo und verwirrt jeden, der dort nachsieht.
   "Bautagesbericht-Upload-Final"
 )
-$dateiAusschluss = @("*.pyc", "*.tsbuildinfo", "*.zip", "*.db", "*.db-shm", "*.db-wal")
+# *.exe: Das Startprogramm wird bei jedem Paketbau neu uebersetzt (siehe
+# desktop/paket/erstellen.ps1). Ein mitgeschobenes Windows-Programm im
+# oeffentlichen Repo waere ein Bauergebnis am falschen Ort - und Render
+# braucht es nicht, dort laeuft nur Backend und Oberflaeche.
+$dateiAusschluss = @("*.pyc", "*.tsbuildinfo", "*.zip", "*.exe",
+                     "*.db", "*.db-shm", "*.db-wal")
 
 $roboArgs = @(
   $quelle, $ziel, "/MIR", "/NDL", "/NJH", "/NJS", "/NP",

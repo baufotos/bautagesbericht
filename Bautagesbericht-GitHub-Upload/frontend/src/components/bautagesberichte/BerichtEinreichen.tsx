@@ -12,12 +12,25 @@
  * Hinweis wartet man vor einem scheinbar untätigen Formular.
  */
 
-import { ClipboardList, FileText, Info, Loader2, Upload, X } from "lucide-react";
-import { useState } from "react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  FileText,
+  Info,
+  Loader2,
+  Upload,
+  X,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import { formatDatumIso, heuteIso, relativeZeit } from "@/lib/formate";
-import type { Einreichung, Empfaenger, Projekt } from "@/lib/types";
+import type {
+  Einreichung,
+  EinreichungFaehigkeiten,
+  Empfaenger,
+  Projekt,
+} from "@/lib/types";
 import {
   Karte,
   KarteInhalt,
@@ -62,6 +75,33 @@ export function BerichtEinreichen({
   const [laeuft, setLaeuft] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
   const [erfolg, setErfolg] = useState(false);
+  const [koennen, setKoennen] = useState<EinreichungFaehigkeiten | null>(null);
+
+  // Kann dieser Rechner Fotos und Handschrift lesen? Denselben Hinweis gibt
+  // es beim Wochenpaket schon. Er fehlte hier — und ausgerechnet der einzelne
+  // Tag ist der Weg, auf dem ein abfotografierter Bericht hochgeladen wird.
+  // Ohne Schlüssel bleibt ein Foto zwangsläufig ohne Firmenangaben, und das
+  // soll man VOR dem Einreichen wissen, nicht danach am leeren Bericht sehen.
+  useEffect(() => {
+    let abgebrochen = false;
+    api.einreichungen
+      .faehigkeiten()
+      .then((k) => {
+        if (!abgebrochen) setKoennen(k);
+      })
+      .catch(() => {
+        /* Nur ein Hinweis — ohne ihn funktioniert alles weiter. */
+      });
+    return () => {
+      abgebrochen = true;
+    };
+  }, []);
+
+  const hatBilder = dateien.some(
+    (d) =>
+      d.type.startsWith("image/") ||
+      /\.(jpe?g|png|tiff?|bmp|gif|webp|heic|heif|avif)$/i.test(d.name)
+  );
 
   const projekt = projekte.find((p) => p.id === projektId) ?? null;
   const gewaehlterEmpfaenger = empfaenger.find((e) => e.id === Number(empfaengerId));
@@ -272,6 +312,15 @@ export function BerichtEinreichen({
                 </div>
               )}
             </div>
+
+            {hatBilder && koennen && (
+              <Meldung art={koennen.handschrift ? "hinweis" : "fehler"}>
+                <span className="flex items-start gap-2">
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                  <span>{koennen.hinweis}</span>
+                </span>
+              </Meldung>
+            )}
 
             <Field
               label="Ergänzende Angaben"

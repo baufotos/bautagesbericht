@@ -65,6 +65,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Emu, Pt, RGBColor
 
 from app.config import settings
+from app.services import dokumenttext
 
 
 class ProtokollFehler(RuntimeError):
@@ -581,7 +582,7 @@ def _leere_zelle(zelle) -> None:
 
 def _schreibe(absatz, text: str, *, groesse=GR_TABELLE, bold: bool = False,
               farbe: RGBColor = SCHWARZ):
-    lauf = absatz.add_run(text)
+    lauf = absatz.add_run(dokumenttext.xml_sicher(text))
     lauf.font.name = SCHRIFT
     lauf.font.size = groesse
     lauf.font.bold = bold

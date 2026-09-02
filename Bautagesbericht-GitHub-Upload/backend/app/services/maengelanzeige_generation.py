@@ -62,6 +62,7 @@ from docx.shared import Cm, Emu, Pt
 from PIL import Image, ImageOps
 
 from app.config import settings
+from app.services import dokumenttext
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Maße und Schrift
@@ -513,7 +514,7 @@ def _absatz(behaelter, text: str = "", *, fett: bool = False,
     if zusammenhalten:
         form.keep_with_next = True
     if text:
-        lauf = absatz.add_run(text)
+        lauf = absatz.add_run(dokumenttext.xml_sicher(text))
         lauf.font.name = SCHRIFT
         lauf.font.size = groesse
         lauf.bold = fett
@@ -788,7 +789,8 @@ def erzeuge_anschreiben(daten: Maengelanzeige) -> bytes:
         daten.sachbearbeiter.auftragsnummer,
         daten.sachbearbeiter.email,
     ]
-    lauf = datumszeile.add_run("\t".join(felder))
+    lauf = datumszeile.add_run(
+        "\t".join(dokumenttext.einzeilig(feld) for feld in felder))
     lauf.font.name = SCHRIFT
     lauf.font.size = GR_KLEIN
 
@@ -876,7 +878,7 @@ def erzeuge_anlage(daten: Maengelanzeige) -> bytes:
     erste = kopf.paragraphs[0]
     erste.paragraph_format.space_after = Pt(0)
     erste.paragraph_format.line_spacing = ZEILE
-    lauf = erste.add_run(daten.projektbezeichnung)
+    lauf = erste.add_run(dokumenttext.einzeilig(daten.projektbezeichnung))
     lauf.font.name = SCHRIFT
     lauf.font.size = GR_TEXT
     _absatz(kopf, daten.vergabeeinheit)
@@ -959,7 +961,7 @@ def _bereichsblock(dokument, bereich: MangelBereich) -> None:
             absatz.paragraph_format.space_before = Pt(2)
             absatz.paragraph_format.space_after = Pt(0)
             absatz.paragraph_format.line_spacing = Pt(11.5)
-            text = absatz.add_run(eintrag.beschreibung)
+            text = absatz.add_run(dokumenttext.xml_sicher(eintrag.beschreibung))
             text.font.name = SCHRIFT
             text.font.size = GR_BILDTEXT
 

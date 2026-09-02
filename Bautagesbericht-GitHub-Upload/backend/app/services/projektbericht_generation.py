@@ -57,6 +57,7 @@ from docx.shared import Cm, Emu, Pt, RGBColor
 from PIL import Image, ImageOps
 
 from app.services import projektbericht_gliederung as gliederung
+from app.services import dokumenttext
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Maße und Schrift
@@ -222,7 +223,7 @@ def dateiname(bericht: Projektbericht, endung: str = "docx") -> str:
 
 def _lauf(absatz, text: str, *, fett=False, groesse=GR_TEXT, schrift=SCHRIFT,
           farbe=None):
-    lauf = absatz.add_run(text)
+    lauf = absatz.add_run(dokumenttext.xml_sicher(text))
     lauf.font.name = schrift
     lauf.font.size = groesse
     lauf.bold = fett

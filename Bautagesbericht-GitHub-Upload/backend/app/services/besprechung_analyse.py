@@ -35,10 +35,10 @@ WAS NICHT GERATEN WIRD
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 
 from app.config import settings
+from app.services import schnittstelle
 
 #: Dasselbe Modell wie in ``app.services.seitenlesung``. Steht bewusst an zwei
 #: Stellen und nicht in der Konfiguration: Ein Modellwechsel ist eine
@@ -383,9 +383,13 @@ def _werkzeug_antwort(antwort, name: str) -> dict:
 async def _frage(client, text: str) -> dict:
     """Eine Anfrage, außerhalb der Ereignisschleife ausgeführt.
 
-    ``asyncio.to_thread`` wie in ``seitenlesung``: Das Anthropic-Paket wird
-    hier synchron benutzt, und der Webserver soll währenddessen weiter
-    antworten.
+    Wie beim seitenweisen Lesen der Bautagebücher läuft der Aufruf in einem
+    eigenen Thread — das Anthropic-Paket wird hier synchron benutzt, und der
+    Webserver soll währenddessen weiter antworten. Vorübergehende Störungen
+    werden wiederholt (siehe services/schnittstelle): Wer eine Besprechung
+    auswerten lässt, hat Transkript und Notizen eingefügt; das an einer zwei
+    Sekunden langen Überlastung scheitern zu lassen heißt, alles erneut
+    einzufügen.
     """
 
     def ruf():
@@ -398,8 +402,8 @@ async def _frage(client, text: str) -> dict:
             messages=[{"role": "user", "content": text}],
         )
 
-    antwort = await asyncio.to_thread(ruf)
-    return _werkzeug_antwort(antwort, WERKZEUG["name"])
+    antwort = await schnittstelle.mit_wiederholung(ruf)
+    return _werkzeug_antwort(antwort, WERKZEUG["name"]) if antwort else {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -564,7 +568,14 @@ async def analysiere(
     try:
         roh = await _frage(_client(), text)
     except Exception as fehler:  # Netz, Schlüssel, Kontingent
-        raise AnalyseFehler(f"Die Analyse ist fehlgeschlagen: {fehler}") from fehler
+        # Klartext statt Rohmeldung: Die Schnittstelle antwortet auf Englisch
+        # und mit Statuscodes ("Error code: 401 - {'type': 'error', …}").
+        # Wer im Büro ein Protokoll auswerten lässt, sucht damit den Fehler
+        # im eingefügten Text, während der Grund die Konfiguration ist.
+        raise AnalyseFehler(
+            "Die Analyse ist fehlgeschlagen. "
+            + schnittstelle.fehlertext(fehler)
+        ) from fehler
 
     if not roh:
         raise AnalyseFehler(

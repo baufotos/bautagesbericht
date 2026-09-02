@@ -26,11 +26,18 @@ os.environ.setdefault("BTB_DATABASE_URL", f"sqlite:///{(ARBEIT / 'x.db').as_posi
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
-from app.schemas import BautagesberichtJSON, FirmaEintrag  # noqa: E402
+from app.schemas import (  # noqa: E402
+    BautagesberichtJSON,
+    FirmaEintrag,
+    WetterBlock,
+    WetterStundenwert,
+)
 from app.services.docx_generation import (  # noqa: E402
     BLOCK_ABSTAND,
     FELD_ABSTAND,
     ZEILENABSTAND_TEXT,
+    _diagramm_bereich,
+    anzeigename,
     generate_bautagesbericht,
 )
 
@@ -131,6 +138,91 @@ nach_tabelle = text.rsplit("</w:tbl>", 1)[-1]
 absaetze = re.findall(r"<w:p[ >].*?</w:p>", nach_tabelle, re.DOTALL)
 pruefe(len(absaetze) <= 1,
        f"hoechstens ein Absatz hinter der Tabelle (waren {len(absaetze)})")
+
+print("─── Steuerzeichen halten das Dokument nicht auf ───")
+
+# Ein Seitenvorschub aus einem kopierten PDF oder ein vertikaler Tabulator
+# aus der Texterkennung liess das Erzeugen mit "PCDATA invalid Char value 12"
+# platzen. Der Bericht stand dann auf "fehlgeschlagen", ohne dass irgendwo
+# gestanden haette, woran es lag.
+stoerfall = BautagesberichtJSON(
+    projekt="Testbaustelle\x0bNord", datum=date(2026, 8, 5),
+    haupteintrag="Frost am Morgen\x0cBaustelle geraeumt",
+    firmen=[FirmaEintrag(
+        firma="Riedel Bau", personen=3,
+        leistung="Zeile eins\nZeile zwei\x0bZeile drei",
+        besonderes="Behinderung\x01A",
+    )],
+)
+try:
+    pfad_stoer = generate_bautagesbericht(stoerfall)
+    pruefe(True, "Dokument mit Steuerzeichen entsteht")
+except Exception as exc:      # pragma: no cover - genau das darf nicht sein
+    fehler.append(f"Steuerzeichen lassen das Dokument platzen: {exc}")
+    pfad_stoer = None
+
+if pfad_stoer is not None:
+    stoer = teile(pfad_stoer)["word/document.xml"]
+    laeufe = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", stoer)
+    pruefe("Zeile eins" in laeufe and "Zeile drei" in laeufe,
+           f"alle drei Leistungszeilen stehen drin: {laeufe[-6:]}")
+    # Mehrzeilige Werte brauchen echte Umbrueche. Ein "\n" mitten in <w:t>
+    # ist fuer Word bloss Leerraum — aus drei Zeilen wurde eine lange.
+    pruefe("<w:br/>" in stoer, "mehrzeilige Werte werden mit <w:br/> gesetzt")
+    pruefe("BehinderungA" in laeufe,
+           f"Steuerzeichen ist weg, der Text bleibt: {[l for l in laeufe if 'Behinder' in l]}")
+    gleich([l for l in laeufe if l.startswith("Testbaustelle")],
+           ["Testbaustelle Nord"], "Projektname bleibt einzeilig")
+
+
+print("─── Temperaturdiagramm an einem Frosttag ───")
+
+# Der Nullpunkt war fest: An einem Tag zwischen -5 und -1 Grad war kein
+# einziger Balken zu sehen, das Diagramm verschwand im Winter stillschweigend.
+gleich(_diagramm_bereich([-5.0, -4.0, -1.0]), (-5.0, -1.0),
+       "bei Frost sinkt der Boden mit")
+gleich(_diagramm_bereich([12.0, 20.0]), (0.0, 20.0),
+       "ueber null bleibt der Boden bei 0 Grad — Tage bleiben vergleichbar")
+gleich(_diagramm_bereich([3.0, 3.0]), (0.0, 3.0),
+       "gleichbleibende Temperatur teilt nicht durch null")
+gleich(_diagramm_bereich([]), (0.0, 1.0), "ohne Messwerte kein Absturz")
+
+frosttag = BautagesberichtJSON(
+    projekt="Winterbaustelle", datum=date(2026, 1, 15),
+    wetter=WetterBlock(
+        station="DWD Test", temp_max_c=-1.0, temp_min_c=-5.0,
+        stundenwerte=[
+            WetterStundenwert(stunde=stunde, temperatur_c=temp, icon="snow")
+            for stunde, temp in zip(
+                range(1, 24, 2),
+                [-5.0, -5.0, -4.0, -4.0, -3.0, -2.0, -1.0, -2.0, -3.0, -4.0,
+                 -4.0, -5.0])
+        ],
+    ),
+    firmen=[FirmaEintrag(firma="Riedel Bau", personen=2)],
+)
+winter = teile(generate_bautagesbericht(frosttag))["word/document.xml"]
+gleich(winter.count('w:fill="FFA500"'), 12,
+       "zwoelf Balken, auch wenn der ganze Tag unter null lag")
+
+
+print("─── Zwei Berichte fuer denselben Tag ───")
+
+# Ohne Kennung im Dateinamen schrieb der zweite Bericht den ersten still
+# ueber, und der Download des aelteren lieferte danach den Inhalt des neueren.
+daten = BautagesberichtJSON(
+    projekt="Testbaustelle Nord", datum=date(2026, 8, 5),
+    firmen=[FirmaEintrag(firma="Riedel Bau", personen=1)],
+)
+erster = generate_bautagesbericht(daten, kennung="17")
+zweiter = generate_bautagesbericht(daten, kennung="18")
+pruefe(erster != zweiter,
+       f"zwei Einreichungen, zwei Dateien: {erster.name} / {zweiter.name}")
+pruefe(erster.is_file() and zweiter.is_file(), "beide Dateien liegen da")
+gleich(anzeigename("Testbaustelle Nord", date(2026, 8, 5)),
+       "Bautagesbericht 2026-08-05 Testbaustelle Nord.docx",
+       "beim Herunterladen steht ein lesbarer Name")
+
 
 print()
 if fehler:

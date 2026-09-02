@@ -52,20 +52,48 @@ from datetime import date
 from pathlib import Path
 
 from app.config import settings
-from app.services import bautext, firmennamen
+from app.services import bautext, bildformate, firmennamen, schnittstelle
+
+# HEIC/HEIF bei Pillow anmelden. Handschriftliche Berichte kommen als
+# Handyfoto, und ein iPhone fotografiert in HEIC — ohne diese Zeile wirft
+# ``Image.open`` und die Seite gilt als unlesbar.
+bildformate.registriere()
 
 #: Auflösung, mit der gerendert wird. 300 dpi statt der bisherigen 200: Bei
 #: verbundener Schreibschrift entscheidet die Auflösung darüber, ob eine
-#: Oberlänge als "l" oder als "e" ankommt. Mehr bringt nichts mehr, kostet
-#: aber Übertragungszeit.
+#: Oberlänge als "l" oder als "e" ankommt.
 DPI = 300
 
-#: Längste Kante nach dem Verkleinern.
-MAX_KANTE = 2600
+#: Längste Kante eines Bildes, das an die Schnittstelle geht.
+#:
+#: WARUM AUSGERECHNET DIESER WERT
+#: Die Modelle rechnen ein Bild mit mehr als 1568 Pixeln auf der langen Kante
+#: selbst herunter. Vorher standen hier 2600 — jedes Blatt wurde also mit
+#: 2600 Pixeln übertragen und drüben wieder auf 1568 verkleinert. Die
+#: zusätzliche Auflösung kam nie an, kostete aber Zeit, und das Verkleinern
+#: übernahm die Gegenseite statt LANCZOS hier.
+#:
+#: 1540 liegt knapp darunter und bleibt damit unangetastet.
+MAX_KANTE = 1540
+
+#: Anteil der langen Blattkante, den ein Ausschnitt abdeckt.
+#:
+#: WOZU AUSSCHNITTE
+#: Ein A4-Blatt als Ganzes hat bei 1540 Pixeln Höhe rund 134 dpi. Das reicht
+#: für Druckbuchstaben und ist bei verbundener Schreibschrift genau die
+#: Grenze, an der eine Schleife zur Deutungsfrage wird. Ein Ausschnitt über
+#: die halbe Blatthöhe hat dagegen die BREITE als lange Kante — dieselben
+#: 1540 Pixel ergeben dann rund 190 dpi. Dieselbe Handschrift, anderthalbfach
+#: so groß, ohne dass die Schnittstelle etwas dazutun muss.
+#:
+#: 0,55 statt 0,5: Die beiden Ausschnitte überlappen sich in der Mitte um
+#: 10 % der Blatthöhe. Eine Tabellenzeile, die genau auf der Schnittkante
+#: liegt, ist damit auf einem der beiden ganz zu sehen.
+AUSSCHNITT_ANTEIL = 0.55
 
 #: JPEG-Güte. Hoch angesetzt, weil Kompressionsartefakte genau die dünnen
 #: Striche fressen, auf die es hier ankommt.
-JPEG_GUETE = 88
+JPEG_GUETE = 92
 
 #: Wie viele Seiten gleichzeitig gelesen werden. Zwei Durchgänge je Seite mal
 #: zwölf Seiten sind 24 Anfragen; nacheinander dauert das mehrere Minuten.
@@ -75,6 +103,19 @@ GLEICHZEITIG = 4
 #: Obergrenze, damit ein versehentlich hochgeladener Aktenordner nicht
 #: unbemerkt hunderte Anfragen auslöst.
 MAX_SEITEN = 40
+
+#: Wie oft eine Anfrage wiederholt wird, die an etwas Vorübergehendem
+#: gescheitert ist — Überlastung, Zeitüberschreitung, kurzer Netzaussetzer.
+#:
+#: Ohne das ging eine ganze Seite verloren, weil die Schnittstelle für zwei
+#: Sekunden überlastet war: In der Woche fehlte dann ein Tag, und in der
+#: Oberfläche stand als Grund "gerade überlastet" — für den Anwender ein
+#: Hinweis, mit dem er nichts anfangen kann, weil er die Datei ja schon
+#: hochgeladen hat.
+VERSUCHE = 3
+
+#: Wartezeit vor dem zweiten Versuch, danach jeweils das Doppelte.
+WARTEN_SEKUNDEN = 2.0
 
 CLAUDE_MODELL = "claude-opus-5"
 
@@ -138,54 +179,143 @@ class Tagesbefund:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _seitenbilder(pfad: Path) -> list[bytes]:
-    """PDF-Seiten als aufbereitete JPEG-Bilder."""
-    from PIL import Image, ImageOps
+@dataclass
+class Seitenbild:
+    """Eine Seite in zwei Auflösungen.
 
+    ``uebersicht`` ist das ganze Blatt: daran erkennt man den Aufbau, welche
+    Spalte welche ist und ob dies eine Kopf- oder eine Fortsetzungsseite ist.
+
+    ``ausschnitte`` sind überlappende Hälften desselben Blattes, jede für sich
+    mit rund anderthalbfacher Auflösung (siehe ``AUSSCHNITT_ANTEIL``). Sie
+    gehen in den zweiten Durchgang — der soll ja nicht dasselbe Bild noch
+    einmal ansehen, sondern mehr sehen als der erste.
+    """
+
+    uebersicht: bytes
+    ausschnitte: list[bytes] = field(default_factory=list)
+
+
+def _jpeg(bild) -> bytes:
+    puffer = io.BytesIO()
+    bild.save(puffer, format="JPEG", quality=JPEG_GUETE, optimize=True)
+    return puffer.getvalue()
+
+
+def _lesbar_machen(bild):
+    """Kontrast und Schärfe eines Blattes für die Erkennung.
+
+    Handschriftliche Berichte kommen als Handyfoto: schief belichtet, grauer
+    Schatten über dem Blatt, Bleistift auf vergilbtem Papier.
+
+    * **Autokontrast** mit 0,5 % Beschnitt an beiden Enden hebt blasse
+      Bleistiftschrift vom Papier ab und schneidet Schatten und Durchschein
+      weg.
+    * **Unscharfmaskieren** danach: Beim Verkleinern von 300 dpi auf die
+      Zielgröße verwischt LANCZOS genau die dünnen Striche, auf die es
+      ankommt. Ein leichtes Nachschärfen holt die Kanten zurück, ohne das
+      Papierkorn hochzuziehen.
+    """
+    from PIL import ImageFilter, ImageOps
+
+    bild = ImageOps.autocontrast(bild, cutoff=0.5)
+    return bild.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80,
+                                               threshold=3))
+
+
+def _verkleinert(bild):
+    from PIL import Image
+
+    kopie = bild.copy()
+    kopie.thumbnail((MAX_KANTE, MAX_KANTE), Image.Resampling.LANCZOS)
+    return kopie
+
+
+def _ausschnitte(bild) -> list:
+    """Zwei überlappende Hälften, geteilt entlang der langen Blattkante.
+
+    Geteilt wird immer quer zur langen Kante: Bei einem hochkanten A4-Blatt
+    entstehen so zwei breite Streifen, und eine Tabellenzeile bleibt in einem
+    Stück. Bei einem querformatigen Foto ist es umgekehrt.
+
+    Ein Blatt, das schon fast quadratisch ist, gewinnt durch das Teilen
+    nichts — dann bleibt die Liste leer und der zweite Durchgang arbeitet mit
+    der Übersicht.
+    """
+    breite, hoehe = bild.size
+    if max(breite, hoehe) < 1.15 * min(breite, hoehe):
+        return []
+
+    if hoehe >= breite:
+        fenster = int(hoehe * AUSSCHNITT_ANTEIL)
+        rahmen = [(0, 0, breite, fenster), (0, hoehe - fenster, breite, hoehe)]
+    else:
+        fenster = int(breite * AUSSCHNITT_ANTEIL)
+        rahmen = [(0, 0, fenster, hoehe), (breite - fenster, 0, breite, hoehe)]
+    return [bild.crop(r) for r in rahmen]
+
+
+def _als_seitenbild(bild) -> Seitenbild:
+    """Aus einem geöffneten Bild die zwei Auflösungen machen.
+
+    Reihenfolge mit Bedacht: Zuerst wird aus dem GROSSEN Original
+    ausgeschnitten und erst der Ausschnitt verkleinert. Umgekehrt — erst
+    verkleinern, dann schneiden — wäre der Ausschnitt nur ein
+    Bildschirmausschnitt und hätte keinen einzigen Bildpunkt mehr als die
+    Übersicht. Genau darin liegt der Gewinn.
+    """
+    from PIL import ImageOps
+
+    bild = ImageOps.exif_transpose(bild)
+    if bild.mode != "RGB":
+        bild = bild.convert("RGB")
+
+    uebersicht = _jpeg(_lesbar_machen(_verkleinert(bild)))
+    teile = [_jpeg(_lesbar_machen(_verkleinert(teil)))
+             for teil in _ausschnitte(bild)]
+    return Seitenbild(uebersicht=uebersicht, ausschnitte=teile)
+
+
+def _seitenbilder(pfad: Path) -> list[Seitenbild]:
+    """PDF-Seiten oder ein Foto als aufbereitete Bilder."""
     if pfad.suffix.lower() != ".pdf":
-        return [_aufbereiten(pfad.read_bytes())]
+        einzeln = _aufbereiten(pfad)
+        return [einzeln] if einzeln else []
 
     import pypdfium2 as pdfium
 
-    bilder: list[bytes] = []
+    bilder: list[Seitenbild] = []
     doc = pdfium.PdfDocument(str(pfad))
     try:
         for i in range(min(len(doc), MAX_SEITEN)):
-            bild = doc[i].render(scale=DPI / 72).to_pil()
-            bild = ImageOps.exif_transpose(bild).convert("RGB")
-            bild.thumbnail((MAX_KANTE, MAX_KANTE), Image.Resampling.LANCZOS)
-            # Autokontrast holt blasse Bleistiftschrift vom vergilbten Papier.
-            # Die 0,5 % an den Rändern schneiden Schatten und Durchschein weg.
-            bild = ImageOps.autocontrast(bild, cutoff=0.5)
-            puffer = io.BytesIO()
-            bild.save(puffer, format="JPEG", quality=JPEG_GUETE, optimize=True)
-            bilder.append(puffer.getvalue())
+            bilder.append(_als_seitenbild(doc[i].render(scale=DPI / 72).to_pil()))
     finally:
         doc.close()
     return bilder
 
 
-def _aufbereiten(daten: bytes) -> bytes:
-    from PIL import Image, ImageOps
+def _aufbereiten(pfad: Path) -> Seitenbild | None:
+    """Ein einzelnes Foto oder Bild aufbereiten. ``None``, wenn unlesbar."""
+    from PIL import Image
 
     try:
-        with Image.open(io.BytesIO(daten)) as bild:
-            bild = ImageOps.exif_transpose(bild).convert("RGB")
-            bild.thumbnail((MAX_KANTE, MAX_KANTE), Image.Resampling.LANCZOS)
-            bild = ImageOps.autocontrast(bild, cutoff=0.5)
-            puffer = io.BytesIO()
-            bild.save(puffer, format="JPEG", quality=JPEG_GUETE, optimize=True)
-            return puffer.getvalue()
+        with Image.open(pfad) as bild:
+            return _als_seitenbild(bild)
     except Exception:
-        return daten
+        # Unlesbares Bild: als Rohdaten weiterreichen. Vielleicht kommt die
+        # Schnittstelle damit zurecht, wo Pillow es nicht tut.
+        try:
+            return Seitenbild(uebersicht=pfad.read_bytes())
+        except OSError:
+            return None
 
 
-def _bildblock(daten: bytes) -> dict:
+def _bildblock(daten: bytes, medientyp: str = "image/jpeg") -> dict:
     return {
         "type": "image",
         "source": {
             "type": "base64",
-            "media_type": "image/jpeg",
+            "media_type": medientyp,
             "data": base64.standard_b64encode(daten).decode(),
         },
     }
@@ -305,6 +435,19 @@ _PRUEFAUFTRAG = (
     "War nichts zu ändern, bleibt 'korrekturen' leer."
 )
 
+#: Erklärt die vergrößerten Ausschnitte des zweiten Durchgangs. Ohne diesen
+#: Satz werden sie für weitere Blätter gehalten und ihre Firmen ein zweites
+#: Mal aufgeführt — aus drei Nachunternehmern wurden sechs.
+_AUSSCHNITT_HINWEIS = (
+    "\n\nZU DEN BILDERN\n"
+    "Das erste Bild ist das ganze Blatt. Die Bilder danach sind vergrößerte "
+    "Ausschnitte DESSELBEN Blattes — obere und untere Hälfte, mit einer "
+    "Überlappung in der Mitte. Sie zeigen dieselbe Handschrift größer und "
+    "sind dafür da, dass du Buchstaben und Zahlen genau vergleichen kannst.\n"
+    "Es sind KEINE weiteren Blätter und keine weiteren Tage. Was auf zwei "
+    "Ausschnitten zu sehen ist, gehört einmal ins Ergebnis, nicht zweimal."
+)
+
 
 def _bekannt_hinweis(bekannte: tuple[str, ...]) -> str:
     """Die Firmen der Baustelle als Hilfe mitgeben.
@@ -352,6 +495,10 @@ async def _frage(client, inhalt: list[dict], schema: dict) -> dict:
     ``asyncio.to_thread``, weil das Anthropic-Paket hier synchron benutzt wird
     und der Webserver währenddessen sonst stillstünde — bei 24 Anfragen wären
     das mehrere Minuten, in denen die App nicht antwortet.
+
+    Vorübergehende Störungen werden wiederholt (siehe ``VERSUCHE``). Ein
+    falscher Schlüssel wird es nicht: Der ist beim dritten Versuch genauso
+    falsch wie beim ersten.
     """
 
     def ruf():
@@ -363,24 +510,30 @@ async def _frage(client, inhalt: list[dict], schema: dict) -> dict:
             messages=[{"role": "user", "content": inhalt}],
         )
 
-    antwort = await asyncio.to_thread(ruf)
-    return _werkzeug_antwort(antwort, schema["name"])
+    antwort = await schnittstelle.mit_wiederholung(
+        ruf, versuche=VERSUCHE, warten=WARTEN_SEKUNDEN)
+    return _werkzeug_antwort(antwort, schema["name"]) if antwort else {}
 
 
-_DATUM = re.compile(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})")
+#: Beides steht in services/schnittstelle, weil auch die Formblatt-Erkennung
+#: und die Besprechungsanalyse es brauchen. Die Namen bleiben hier stehen: Sie
+#: sind die, unter denen pdf_extraction und die Prüfungen sie kennen.
+_vorruebergehend = schnittstelle.vorruebergehend
 
 
 def _als_datum(text: str) -> date | None:
-    treffer = _DATUM.search(str(text or ""))
-    if not treffer:
-        return None
-    tag, monat, jahr = (int(g) for g in treffer.groups())
-    if jahr < 100:
-        jahr += 2000
-    try:
-        return date(jahr, monat, tag)
-    except ValueError:
-        return None
+    """Das Datum aus einer abgeschriebenen Datumsangabe.
+
+    Nutzt die Datumsmuster der Wochenaufteilung, damit hier nicht eine
+    zweite, engere Fassung dessen steht, was dort schon an echten
+    Firmenberichten ausgemessen wurde: "5.1.24", "15-01-2024", "Mo.
+    15.01.2024", aber auch die Formen, in denen die Texterkennung Punkte
+    verliert ("15 01 2024", "15012024").
+    """
+    from app.services.wochenaufteilung import daten_in_text
+
+    gefunden = daten_in_text(str(text or ""))
+    return gefunden[0] if gefunden else None
 
 
 def _zu_befund(seite: int, roh: dict) -> SeitenBefund:
@@ -418,59 +571,31 @@ def _zu_befund(seite: int, roh: dict) -> SeitenBefund:
     )
 
 
-#: Wortfetzen, an denen sich der Grund eines Fehlschlags erkennen lässt, und
-#: was der Anwender stattdessen lesen soll. Die Schnittstelle meldet auf
-#: Englisch und mit Statuscodes; wer im Büro einen Bautagesbericht hochlädt,
-#: kann damit nichts anfangen.
-_FEHLERDEUTUNG = (
-    (("authentication", "401", "invalid x-api-key", "invalid api key"),
-     "Der Anthropic-Schlüssel wird nicht angenommen. Bitte den Wert hinter "
-     "„anthropic_key=“ prüfen — er beginnt mit „sk-ant-“ und darf keine "
-     "Leerzeichen oder Anführungszeichen enthalten."),
-    (("permission", "403"),
-     "Der Anthropic-Schlüssel darf dieses Modell nicht benutzen."),
-    (("credit", "billing", "quota", "insufficient"),
-     "Das Anthropic-Konto hat kein Guthaben mehr."),
-    (("rate_limit", "429", "overloaded", "529"),
-     "Die Anthropic-Schnittstelle ist gerade überlastet oder das Limit ist "
-     "erreicht. In ein paar Minuten noch einmal versuchen."),
-    (("connection", "timeout", "getaddrinfo", "ssl", "network"),
-     "Keine Verbindung zur Anthropic-Schnittstelle. Internetverbindung oder "
-     "Firewall prüfen."),
-)
+#: Die Fehlerdeutung steht in services/schnittstelle — die Formblatt-
+#: Erkennung und die Besprechungsanalyse brauchen dieselbe. Hier bleiben die
+#: Namen, unter denen pdf_extraction und die Prüfungen sie kennen.
+fehlertext = schnittstelle.fehlertext
+_endgueltig = schnittstelle.endgueltig
 
 
-def fehlertext(fehler: Exception) -> str:
-    """Aus einer Ausnahme der Schnittstelle einen brauchbaren Satz machen."""
-    roh = f"{type(fehler).__name__}: {fehler}".lower()
-    for stichworte, klartext in _FEHLERDEUTUNG:
-        if any(wort in roh for wort in stichworte):
-            return klartext
-    return f"Die Texterkennung meldete: {fehler}"
-
-
-def _endgueltig(fehler: Exception) -> bool:
-    """Hat es keinen Sinn, die übrigen Seiten auch noch zu schicken?
-
-    Ein falscher Schlüssel bleibt bei Seite 12 genauso falsch wie bei Seite 1.
-    Ohne diese Prüfung liefen bei einer Woche Bautagebuch 24 aussichtslose
-    Anfragen durch, bevor am Ende "0 Tage erkannt" herauskam.
-    """
-    roh = f"{type(fehler).__name__}: {fehler}".lower()
-    return any(wort in roh for wort in
-               ("authentication", "401", "403", "permission",
-                "credit", "billing", "quota", "invalid x-api-key"))
-
-
-async def _lies_seite(client, nummer: int, bild: bytes,
+async def _lies_seite(client, nummer: int, bild: Seitenbild,
                       bekannte: tuple[str, ...]) -> SeitenBefund:
-    """Eine Seite: abschreiben, dann prüfen."""
+    """Eine Seite: abschreiben, dann mit mehr Auflösung nachprüfen.
+
+    Der Unterschied zum ersten Entwurf steckt im zweiten Durchgang: Er sieht
+    nicht dasselbe Bild noch einmal, sondern zusätzlich die vergrößerten
+    Ausschnitte (siehe ``Seitenbild``). Ein zweiter Blick auf dieselben
+    Bildpunkte findet vor allem das, was schon beim ersten Mal zu sehen war;
+    ein zweiter Blick mit anderthalbfacher Auflösung findet die Schleife, die
+    beim ersten Mal ein "d" war und in Wahrheit "el" heißt.
+    """
     hinweis = _bekannt_hinweis(bekannte)
 
     try:
         erste = await _frage(
             client,
-            [_bildblock(bild), {"type": "text", "text": _GRUNDLAGEN + hinweis}],
+            [_bildblock(bild.uebersicht),
+             {"type": "text", "text": _GRUNDLAGEN + hinweis}],
             _schema(),
         )
     except Exception as fehler:
@@ -481,16 +606,20 @@ async def _lies_seite(client, nummer: int, bild: bytes,
     try:
         import json
 
+        bilder = [_bildblock(bild.uebersicht)]
+        bilder += [_bildblock(teil) for teil in bild.ausschnitte]
+        auftrag = _GRUNDLAGEN + hinweis
+        if bild.ausschnitte:
+            auftrag += _AUSSCHNITT_HINWEIS
+        auftrag += (
+            "\n\n" + _PRUEFAUFTRAG
+            + "\n\nABSCHRIFT DES ERSTEN DURCHGANGS:\n"
+            + json.dumps(erste, ensure_ascii=False, indent=1)
+        )
+
         geprueft = await _frage(
             client,
-            [
-                _bildblock(bild),
-                {"type": "text", "text": (
-                    _GRUNDLAGEN + hinweis + "\n\n" + _PRUEFAUFTRAG
-                    + "\n\nABSCHRIFT DES ERSTEN DURCHGANGS:\n"
-                    + json.dumps(erste, ensure_ascii=False, indent=1)
-                )},
-            ],
+            bilder + [{"type": "text", "text": auftrag}],
             _pruef_schema(),
         )
         if geprueft:
@@ -540,8 +669,16 @@ def zu_tagen(befunde: list[SeitenBefund],
         if befund.fehler or befund.leer:
             continue
 
-        neuer_tag = befund.blattseite != 2 and (
-            befund.datum is not None or aktuell is None
+        # Ein Kopfblatt beginnt einen neuen Tag — auch dann, wenn sein Datum
+        # nicht zu lesen war. Vorher hing das allein am Datum: Ein Blatt,
+        # dessen Kopfzeile verschmiert oder abgeschnitten war, wurde als
+        # Fortsetzung des Vortags behandelt, und die Arbeitskräfte von
+        # Dienstag standen im Bericht von Montag. Ein Tag ohne Datum lässt
+        # sich in der Oberfläche zuordnen; ein Tag, den es gar nicht mehr
+        # gibt, nicht.
+        neuer_tag = befund.blattseite == 1 or (
+            befund.blattseite != 2
+            and (befund.datum is not None or aktuell is None)
         )
         if neuer_tag or aktuell is None or kopf is None or not _passt_zu_blatt(kopf, befund):
             aktuell = Tagesbefund(
@@ -637,6 +774,13 @@ def verfuegbar() -> bool:
 #:
 #: Schlüssel ist Pfad samt Änderungszeit und Größe: Wird dieselbe Datei
 #: verändert erneut hochgeladen, wird sie neu gelesen.
+#:
+#: Die Firmen der Baustelle gehören mit in den Schlüssel. Sie sind die
+#: stärkste Lesehilfe, und die Wochenanalyse kennt sie noch nicht immer: Wer
+#: das Paket vor der Projektwahl hochlädt, ließ die Seiten ohne Lesehilfe
+#: lesen — und die Berichtserzeugung bekam danach aus dem Zwischenspeicher
+#: genau dieses schlechtere Ergebnis zurück, obwohl sie die Firmen inzwischen
+#: kannte.
 _zwischenspeicher: dict[tuple, list[SeitenBefund]] = {}
 
 #: Mehr als das behalten wir nicht — die Befunde sind klein, aber unbegrenzt
@@ -644,20 +788,25 @@ _zwischenspeicher: dict[tuple, list[SeitenBefund]] = {}
 _SPEICHER_GRENZE = 32
 
 
-def _schluessel(pfad: Path) -> tuple:
+def _schluessel(pfad: Path, bekannte: tuple[str, ...] = ()) -> tuple:
+    hilfe = tuple(sorted(firmennamen.normalisiere(b) for b in bekannte))
     try:
         angabe = pfad.stat()
-        return (str(pfad.resolve()), int(angabe.st_mtime), angabe.st_size)
+        return (str(pfad.resolve()), int(angabe.st_mtime), angabe.st_size, hilfe)
     except OSError:
-        return (str(pfad), 0, 0)
+        return (str(pfad), 0, 0, hilfe)
 
 
 def vergiss(pfad: Path | None = None) -> None:
     """Zwischenspeicher leeren — für Tests und nach dem Aufräumen der Ablage."""
     if pfad is None:
         _zwischenspeicher.clear()
-    else:
-        _zwischenspeicher.pop(_schluessel(pfad), None)
+        return
+    # Dieselbe Datei kann unter mehreren Lesehilfen im Speicher stehen; beim
+    # Vergessen sind alle gemeint.
+    stamm = _schluessel(pfad)[:3]
+    for merker in [k for k in _zwischenspeicher if k[:3] == stamm]:
+        _zwischenspeicher.pop(merker, None)
 
 
 async def lies_seiten(pfad: Path,
@@ -666,7 +815,7 @@ async def lies_seiten(pfad: Path,
     if not verfuegbar():
         return []
 
-    merker = _schluessel(pfad)
+    merker = _schluessel(pfad, bekannte)
     gemerkt = _zwischenspeicher.get(merker)
     if gemerkt is not None:
         return gemerkt
@@ -723,17 +872,33 @@ def fehlermeldungen(befunde: list[SeitenBefund]) -> list[str]:
 
 
 def als_firmeneintraege(tag: Tagesbefund) -> list[dict]:
-    """Einen Tagesbefund in das Format bringen, das die Pipeline erwartet."""
+    """Einen Tagesbefund in das Format bringen, das die Pipeline erwartet.
+
+    ``tagesnotiz`` trägt "Sonstiges" und "Besuche" des Blattes mit — Frost,
+    abgehängte Wände, angelieferte Bauheizungen. Das steht auf dem Blatt,
+    wurde hier gelesen und zweimal geprüft, hatte aber bis dahin keinen Weg
+    in den Bericht: Die Pipeline kennt nur Firmeneinträge, und der
+    Haupteintrag kam allein aus dem Textfeld der Oberfläche. Der Inhalt
+    verschwand also lautlos.
+
+    Der Umweg über die Firmeneinträge ist bewusst gewählt: Er lässt die
+    Schnittstelle von ``extract_from_file`` unverändert (eine Liste von
+    Angaben je Firma), und die Pipeline sammelt die Notiz daraus ein — siehe
+    ``pipeline._tagesnotizen``.
+    """
     eintraege = []
     for zeile in tag.firmen:
         if not zeile.firma:
             continue
-        eintraege.append({
+        eintrag = {
             "firma": zeile.firma,
             "ort": zeile.ort,
             "personen": zeile.personen,
             "leistung": zeile.leistung,
             "besonderes": None,
             "quelle": "ocr",
-        })
+        }
+        if tag.haupteintrag:
+            eintrag["tagesnotiz"] = tag.haupteintrag
+        eintraege.append(eintrag)
     return eintraege

@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 backend/.venv/
 backend/storage/
+.pytest_cache/
 
 # Node / Next
 node_modules/
@@ -42,3 +43,8 @@ frontend/out/
 backend/static/
 desktop/HPP-Baumanagement-App/
 desktop/HPP-Baumanagement-App.zip
+# Das uebersetzte Startprogramm. Es entsteht bei jedem Paketbau aus
+# desktop/quelle und gehoert damit genauso zu den Bauergebnissen wie das
+# Paket selbst — ein mitcommittetes Windows-Programm im oeffentlichen Repo
+# wollen wir nicht, und Render braucht es nicht.
+desktop/HPP-Baumanagement.exe

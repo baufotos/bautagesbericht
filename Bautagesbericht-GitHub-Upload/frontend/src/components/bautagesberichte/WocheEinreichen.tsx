@@ -145,8 +145,13 @@ export function WocheEinreichen({
     };
   }, []);
 
+  // Welche Endungen als Bild gelten, muss zu dem passen, was die Auswahl
+  // oben zulässt — sonst bleibt der Hinweis zur Handschrift ausgerechnet bei
+  // einem iPhone-Foto (HEIC) oder einem neueren Android-Foto (WEBP) aus.
   const hatBilder = dateien.some(
-    (d) => d.type.startsWith("image/") || /\.(jpe?g|png|tiff?|bmp|heic)$/i.test(d.name)
+    (d) =>
+      d.type.startsWith("image/") ||
+      /\.(jpe?g|png|tiff?|bmp|gif|webp|heic|heif|avif)$/i.test(d.name)
   );
   const anzahlTage = tageImZeitraum(von, bis);
   const zeitraumFalsch = anzahlTage <= 0;
@@ -175,7 +180,13 @@ export function WocheEinreichen({
     setLaeuft("lesen");
     setFehler(null);
     try {
-      const gelesen = await api.einreichungen.wocheAnalysieren(dateien, von, bis);
+      // Das Projekt gehört mit in die Anfrage: Der Server nimmt dann die
+      // Firmen dieser Baustelle als Lesehilfe. Bei handschriftlichen
+      // Berichten entscheidet das darüber, ob aus einer krakeligen Schleife
+      // „Riedel Bau“ wird oder eine vierte Schreibweise.
+      const gelesen = await api.einreichungen.wocheAnalysieren(
+        dateien, von, bis, projekt.id
+      );
       setAnalyse(gelesen);
       setHinweise(gelesen.hinweise);
       // Seiten ohne erkanntes Datum kommen als eigene Zeile mit leerem Datum

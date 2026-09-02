@@ -158,6 +158,12 @@ function BerichtZeile({
   const inArbeit =
     einreichung.status === "eingereicht" || einreichung.status === "wird_verarbeitet";
   const brauchtBestaetigung = einreichung.status === "wartet_auf_bestaetigung";
+  // Ein fehlgeschlagener Bericht war bisher eine Sackgasse: rote Plakette,
+  // kein Grund, kein Knopf — man konnte nur alles noch einmal hochladen. Der
+  // Grund steht jetzt als Warnung am Bericht, und die Verarbeitung lässt sich
+  // erneut starten; die hochgeladenen Dateien liegen weiterhin auf dem Server.
+  const gescheitert = einreichung.status === "fehlgeschlagen";
+  const kannStarten = brauchtBestaetigung || gescheitert;
 
   async function bestaetigen() {
     setBestaetigt(true);
@@ -244,10 +250,15 @@ function BerichtZeile({
           Bericht auf, das zweite ist eine Bitte ums Gegenlesen. Beides gelb
           und mit Knopf zu zeigen hat dazu geführt, dass bei einer gescannten
           Woche fünf Mal dieselbe Warnung stand, obwohl nichts fehlte. */}
-      {(offen || brauchtBestaetigung) && blockierende.length > 0 && (
+      {/* Auch ohne Warnungen sichtbar, wenn der Bericht gescheitert ist: Bei
+          Berichten aus der Zeit vor dieser Änderung steht der Grund nicht am
+          Datensatz, und ohne diesen Block gäbe es dort keinen Knopf. */}
+      {(offen || kannStarten) && (blockierende.length > 0 || gescheitert) && (
         <div className="border-t border-app-linie bg-app-warn-sanft/50 px-4 py-3">
           <div className="text-[10px] uppercase tracking-[0.1em] text-app-warn">
-            Warnungen der automatischen Auswertung
+            {gescheitert
+              ? "Woran es gescheitert ist"
+              : "Warnungen der automatischen Auswertung"}
           </div>
           <ul className="mt-1.5 flex flex-col gap-1">
             {blockierende.map((warnung, i) => (
@@ -258,20 +269,31 @@ function BerichtZeile({
                 )}
               </li>
             ))}
+            {blockierende.length === 0 && gescheitert && (
+              <li className="text-[12px] text-app-text">
+                Zu diesem Bericht ist kein Grund vermerkt. Ein zweiter Versuch
+                zeigt, ob es an etwas Vorübergehendem lag.
+              </li>
+            )}
           </ul>
-          {brauchtBestaetigung && (
+          {kannStarten && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button onClick={bestaetigen} disabled={bestaetigt}>
                 {bestaetigt ? (
                   <>
-                    <Loader2 size={14} className="animate-spin" /> Wird erstellt…
+                    <Loader2 size={14} className="animate-spin" />{" "}
+                    {gescheitert ? "Läuft erneut…" : "Wird erstellt…"}
                   </>
+                ) : gescheitert ? (
+                  "Erneut versuchen"
                 ) : (
                   "Trotzdem erstellen"
                 )}
               </Button>
               <span className="text-[12px] text-app-text-still">
-                Der Bericht wird mit den erkannten Angaben erzeugt.
+                {gescheitert
+                  ? "Die hochgeladenen Dateien liegen noch da — sie werden erneut ausgelesen."
+                  : "Der Bericht wird mit den erkannten Angaben erzeugt."}
               </span>
             </div>
           )}
