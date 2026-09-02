@@ -42,7 +42,7 @@
 // DATEI ändert. Blieb die Kennung stehen, sah der Anwender nach einem Update
 // weiter die alte Oberfläche — genau so ist beim Einbau der
 // Baubesprechungsprotokolle die neue Navigation nicht angekommen.
-const VERSION = "hpp-260902-172652";
+const VERSION = "hpp-260902-173719";
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 const MEDIEN_CACHE = `${VERSION}-medien`;

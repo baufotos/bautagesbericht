@@ -96,6 +96,36 @@ Bautagesberichte    Berichte der Firmen einreichen. Wetterdaten und die
                     ausfüllen. Die App sagt beim Hochladen, was auf diesem
                     Rechner geht.
 
+Stammdaten          Projekte, Firmen, Empfänger und Bearbeiter. Ein Projekt
+                    braucht nur Name und Adresse — die Adresse wird in
+                    Koordinaten umgerechnet, und daraus holt der
+                    Bautagesbericht die Wetterdaten des Tages.
+
+                    Die Adresse darf aussehen wie auf dem Bau: "DESYUM,
+                    Notkestraße 85, 22607 Hamburg" oder "Baufeld 3,
+                    Überseeallee 10, 20457 Hamburg". Zusätze davor stören
+                    nicht, Abkürzungen wie "Str." auch nicht. Wichtig sind nur
+                    Postleitzahl und Ort — ohne sie ist eine Straße nicht
+                    eindeutig.
+
+                    Auf der Projektkarte steht, wie genau der Standort
+                    getroffen wurde: "hausnummergenau", "straßengenau" oder
+                    "ortsgenau". Für die Wetterdaten genügt jedes davon; die
+                    DWD-Station liegt ohnehin einige Kilometer entfernt.
+                    "Auf der Karte" zeigt den Punkt zum Nachsehen.
+
+                    Steht dort "ohne Standort", hilft "Standort suchen": Die
+                    App zeigt alle Treffer im Klartext, und Sie wählen den
+                    richtigen — die Baustelle kennen Sie, der Kartendienst
+                    nicht. Findet er gar nichts, sagt die App, ob die Adresse
+                    unbekannt ist oder ob der Kartendienst gerade nicht
+                    erreichbar war. Das sind zwei verschiedene Dinge.
+
+                    Für Baustellen ohne Adresse: "von Hand setzen" und die
+                    beiden Zahlen eintragen. In Google Maps oder OpenStreetMap
+                    mit der rechten Maustaste auf die Stelle klicken, dort
+                    stehen sie.
+
 
 WO DIE DATEN LIEGEN
 -------------------
