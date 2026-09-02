@@ -490,15 +490,15 @@ def _werkzeug_antwort(antwort, name: str) -> dict:
 
 
 async def _frage(client, inhalt: list[dict], schema: dict) -> dict:
-    """Eine Anfrage, außerhalb der Ereignisschleife ausgeführt.
+    """Eine Anfrage an die Schnittstelle.
 
-    ``asyncio.to_thread``, weil das Anthropic-Paket hier synchron benutzt wird
-    und der Webserver währenddessen sonst stillstünde — bei 24 Anfragen wären
+    Der Aufruf läuft in einem eigenen Thread und wird bei vorübergehenden
+    Störungen wiederholt — beides steckt in ``services/schnittstelle``, weil
+    die Formblatt-Erkennung und die Besprechungsanalyse dasselbe brauchen.
+
+    Warum der eigene Thread: Das Anthropic-Paket wird hier synchron benutzt,
+    und der Webserver stünde währenddessen sonst still — bei 24 Anfragen wären
     das mehrere Minuten, in denen die App nicht antwortet.
-
-    Vorübergehende Störungen werden wiederholt (siehe ``VERSUCHE``). Ein
-    falscher Schlüssel wird es nicht: Der ist beim dritten Versuch genauso
-    falsch wie beim ersten.
     """
 
     def ruf():
