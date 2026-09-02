@@ -323,9 +323,16 @@ export function BerichtEinreichen({
                 ],
                 [
                   "Wetter holen",
-                  `Zum Standort ${
-                    projekt.adresse || "des Projekts"
-                  } werden die Wetterdaten des Tages abgerufen.`,
+                  // Ohne Koordinaten holt der Server kein Wetter. Das hier zu
+                  // versprechen und den Bericht dann still ohne Wetterzeile
+                  // auszuliefern, waere die unangenehmere Ueberraschung.
+                  projekt.lat !== null && projekt.lon !== null
+                    ? `Zum Standort ${
+                        projekt.adresse || "des Projekts"
+                      } werden die Wetterdaten des Tages abgerufen.`
+                    : "Für dieses Projekt ist kein Standort hinterlegt — der Bericht " +
+                      "entsteht ohne Wetterdaten. In den Stammdaten unter Projekte " +
+                      "lässt sich der Standort nachtragen.",
                 ],
                 [
                   "Word erzeugen",

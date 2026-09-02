@@ -176,7 +176,20 @@ ZERLEGUNGEN = [
     # Nur PLZ+Ort, nur Ort.
     ("20259 Hamburg", "", "", "", "20259", "Hamburg"),
     ("Celle", "", "", "", "", "Celle"),
+    ("Am Hauptbahnhof, Düsseldorf", "", "Am Hauptbahnhof", "", "", "Düsseldorf"),
     ("", "", "", "", "", ""),
+    # Vierstellige PLZ (AT/CH) - auch OHNE Landangabe, denn die Suche ist auf
+    # de/at/ch eingestellt und "8001 Zürich" ist eine vollstaendige Angabe.
+    ("Bahnhofstrasse 1, 8001 Zürich", "", "Bahnhofstrasse", "1", "8001", "Zürich"),
+    ("Bahnhofstrasse 1, 8001 Zürich, Schweiz",
+     "", "Bahnhofstrasse", "1", "8001", "Zürich"),
+    ("Ringstraße 2, 1010 Wien", "", "Ringstraße", "2", "1010", "Wien"),
+    ("8001 Zürich", "", "", "", "8001", "Zürich"),
+    # ... aber eine Zahl im Zusatz ist keine Postleitzahl. Deshalb greift das
+    # kurze Muster nur mit einem Ortsnamen dahinter und nur am Ende.
+    ("Baufeld 2024, Musterweg 5, 45127 Essen",
+     "Baufeld 2024", "Musterweg", "5", "45127", "Essen"),
+    ("Halle 2024", "", "Halle", "2024", "", ""),
 ]
 for eingabe, zusatz, strasse, hnr, plz, ort in ZERLEGUNGEN:
     t = geo.zerlege(eingabe)

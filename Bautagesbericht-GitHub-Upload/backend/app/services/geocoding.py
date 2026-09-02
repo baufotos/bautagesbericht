@@ -131,7 +131,14 @@ LAENDERNAMEN = {
 }
 
 PLZ_DE = re.compile(r"(?<!\d)(\d{5})(?!\d)")
-PLZ_KURZ = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+
+#: Vierstellige PLZ (Oesterreich, Schweiz). Nur am Ende und nur mit einem
+#: Ortsnamen dahinter: Sonst haelt "Baufeld 2024" die Jahreszahl fuer eine
+#: Postleitzahl. Fuenfstellig hat immer Vorrang.
+PLZ_KURZ = re.compile(
+    r"(?<!\d)(\d{4})\s+([A-Za-zÀ-ɏ][\wÀ-ɏ.\-]*"
+    r"(?:[ \-][A-Za-zÀ-ɏ][\wÀ-ɏ.\-]*)*)\s*$"
+)
 
 #: Hausnummer am Ende eines Straßenteils: „29", „29a", „29-31", „29/31",
 #: „85 a". Nicht gierig genug, um eine PLZ zu erwischen — die ist vorher
@@ -226,8 +233,9 @@ def zerlege(adresse: str) -> Adressteile:
     # oder gar keine fünfstellige Zahl dasteht — sonst wäre „Baufeld 3" mit
     # seiner „3" ein Kandidat.
     treffer = PLZ_DE.search(ohne_land)
-    if not treffer and teile.land in ("Österreich", "Schweiz"):
-        treffer = PLZ_KURZ.search(ohne_land)
+    # "8001 Zürich" ohne Landangabe muss ebenso gehen wie mit — die Suche ist
+    # ohnehin auf de/at/ch eingestellt. Fünfstellig hat Vorrang.
+    kurz = None if treffer else PLZ_KURZ.search(ohne_land)
 
     if treffer:
         teile.plz = treffer.group(1)
@@ -235,12 +243,18 @@ def zerlege(adresse: str) -> Adressteile:
         nach = ohne_land[treffer.end() :].strip().strip(",").strip()
         # Nach der PLZ steht der Ort; ein weiteres Komma trennt Zusätze ab.
         teile.ort = nach.split(",")[0].strip()
+    elif kurz:
+        # Das kurze Muster fasst PLZ *und* Ort, damit "2024" in "Baufeld 2024"
+        # nicht als Postleitzahl durchgeht. Der Ort steht deshalb schon in der
+        # zweiten Gruppe und nicht im Rest hinter dem Treffer.
+        teile.plz, teile.ort = kurz.group(1), kurz.group(2).strip()
+        vor = ohne_land[: kurz.start()].strip().strip(",").strip()
     else:
         vor, teile.ort = ohne_land, ""
 
     vorteile = [s.strip() for s in vor.split(",") if s.strip()]
 
-    if not treffer and len(vorteile) >= 2:
+    if not (treffer or kurz) and len(vorteile) >= 2:
         # Keine PLZ, aber mehrere Teile: der letzte ist der Ort.
         teile.ort = vorteile[-1]
         vorteile = vorteile[:-1]
@@ -292,10 +306,6 @@ class Standort:
     #: Gesetzt, wenn der Treffer von der Eingabe abweicht („PLZ 45289 statt
     #: 45127"). Die Oberfläche zeigt das an, statt es zu verschweigen.
     hinweis: str = ""
-
-    @property
-    def genau(self) -> bool:
-        return self.guete == "adresse" and not self.hinweis
 
     def als_dict(self) -> dict:
         return {
