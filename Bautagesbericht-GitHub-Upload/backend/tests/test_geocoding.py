@@ -452,6 +452,42 @@ pruefe(gebremst.aufrufe == 2 and daten is not None,
        f"429 heisst 'gerade zu viel', nicht 'gibt es nicht' - wird wiederholt "
        f"(Aufrufe: {gebremst.aufrufe})")
 
+# ---------------------------------------------------------------------------
+print("\n=== 9. Erst anlegen, dann Auswahl - beide sehen dasselbe ===")
+# ---------------------------------------------------------------------------
+# Das Anlegen fragt nur nach dem besten Treffer, der Knopf "Standort suchen"
+# nach fuenfen. Beide gehen ueber denselben Zwischenspeicher. War der an die
+# Zahl des ERSTEN Aufrufs gebunden, zeigte die Auswahlliste danach genau einen
+# Eintrag - und zwar auf dem Weg, den jeder geht: anlegen, ansehen, nachbessern.
+frisch()
+ANTWORTEN["nominatim|street=Hauptstrasse 1|city=Hamburg"] = [
+    {
+        "lat": str(53.50 + i / 100),
+        "lon": str(9.90 + i / 100),
+        "display_name": f"Hauptstrasse 1, Stadtteil {i}, Hamburg",
+        "address": {"house_number": "1", "road": "Hauptstrasse", "city": "Hamburg"},
+    }
+    for i in range(5)
+]
+
+beim_anlegen = asyncio.run(geo.suche_standort("Hauptstrasse 1, Hamburg", grenze=1))
+pruefe(len(beim_anlegen.treffer) == 1,
+       f"Das Anlegen bekommt einen Treffer ({len(beim_anlegen.treffer)})")
+
+beim_suchen = asyncio.run(geo.suche_standort("Hauptstrasse 1, Hamburg", grenze=5))
+pruefe(len(beim_suchen.treffer) == 5,
+       f"Der Suchknopf danach bekommt trotzdem alle fuenf "
+       f"({len(beim_suchen.treffer)})")
+pruefe(len(ANFRAGEN) == 1,
+       f"...ohne den Dienst ein zweites Mal zu fragen ({len(ANFRAGEN)} Anfrage)")
+
+# Wer die gekuerzte Sicht anfasst, darf den gemerkten Stand nicht beschaedigen.
+beim_anlegen.treffer.clear()
+nochmal = asyncio.run(geo.suche_standort("Hauptstrasse 1, Hamburg", grenze=5))
+pruefe(len(nochmal.treffer) == 5,
+       f"Die gekuerzte Sicht ist eine Kopie - der gemerkte Stand bleibt "
+       f"vollstaendig ({len(nochmal.treffer)})")
+
 print("\n" + "=" * 62)
 print(f"{OK} Pruefungen bestanden"
       + (f", {len(FEHLER)} FEHLGESCHLAGEN" if FEHLER else "."))

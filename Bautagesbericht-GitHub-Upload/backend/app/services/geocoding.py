@@ -49,7 +49,7 @@ import math
 import re
 import time
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import httpx
 
@@ -360,10 +360,24 @@ class Suchergebnis:
 
 _nominatim_sperre = asyncio.Lock()
 _nominatim_zuletzt = 0.0
+#: So viele Treffer werden immer geholt und gemerkt, unabhängig davon, wie
+#: viele der Aufrufer sehen will.
+#:
+#: Warum nicht einfach die gewünschte Zahl: Das Anlegen eines Projekts fragt
+#: nur nach dem besten Treffer, der Knopf „Standort suchen" nach fünf. Wäre
+#: das Gemerkte an der Zahl des ersten Aufrufs hängen geblieben, hätte die
+#: Auswahlliste danach genau einen Eintrag gezeigt — und das ist der Weg, den
+#: jeder geht: anlegen, Ergebnis ansehen, nachbessern wollen.
+TREFFER_MAX = 5
+
 #: Adresse (vereinfacht) → Ergebnis. Ein Projekt wird beim Anlegen, beim
 #: Ändern und beim Prüfen befragt; dreimal dasselbe zu fragen wäre gegenüber
 #: einem kostenlosen Dienst unhöflich.
 _zwischenspeicher: dict[str, Suchergebnis] = {}
+
+#: Obergrenze des Zwischenspeichers. Er lebt so lange wie der Serverprozess;
+#: ohne Deckel wüchse er mit jeder je gesuchten Adresse weiter.
+ZWISCHENSPEICHER_MAX = 500
 
 
 def _kopfzeilen() -> dict[str, str]:
@@ -740,7 +754,17 @@ def _stufen(teile: Adressteile) -> list[tuple[str, object]]:
     return stufen
 
 
-async def suche_standort(adresse: str, *, grenze: int = 5) -> Suchergebnis:
+def _gekuerzt(ergebnis: Suchergebnis, grenze: int) -> Suchergebnis:
+    """Eine Sicht mit höchstens ``grenze`` Treffern.
+
+    Als Kopie, damit ein Aufrufer nicht den gemerkten Stand beschneidet.
+    """
+    if len(ergebnis.treffer) <= grenze:
+        return ergebnis
+    return replace(ergebnis, treffer=ergebnis.treffer[:grenze])
+
+
+async def suche_standort(adresse: str, *, grenze: int = TREFFER_MAX) -> Suchergebnis:
     """Sucht Koordinaten zu einer Adresse — von genau nach grob.
 
     Bricht ab, sobald eine Stufe die für diese Eingabe bestmögliche Güte ohne
@@ -754,7 +778,7 @@ async def suche_standort(adresse: str, *, grenze: int = 5) -> Suchergebnis:
     schluessel = _vereinfache(teile.freitext)
     gemerkt = _zwischenspeicher.get(schluessel)
     if gemerkt is not None:
-        return gemerkt
+        return _gekuerzt(gemerkt, grenze)
 
     ergebnis = Suchergebnis(teile=teile)
     ziel = GUETE_RANG[_ziel_guete(teile)]
@@ -763,6 +787,7 @@ async def suche_standort(adresse: str, *, grenze: int = 5) -> Suchergebnis:
 
     async with httpx.AsyncClient(timeout=ZEITLIMIT, follow_redirects=True) as client:
         for beschreibung, auftrag in _stufen(teile):
+
             if time.monotonic() > schluss:
                 ergebnis.versuche.append(
                     "Abbruch nach "
@@ -771,17 +796,19 @@ async def suche_standort(adresse: str, *, grenze: int = 5) -> Suchergebnis:
                 break
             if isinstance(auftrag, tuple) and auftrag[0] == "photon":
                 gefunden, geantwortet = await _photon(
-                    client, teile, str(auftrag[1]), grenze
+                    client, teile, str(auftrag[1]), TREFFER_MAX
                 )
             elif isinstance(auftrag, tuple) and auftrag[0] == "open-meteo":
-                gefunden, geantwortet = await _open_meteo(client, teile, grenze)
+                gefunden, geantwortet = await _open_meteo(
+                    client, teile, TREFFER_MAX
+                )
             else:
                 # Leere Felder weglassen — Nominatim liefert sonst nichts.
                 sauber = {
                     k: v for k, v in dict(auftrag).items() if str(v or "").strip()
                 }
                 gefunden, geantwortet = (
-                    await _nominatim(client, teile, sauber, grenze)
+                    await _nominatim(client, teile, sauber, TREFFER_MAX)
                     if sauber
                     else ([], True)
                 )
@@ -812,12 +839,15 @@ async def suche_standort(adresse: str, *, grenze: int = 5) -> Suchergebnis:
     ergebnis.treffer.sort(
         key=lambda s: (-GUETE_RANG.get(s.guete, 0), bool(s.hinweis))
     )
-    del ergebnis.treffer[grenze:]
+    del ergebnis.treffer[TREFFER_MAX:]
     # Eine Störung nicht merken: Sonst bliebe der Standort für die ganze
     # Laufzeit des Servers leer, obwohl das Netz längst wieder da ist.
     if ergebnis.dienst_erreichbar:
+        if len(_zwischenspeicher) >= ZWISCHENSPEICHER_MAX:
+            # Der älteste Eintrag geht; Python behält die Einfügereihenfolge.
+            del _zwischenspeicher[next(iter(_zwischenspeicher))]
         _zwischenspeicher[schluessel] = ergebnis
-    return ergebnis
+    return _gekuerzt(ergebnis, grenze)
 
 
 def leere_zwischenspeicher() -> None:
