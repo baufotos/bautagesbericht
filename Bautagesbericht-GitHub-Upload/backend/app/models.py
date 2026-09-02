@@ -42,6 +42,15 @@ class Projekt(Base):
     # des Projekts, keine Angabe je Protokoll — sie ändern sich nicht.
     projekt_nummer = Column(String, nullable=False, default="")
     bauherr = Column(String, nullable=False, default="")
+    # Woher lat/lon kommen und wie genau sie sind — "adresse" (hausnummer-
+    # genau), "strasse", "ort" oder "manuell". Steht mit in der Datenbank,
+    # damit die Projektkarte sagen kann, WAS getroffen wurde. Vorher gab es nur
+    # "Wetter aktiv" oder "ohne Standort", und ein ortsgenauer Treffer war von
+    # einem hausnummergenauen nicht zu unterscheiden.
+    standort_guete = Column(String, nullable=False, default="")
+    # Was der Geocoder gefunden hat, im Klartext zum Gegenlesen:
+    # "85, Notkestraße, Bahrenfeld, Altona, Hamburg, 22607".
+    standort_label = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
 
     einreichungen = relationship("Einreichung", back_populates="projekt")

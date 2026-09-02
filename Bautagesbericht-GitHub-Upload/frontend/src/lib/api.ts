@@ -47,6 +47,7 @@ import type {
   Protokoll,
   ProtokollAnlegen,
   ProtokollListItem,
+  StandortSucheAntwort,
   ThemaUpdate,
   WochenAnalyse,
   WochenErgebnis,
@@ -187,6 +188,9 @@ export const api = {
       adresse: string;
       teams_webhook_url?: string;
       foto_zielpfad?: string;
+      /** Aus der Suche gewählt oder von Hand — verhindert das Nachschlagen. */
+      lat?: number | null;
+      lon?: number | null;
     }) => fetchAPI<Projekt>("/projekte", json("POST", data)),
     update: (
       id: number,
@@ -195,8 +199,22 @@ export const api = {
         adresse?: string;
         teams_webhook_url?: string;
         foto_zielpfad?: string;
+        lat?: number | null;
+        lon?: number | null;
+        /** Adresse erneut nachschlagen, ohne sie zu ändern. */
+        standort_neu_suchen?: boolean;
+        /** Standort löschen — „lat: null“ wäre im PATCH nicht unterscheidbar. */
+        standort_entfernen?: boolean;
       }
     ) => fetchAPI<Projekt>(`/projekte/${id}`, json("PATCH", data)),
+    /**
+     * Koordinaten zu einer Adresse suchen — liefert mehrere Kandidaten zur
+     * Auswahl statt still den ersten zu nehmen.
+     */
+    standortSuche: (adresse: string) =>
+      fetchAPI<StandortSucheAntwort>(
+        `/projekte/standort-suche?adresse=${encodeURIComponent(adresse)}`
+      ),
     delete: (id: number, force = false) =>
       fetchAPI<void>(`/projekte/${id}${force ? "?force=true" : ""}`, {
         method: "DELETE",

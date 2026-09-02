@@ -11,7 +11,42 @@ export interface Projekt {
    * Leer = das Abholskript im Büro bildet den Pfad nach seiner Standardregel.
    */
   foto_zielpfad: string;
+  /**
+   * Wie genau der Standort ist: "adresse" (hausnummergenau), "strasse",
+   * "ort", "manuell" (von Hand gesetzt) oder "" bei Projekten von vor der
+   * Umstellung. Die Karte sagt damit, WAS getroffen wurde — vorher gab es nur
+   * „Wetter aktiv“ oder „ohne Standort“.
+   */
+  standort_guete: string;
+  /** Klartext des Treffers zum Gegenlesen, z. B. „85, Notkestraße, …“. */
+  standort_label: string;
   erstellt_am: string;
+}
+
+/** Ein Kandidat der Standortsuche. */
+export interface StandortTreffer {
+  lat: number;
+  lon: number;
+  label: string;
+  /** "adresse" | "strasse" | "ort" */
+  guete: string;
+  /** "nominatim" | "photon" | "open-meteo" */
+  quelle: string;
+  /** Gesetzt, wenn der Treffer von der Eingabe abweicht. */
+  hinweis: string;
+}
+
+export interface StandortSucheAntwort {
+  adresse: string;
+  treffer: StandortTreffer[];
+  /**
+   * ``false`` heißt „konnte nicht suchen“ und nicht „nicht gefunden“. Der
+   * Unterschied entscheidet, was der Nutzer als Nächstes tun soll.
+   */
+  dienst_erreichbar: boolean;
+  /** Wie die Eingabe zerlegt wurde — zeigt sofort ein falsch gelesenes Feld. */
+  erkannt: Record<string, string>;
+  versuche: string[];
 }
 
 export interface Empfaenger {

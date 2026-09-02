@@ -12,6 +12,11 @@ class ProjektCreate(BaseModel):
     #: "L:\\Bauleitung-Hamburg\\K30159 Kita Nord\\01 FOTOS".
     #: Leer = der abholende Rechner bildet den Pfad nach seiner Standardregel.
     foto_zielpfad: str = ""
+    #: Koordinaten von Hand oder aus einem ausgewaehlten Suchtreffer. Sind sie
+    #: gesetzt, wird die Adresse NICHT nachgeschlagen: Der Mensch hat schon
+    #: entschieden, und ein fremder Dienst darf das nicht ueberstimmen.
+    lat: float | None = None
+    lon: float | None = None
 
 
 class ProjektUpdate(BaseModel):
@@ -21,6 +26,18 @@ class ProjektUpdate(BaseModel):
     adresse: str | None = None
     teams_webhook_url: str | None = None
     foto_zielpfad: str | None = None
+    #: Standort von Hand setzen, siehe ProjektCreate.
+    lat: float | None = None
+    lon: float | None = None
+    #: Adresse erneut nachschlagen, ohne sie zu aendern - fuer den Knopf
+    #: "Standort neu suchen" auf der Projektkarte. Vorher gab es dafuer keinen
+    #: Weg: Wer eine richtige Adresse eingetippt hatte und "ohne Standort"
+    #: sah, konnte nichts weiter tun.
+    standort_neu_suchen: bool = False
+    #: Standort loeschen. Braucht ein eigenes Feld, weil "lat": null in einem
+    #: PATCH nicht von "lat nicht mitgeschickt" zu unterscheiden ist - und ein
+    #: von Hand falsch gesetzter Punkt muss wieder wegkoennen.
+    standort_entfernen: bool = False
 
 
 class ProjektResponse(BaseModel):
@@ -31,9 +48,45 @@ class ProjektResponse(BaseModel):
     lon: float | None
     teams_webhook_url: str = ""
     foto_zielpfad: str = ""
+    #: "adresse" | "strasse" | "ort" | "manuell" | "" (vor der Umstellung).
+    standort_guete: str = ""
+    standort_label: str = ""
     erstellt_am: datetime
 
     model_config = {"from_attributes": True}
+
+
+class StandortTreffer(BaseModel):
+    """Ein Kandidat der Standortsuche, zur Auswahl durch den Menschen."""
+
+    lat: float
+    lon: float
+    #: Klartext des Treffers, zum Gegenlesen.
+    label: str
+    #: "adresse" | "strasse" | "ort"
+    guete: str
+    #: "nominatim" | "photon" | "open-meteo"
+    quelle: str
+    #: Gesetzt, wenn der Treffer von der Eingabe abweicht.
+    hinweis: str = ""
+
+
+class StandortSucheAntwort(BaseModel):
+    """Was die Suche zu einer Adresse gefunden hat.
+
+    ``dienst_erreichbar=False`` heisst "konnte nicht suchen" und nicht "nicht
+    gefunden". Der Oberflaeche sahen beide Faelle bisher gleich aus, obwohl
+    sie den Nutzer zu zwei verschiedenen Dingen veranlassen muessen.
+    """
+
+    adresse: str
+    treffer: list[StandortTreffer] = []
+    dienst_erreichbar: bool = True
+    #: Wie die Eingabe verstanden wurde. Zeigt sofort, wenn etwa der Ort im
+    #: Feld "Strasse" gelandet ist.
+    erkannt: dict[str, str] = {}
+    #: Welche Suchstufen gelaufen sind, fuer den Aufklapper "Details".
+    versuche: list[str] = []
 
 
 class EmpfaengerCreate(BaseModel):

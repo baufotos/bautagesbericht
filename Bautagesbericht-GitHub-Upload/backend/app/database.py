@@ -83,6 +83,12 @@ NACHTRAEGLICHE_SPALTEN: dict[str, dict[str, str]] = {
         # Kopfdaten des Besprechungsprotokoll-Deckblatts.
         "projekt_nummer": "VARCHAR NOT NULL DEFAULT ''",
         "bauherr": "VARCHAR NOT NULL DEFAULT ''",
+        # Wie genau der hinterlegte Standort ist und was gefunden wurde
+        # (siehe Kommentar am Modell). Leer bei Projekten, die vor der
+        # Umstellung angelegt wurden — die Karte zeigt dann nur die
+        # Koordinaten, wie bisher.
+        "standort_guete": "VARCHAR NOT NULL DEFAULT ''",
+        "standort_label": "VARCHAR NOT NULL DEFAULT ''",
     },
     "bearbeiter": {
         # Kopfzeile des Besprechungsprotokolls: "Ze: kbl  T - 22".

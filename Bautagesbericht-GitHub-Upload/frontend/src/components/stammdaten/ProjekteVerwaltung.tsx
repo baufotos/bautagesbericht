@@ -9,6 +9,11 @@
  *
  * Die Adresse ist nicht Zierde: Aus ihr werden beim Anlegen die Koordinaten
  * bestimmt, mit denen der Bautagesbericht die Wetterdaten des Tages holt.
+ * Weil eine Baustellenadresse selten sauber ist ("DESYUM, Notkestraße 85"),
+ * ist das Nachschlagen mehrstufig und darf misslingen — deshalb ist der
+ * Standort hier nicht nur Anzeige, sondern über StandortFeld auch
+ * nachträglich such-, wähl- und eintippbar. Vorher stand bei einer völlig
+ * richtigen Adresse „ohne Standort“, und es gab keinen Weg, das zu ändern.
  *
  * Der Fotoordner ebenso wenig: Er sagt dem Abholskript im Büro, in welchen
  * Ordner auf dem Netzlaufwerk die vom Handy hochgeladenen Baufotos gehören.
@@ -28,17 +33,13 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { StandortFeld } from "./StandortFeld";
+
 import { api } from "@/lib/api";
 import { loeschenMitRueckfrage } from "@/lib/loeschen";
 import { formatDatumIso } from "@/lib/formate";
 import type { Projekt } from "@/lib/types";
-import {
-  Karte,
-  KarteInhalt,
-  KarteKopf,
-  LeerHinweis,
-  Plakette,
-} from "@/components/dashboard";
+import { Karte, KarteInhalt, KarteKopf, LeerHinweis } from "@/components/dashboard";
 import { Button, Field, Input, Meldung } from "@/components/ui";
 
 export function ProjekteVerwaltung({
@@ -59,13 +60,33 @@ export function ProjekteVerwaltung({
   // beim Anlegen schon feststehen, deshalb ist er auch nachträglich änderbar.
   const [bearbeitet, setBearbeitet] = useState<number | null>(null);
   const [pfadEntwurf, setPfadEntwurf] = useState("");
+  // Welche Karte gerade ihre Adresse bearbeitet.
+  const [adresseBearbeitet, setAdresseBearbeitet] = useState<number | null>(null);
+  const [adresseEntwurf, setAdresseEntwurf] = useState("");
+  // Standort, den der Nutzer im Anlegen-Formular schon ausgewählt hat. Ist er
+  // gesetzt, schlägt der Server die Adresse nicht mehr nach.
+  const [neuLat, setNeuLat] = useState<number | null>(null);
+  const [neuLon, setNeuLon] = useState<number | null>(null);
 
   function zuruecksetzen() {
     setName("");
     setAdresse("");
     setWebhook("");
     setZielpfad("");
+    setNeuLat(null);
+    setNeuLon(null);
     setFormularOffen(false);
+  }
+
+  async function adresseSpeichern(projekt: Projekt) {
+    // Der Server schlägt bei geänderter Adresse selbst nach; steht dieselbe
+    // Adresse noch einmal drin, wird das Nachschlagen ausdrücklich verlangt
+    // — genau der Fall „war richtig, wurde trotzdem nicht gefunden“.
+    await projektAendern(projekt, {
+      adresse: adresseEntwurf.trim(),
+      standort_neu_suchen: true,
+    });
+    setAdresseBearbeitet(null);
   }
 
   async function pfadSpeichern(projekt: Projekt) {
@@ -74,6 +95,23 @@ export function ProjekteVerwaltung({
     try {
       await api.projekte.update(projekt.id, { foto_zielpfad: pfadEntwurf.trim() });
       setBearbeitet(null);
+      onAendern();
+    } catch (err) {
+      setFehler(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
+    } finally {
+      setSpeichert(false);
+    }
+  }
+
+  /** Ein Feld der Projektkarte ändern und die Liste neu laden. */
+  async function projektAendern(
+    projekt: Projekt,
+    daten: Parameters<typeof api.projekte.update>[1]
+  ) {
+    setSpeichert(true);
+    setFehler(null);
+    try {
+      await api.projekte.update(projekt.id, daten);
       onAendern();
     } catch (err) {
       setFehler(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
@@ -92,6 +130,8 @@ export function ProjekteVerwaltung({
         adresse: adresse.trim(),
         teams_webhook_url: webhook.trim(),
         foto_zielpfad: zielpfad.trim(),
+        lat: neuLat,
+        lon: neuLon,
       });
       zuruecksetzen();
       onAendern();
@@ -147,25 +187,84 @@ export function ProjekteVerwaltung({
                   : undefined
               }
               icon={MapPin}
-              aktion={
-                projekt.lat && projekt.lon ? (
-                  <Plakette art="ok">Wetter aktiv</Plakette>
-                ) : (
-                  <Plakette art="warn">ohne Standort</Plakette>
-                )
-              }
             />
             <KarteInhalt className="flex flex-col gap-2">
-              <div className="text-[12.5px] text-app-text">
-                {projekt.adresse || (
-                  <span className="text-app-text-leise">keine Adresse hinterlegt</span>
-                )}
-              </div>
-              {projekt.lat && projekt.lon && (
-                <div className="font-mono text-[11px] text-app-text-leise">
-                  {projekt.lat.toFixed(4)}, {projekt.lon.toFixed(4)}
+              {/* Adresse: anklickbar wie der Fotoordner. Sie ist die Grundlage
+                  des Standorts, also muss sie korrigierbar sein, ohne das
+                  Projekt neu anzulegen. */}
+              {adresseBearbeitet === projekt.id ? (
+                <div className="flex flex-col gap-2 rounded-md bg-app-flaeche-still p-2">
+                  <label className="text-[11.5px] text-app-text-still">
+                    Adresse des Bauvorhabens
+                  </label>
+                  <Input
+                    value={adresseEntwurf}
+                    onChange={(e) => setAdresseEntwurf(e.target.value)}
+                    placeholder="z. B. Notkestraße 85, 22607 Hamburg"
+                    onKeyDown={(e) => e.key === "Enter" && adresseSpeichern(projekt)}
+                    autoFocus
+                  />
+                  <p className="text-[11.5px] text-app-text-leise">
+                    Mit Postleitzahl und Ort — daran findet der Kartendienst die
+                    Stelle. Zusätze wie „Baufeld 3“ davor stören nicht.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      icon={Check}
+                      onClick={() => adresseSpeichern(projekt)}
+                      disabled={speichert}
+                    >
+                      Speichern und Standort suchen
+                    </Button>
+                    <Button
+                      variante="still"
+                      icon={X}
+                      onClick={() => setAdresseBearbeitet(null)}
+                    >
+                      Abbrechen
+                    </Button>
+                  </div>
                 </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdresseEntwurf(projekt.adresse || "");
+                    setAdresseBearbeitet(projekt.id);
+                  }}
+                  className="group flex cursor-pointer items-start gap-1.5 text-left text-[12.5px] text-app-text transition-colors hover:text-app-akzent"
+                  title="Adresse ändern"
+                >
+                  <span className="min-w-0 flex-1">
+                    {projekt.adresse || (
+                      <span className="text-app-text-leise">
+                        keine Adresse hinterlegt
+                      </span>
+                    )}
+                  </span>
+                  <Pencil
+                    size={12}
+                    className="mt-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70"
+                  />
+                </button>
               )}
+
+              <StandortFeld
+                adresse={projekt.adresse}
+                lat={projekt.lat}
+                lon={projekt.lon}
+                guete={projekt.standort_guete}
+                label={projekt.standort_label}
+                onWaehlen={(lat, lon) =>
+                  projektAendern(
+                    projekt,
+                    lat === null || lon === null
+                      ? { standort_entfernen: true }
+                      : { lat, lon }
+                  )
+                }
+              />
+
               {projekt.teams_webhook_url && (
                 <div className="inline-flex items-center gap-1.5 text-[12px] text-app-text-still">
                   <MessageSquare size={13} /> Teams-Kanal hinterlegt
@@ -253,16 +352,35 @@ export function ProjekteVerwaltung({
               </Field>
               <Field
                 label="Adresse des Bauvorhabens"
-                hinweis="Wird für den automatischen Wetterdaten-Abruf in Koordinaten umgerechnet."
+                hinweis="Mit Postleitzahl und Ort. Wird beim Speichern in Koordinaten umgerechnet — die braucht der Bautagesbericht für die Wetterdaten."
               >
                 <Input
                   value={adresse}
-                  onChange={(e) => setAdresse(e.target.value)}
+                  onChange={(e) => {
+                    setAdresse(e.target.value);
+                    // Eine bereits getroffene Wahl passt nicht mehr zur neuen
+                    // Adresse — sonst entstünde das Projekt mit dem Standort
+                    // der alten.
+                    setNeuLat(null);
+                    setNeuLon(null);
+                  }}
                   placeholder="z. B. Kaistraße 5, 40221 Düsseldorf"
                   onKeyDown={(e) => e.key === "Enter" && anlegen()}
                 />
               </Field>
             </div>
+            {/* Vor dem Speichern nachsehen, ob die Adresse gefunden wird.
+                Erspart den Weg „anlegen, ohne Standort sehen, nachbessern“. */}
+            <StandortFeld
+              adresse={adresse}
+              lat={neuLat}
+              lon={neuLon}
+              guete={neuLat === null ? "" : "manuell"}
+              onWaehlen={(lat, lon) => {
+                setNeuLat(lat);
+                setNeuLon(lon);
+              }}
+            />
             <Field
               label="Teams-Kanal-Webhook (optional)"
               hinweis="Meldungen zu Mängeln und Baufotos gehen hierhin, wenn bei der Firma kein eigener Kanal hinterlegt ist."

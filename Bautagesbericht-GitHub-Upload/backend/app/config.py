@@ -41,7 +41,14 @@ class Settings(BaseSettings):
     max_files_per_submission: int = 20
 
     anthropic_api_key: str = ""
-    nominatim_user_agent: str = "bautagesbericht-hpp/1.0"
+    # Kennung fuer die Kartendienste (Nominatim, Photon). Nominatim sperrt
+    # nichtssagende Kennungen - eine Sperre saehe in der App genauso aus wie
+    # eine nicht gefundene Adresse, deshalb steht hier etwas Erkennbares.
+    # Bewusst ohne persoenliche Daten: Der Dienst braucht das Buero, nicht die
+    # Mailadresse eines Mitarbeiters.
+    nominatim_user_agent: str = (
+        "HPP-Baumanagement/1.0 (+https://bautagesbericht.onrender.com)"
+    )
 
     # ── Wo hochgeladene Fotos liegen ──
     #

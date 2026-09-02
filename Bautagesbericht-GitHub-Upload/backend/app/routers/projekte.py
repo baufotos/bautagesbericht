@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Projekt
-from app.schemas import ProjektCreate, ProjektResponse, ProjektUpdate
+from app.schemas import (
+    ProjektCreate,
+    ProjektResponse,
+    ProjektUpdate,
+    StandortSucheAntwort,
+)
 from app.services.cleanup import (
     count_besprechungsprotokolle_for,
     count_einreichungen_for,
@@ -16,7 +21,7 @@ from app.services.cleanup import (
     delete_projektberichte_for,
     delete_maengel_for,
 )
-from app.services.geocoding import geocode_address
+from app.services.geocoding import suche_standort
 
 router = APIRouter(prefix="/projekte", tags=["projekte"])
 
@@ -26,14 +31,64 @@ def list_projekte(db: Session = Depends(get_db)):
     return db.query(Projekt).order_by(Projekt.erstellt_am.desc()).all()
 
 
+# Muss vor "/{projekt_id}" stehen, sonst hielte FastAPI "standort-suche" fuer
+# eine Projekt-ID.
+@router.get("/standort-suche", response_model=StandortSucheAntwort)
+async def standort_suche(adresse: str):
+    """Sucht Koordinaten zu einer Adresse und gibt ALLE Kandidaten zurueck.
+
+    Warum die Auswahl beim Menschen bleibt: Eine Baustellenadresse ist oft
+    mehrdeutig ("Baufeld 3"), und ein Kartendienst raet dann. Wer die Baustelle
+    kennt, erkennt den richtigen Treffer auf einen Blick - der Server nicht.
+    Deshalb liefert dieser Endpunkt eine Liste mit Klartext-Beschriftung und
+    Guete, und die Oberflaeche laesst waehlen.
+    """
+    ergebnis = await suche_standort(adresse, grenze=5)
+    teile = ergebnis.teile
+    return StandortSucheAntwort(
+        adresse=adresse,
+        treffer=[t.als_dict() for t in ergebnis.treffer],
+        dienst_erreichbar=ergebnis.dienst_erreichbar,
+        erkannt={
+            k: v
+            for k, v in (
+                ("zusatz", teile.zusatz),
+                ("strasse", teile.strasse),
+                ("hausnummer", teile.hausnummer),
+                ("plz", teile.plz),
+                ("ort", teile.ort),
+                ("land", teile.land),
+            )
+            if v
+        },
+        versuche=ergebnis.versuche,
+    )
+
+
+async def _standort_bestimmen(adresse: str) -> tuple[float | None, float | None, str, str]:
+    """Koordinaten samt Guete und Klartext zu einer Adresse."""
+    ergebnis = await suche_standort(adresse, grenze=1)
+    bester = ergebnis.bester
+    if not bester:
+        return None, None, "", ""
+    return bester.lat, bester.lon, bester.guete, bester.label
+
+
 @router.post("", response_model=ProjektResponse, status_code=201)
 async def create_projekt(data: ProjektCreate, db: Session = Depends(get_db)):
-    lat, lon = await geocode_address(data.adresse)
+    if data.lat is not None and data.lon is not None:
+        # Aus der Suche ausgewaehlt oder von Hand eingetippt: uebernehmen und
+        # nicht nachschlagen.
+        lat, lon, guete, label = data.lat, data.lon, "manuell", ""
+    else:
+        lat, lon, guete, label = await _standort_bestimmen(data.adresse)
     projekt = Projekt(
         name=data.name,
         adresse=data.adresse,
         lat=lat,
         lon=lon,
+        standort_guete=guete,
+        standort_label=label,
         teams_webhook_url=data.teams_webhook_url.strip(),
         foto_zielpfad=data.foto_zielpfad.strip(),
     )
@@ -62,12 +117,33 @@ async def update_projekt(
         projekt.teams_webhook_url = data.teams_webhook_url.strip()
     if data.foto_zielpfad is not None:
         projekt.foto_zielpfad = data.foto_zielpfad.strip()
-    if data.adresse is not None and data.adresse.strip() != (projekt.adresse or ""):
-        # Adresse geaendert: Koordinaten neu bestimmen, sonst zeigt die
-        # Wetterabfrage des Bautagesberichts auf den alten Ort.
+    adresse_neu = (
+        data.adresse is not None
+        and data.adresse.strip() != (projekt.adresse or "")
+    )
+    if data.adresse is not None:
         projekt.adresse = data.adresse.strip()
-        lat, lon = await geocode_address(projekt.adresse)
-        projekt.lat, projekt.lon = lat, lon
+
+    if data.standort_entfernen:
+        projekt.lat, projekt.lon = None, None
+        projekt.standort_guete, projekt.standort_label = "", ""
+    elif data.lat is not None and data.lon is not None:
+        # Von Hand gesetzt oder aus der Suche gewaehlt. Hat Vorrang vor allem
+        # anderen, auch vor einer gleichzeitig geaenderten Adresse: Der Mensch
+        # sieht die Baustelle, der Kartendienst nicht.
+        projekt.lat, projekt.lon = data.lat, data.lon
+        projekt.standort_guete, projekt.standort_label = "manuell", ""
+    elif adresse_neu or data.standort_neu_suchen:
+        # Adresse geaendert: Koordinaten neu bestimmen, sonst zeigt die
+        # Wetterabfrage des Bautagesberichts auf den alten Ort. Und auf
+        # ausdruecklichen Wunsch auch ohne Adressaenderung - eine Suche, die
+        # beim Anlegen an einer Stoerung scheiterte, muss wiederholbar sein.
+        lat, lon, guete, label = await _standort_bestimmen(projekt.adresse)
+        if lat is not None or not projekt.lat or adresse_neu:
+            # Bei einer erfolglosen Wiederholung den bisherigen Standort
+            # behalten, statt einen brauchbaren gegen "leer" zu tauschen.
+            projekt.lat, projekt.lon = lat, lon
+            projekt.standort_guete, projekt.standort_label = guete, label
 
     db.commit()
     db.refresh(projekt)
