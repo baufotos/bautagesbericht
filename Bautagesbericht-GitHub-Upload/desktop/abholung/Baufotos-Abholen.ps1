@@ -149,12 +149,29 @@ if ($Token -ne "") { $Kopfzeilen["X-Abhol-Token"] = $Token }
 function Ruf-Server {
     param([string]$Pfad, [string]$Methode = "Get", $Rumpf = $null)
     $adresse = "$Server/api$Pfad"
-    if ($Rumpf -ne $null) {
-        return Invoke-RestMethod -Uri $adresse -Method $Methode -Headers $Kopfzeilen `
-            -Body ($Rumpf | ConvertTo-Json -Compress) -ContentType "application/json" `
-            -TimeoutSec 120
+
+    # Warum nicht Invoke-RestMethod: Windows PowerShell 5.1 liest eine Antwort
+    # als ISO-8859-1, wenn im Content-Type kein charset steht - und FastAPI
+    # schickt nur "application/json". Aus "Gaensemarkt Hoefe" (mit Umlauten)
+    # wurde dadurch "GÃ¤nsemarkt HÃ¶fe", und die Abholung legte einen neuen
+    # Ordner mit kaputten Umlauten an, statt die Fotos in den vorhandenen
+    # Projektordner zu legen. Deshalb die Rohdaten holen und selbst als UTF-8
+    # lesen - JSON ist per Festlegung immer UTF-8.
+    if ($null -ne $Rumpf) {
+        $inhalt = [System.Text.Encoding]::UTF8.GetBytes(($Rumpf | ConvertTo-Json -Compress))
+        $antwort = Invoke-WebRequest -Uri $adresse -Method $Methode -Headers $Kopfzeilen `
+            -Body $inhalt -ContentType "application/json; charset=utf-8" `
+            -TimeoutSec 120 -UseBasicParsing
+    } else {
+        $antwort = Invoke-WebRequest -Uri $adresse -Method $Methode -Headers $Kopfzeilen `
+            -TimeoutSec 120 -UseBasicParsing
     }
-    return Invoke-RestMethod -Uri $adresse -Method $Methode -Headers $Kopfzeilen -TimeoutSec 120
+
+    $roh = $antwort.RawContentStream.ToArray()
+    if ($roh.Length -eq 0) { return $null }
+    $text = [System.Text.Encoding]::UTF8.GetString($roh)
+    if ($text.Trim() -eq "") { return $null }
+    return ConvertFrom-Json $text
 }
 
 # ---------------------------------------------------------------------------
