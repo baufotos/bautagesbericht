@@ -70,3 +70,9 @@ services:
       # gesetzt, muss derselbe Wert in deren einstellungen.txt stehen.
       - key: BTB_ABHOL_TOKEN
         sync: false
+      # Passwort für die Weboberfläche selbst (siehe ANLEITUNG-ONLINE-STELLEN.md,
+      # Abschnitt "Passwortschutz"). Wird NUR bei Render gesetzt, nie lokal
+      # oder im Windows-Paket. Ohne diesen Wert ist die Seite für jeden mit
+      # dem Link offen, auch zum Hochladen von Baufotos.
+      - key: BTB_SEITEN_PASSWORT
+        sync: false

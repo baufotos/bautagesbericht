@@ -91,12 +91,27 @@ class Settings(BaseSettings):
     r2_key_id: str = ""        # Access Key ID
     r2_secret: str = ""        # Secret Access Key
 
+    # ── Passwortschutz der Weboberfläche ──
+    #
+    # Ohne dieses Wort ist die App im Internet für jeden erreichbar, der den
+    # Render-Link kennt — auch zum Hochladen von Baufotos. Ist hier ein Wort
+    # gesetzt, verlangt die Oberfläche vor dem ersten Anzeigen eine Anmeldung
+    # und jeder API-Aufruf den Kopf ``X-Seiten-Passwort`` mit genau diesem
+    # Wert (siehe app.security). WIRD NUR BEI RENDER GESETZT — bleibt lokal
+    # und im Windows-Paket leer, dort ist die App weiterhin offen wie
+    # bisher, weil dort ohnehin niemand von außen zugreifen kann.
+    seiten_passwort: str = ""
+
     # ── Abholung durch die Bürorechner ──
     #
     # Die Abholskripte auf den Büro-PCs fragen den Server, welche Fotosätze
     # noch nicht im Netzlaufwerk liegen. Ist hier ein Wort gesetzt, muss es im
     # Kopf ``X-Abhol-Token`` mitgeschickt werden — sonst antwortet der Server
     # mit 401. Leer = offen wie der Rest der App.
+    #
+    # Wirkt unabhängig vom Seiten-Passwort oben: Die Abholskripte kennen keine
+    # Anmeldung, deshalb sind die Abholrouten davon ausgenommen (siehe
+    # app.security).
     abhol_token: str = ""
 
     # Wie lange ein angefangener Abholvorgang gilt. Bricht ein Büro-PC mitten

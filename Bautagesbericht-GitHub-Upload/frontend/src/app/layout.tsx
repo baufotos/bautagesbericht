@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegistrierung } from "@/components/AppSchale";
+import { Anmeldeschutz } from "@/components/Anmeldeschutz";
 
 const ibmPlexSans = IBM_Plex_Sans({
   variable: "--font-ibm-plex-sans",
@@ -83,7 +84,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col font-sans overscroll-y-none">
         <ServiceWorkerRegistrierung />
-        {children}
+        <Anmeldeschutz>{children}</Anmeldeschutz>
       </body>
     </html>
   );

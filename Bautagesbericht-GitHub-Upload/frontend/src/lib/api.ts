@@ -53,6 +53,7 @@ import type {
   WochenErgebnis,
   WochenTag,
 } from "./types";
+import { passwortLesen, passwortSpeichern } from "./zugang";
 
 // Relativer Pfad: Aufrufe gehen an denselben Host, von dem die Seite geladen
 // wurde (z. B. http://192.168.1.134:3000/api/…). Next.js leitet /api per
@@ -90,8 +91,16 @@ export function konfliktAnzahl(err: unknown): number | null {
   return null;
 }
 
+function mitZugang(options?: RequestInit): RequestInit {
+  const passwort = passwortLesen();
+  if (!passwort) return options ?? {};
+  const headers = new Headers(options?.headers);
+  headers.set("X-Seiten-Passwort", passwort);
+  return { ...options, headers };
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const res = await fetch(`${API_BASE}${path}`, mitZugang(options));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let detail: unknown = text;
@@ -124,7 +133,7 @@ async function fetchDatei(
   path: string,
   options?: RequestInit
 ): Promise<{ blob: Blob; dateiname: string }> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const res = await fetch(`${API_BASE}${path}`, mitZugang(options));
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let detail: unknown = text;
@@ -181,6 +190,20 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 }
 
 export const api = {
+  zugang: {
+    pruefen: async (kandidat: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`${API_BASE}/anmeldung`, {
+          headers: kandidat ? { "X-Seiten-Passwort": kandidat } : undefined,
+        });
+        if (!res.ok) return false;
+        if (kandidat) passwortSpeichern(kandidat);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  },
   projekte: {
     list: () => fetchAPI<Projekt[]>("/projekte"),
     create: (data: {

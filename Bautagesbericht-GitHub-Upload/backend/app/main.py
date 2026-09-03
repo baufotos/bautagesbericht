@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
 from app.routers import (
+    anmeldung,
     baufotos,
     besprechungsprotokolle,
     einreichungen,
@@ -20,6 +21,7 @@ from app.routers import (
     projekte,
     projektberichte,
 )
+from app.security import pruefe_seitenpasswort
 
 
 @asynccontextmanager
@@ -34,6 +36,10 @@ app = FastAPI(
     title="Bautagesbericht API",
     version="0.1.0",
     lifespan=lifespan,
+    # Gilt für jede Route — auch für neue, die später dazukommen. Ohne
+    # gesetztes BTB_SEITEN_PASSWORT lässt die Prüfung alles durch; die
+    # Ausnahmen (Gesundheitscheck, Abholung) stehen in app.security.
+    dependencies=[Depends(pruefe_seitenpasswort)],
 )
 
 app.add_middleware(
@@ -45,6 +51,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api")
+app.include_router(anmeldung.router, prefix="/api")
 app.include_router(projekte.router, prefix="/api")
 app.include_router(empfaenger.router, prefix="/api")
 app.include_router(einreichungen.router, prefix="/api")
