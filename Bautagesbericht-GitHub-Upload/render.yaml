@@ -16,7 +16,15 @@ services:
     name: bautagesbericht
     runtime: docker
     plan: free
-    rootDir: .
+    # Wurzel des Dienstes im Repo. MUSS der Unterordner sein, in dem dieser
+    # Code liegt — im Repo steht alles unter "Bautagesbericht-GitHub-Upload/",
+    # die Repo-Wurzel enthält sonst nichts. Stand hier einmal ".", fand der
+    # Docker-Build die Dockerfile nicht ("failed to read dockerfile") und der
+    # Dienst ließ sich nicht mehr neu ausrollen. Wichtig: Render gleicht diese
+    # Datei automatisch ab (Blueprint, autoSync) und überschreibt dabei die im
+    # Dashboard eingestellte Wurzel — der richtige Wert muss deshalb hier
+    # stehen, nicht nur dort.
+    rootDir: Bautagesbericht-GitHub-Upload
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
