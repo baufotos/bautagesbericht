@@ -461,6 +461,45 @@ with heic.open("rb") as f:
     })
 gleich(antwort.status_code, 201, "HEIC vom iPhone wird angenommen")
 
+# Und die Groessengrenze, die es beim Maengelmodul und den Baufotos schon
+# gibt. Direkt gegen die Pruefung, nicht ueber einen 50-MB-Upload: Ein
+# still wirkungsloser Grenzwert waere schlimmer als keiner, und genau das
+# passiert, wenn UploadFile eines Tages kein ".size" mehr liefert.
+from fastapi import HTTPException as _HTTPException  # noqa: E402
+
+from app.config import settings as _einst  # noqa: E402
+from app.routers.einreichungen import _pruefe_dateien  # noqa: E402
+
+
+class _Upload:
+    def __init__(self, filename, size):
+        self.filename = filename
+        self.size = size
+
+
+grenze_bytes = _einst.max_file_size_mb * 1024 * 1024
+try:
+    _pruefe_dateien([_Upload("plan.pdf", grenze_bytes - 1)])
+    pruefe(True, "eine Datei unter der Grenze geht durch")
+except _HTTPException as exc:
+    fehler.append(f"Datei unter der Grenze wurde abgewiesen: {exc.detail}")
+
+try:
+    _pruefe_dateien([_Upload("riesig.pdf", grenze_bytes + 1)])
+    fehler.append("eine Datei ueber der Grenze muesste abgewiesen werden")
+except _HTTPException as exc:
+    pruefe(exc.status_code == 400 and "MB" in str(exc.detail),
+           f"zu grosse Datei wird abgewiesen: {exc.detail}")
+    pruefe("riesig.pdf" in str(exc.detail),
+           "die Meldung nennt die Datei")
+
+# Fehlt die Groessenangabe, wird nicht geraten — die Endung entscheidet dann.
+try:
+    _pruefe_dateien([_Upload("ohne_groesse.pdf", None)])
+    pruefe(True, "ohne Groessenangabe greift die Grenze nicht")
+except _HTTPException as exc:
+    fehler.append(f"ohne Groessenangabe faelschlich abgewiesen: {exc.detail}")
+
 
 print("─── Ein fehlgeschlagener Bericht ist keine Sackgasse ───")
 
