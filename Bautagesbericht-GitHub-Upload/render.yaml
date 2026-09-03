@@ -74,8 +74,15 @@ services:
       # bleiben unter allen Umständen liegen.
       - key: BTB_FOTOS_MAX_MB
         value: "300"
-      # Optional: Losungswort für die Abholskripte der Bürorechner. Ist es
-      # gesetzt, muss derselbe Wert in deren einstellungen.txt stehen.
+      # Losungswort für die Abholskripte der Bürorechner — derselbe Wert muss
+      # in deren einstellungen.txt stehen (Feld "token").
+      #
+      # PFLICHT, sobald BTB_SEITEN_PASSWORT gesetzt ist: Die Abholung ist vom
+      # Seiten-Passwort ausgenommen (die Skripte kennen keine Anmeldung), und
+      # dieses Wort ist dann ihr einziger Ausweis. Fehlt es, bekommt die
+      # Abholung 401 — absichtlich, denn sonst wäre der ZIP-Download unter
+      # /api/fotosaetze/<Nummer>/zip für jeden mit dem Link erreichbar, und
+      # die Nummern sind fortlaufend. Siehe backend/app/security.py.
       - key: BTB_ABHOL_TOKEN
         sync: false
       # Passwort für die Weboberfläche selbst (siehe ANLEITUNG-ONLINE-STELLEN.md,

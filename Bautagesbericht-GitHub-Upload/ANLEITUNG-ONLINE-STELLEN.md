@@ -100,6 +100,7 @@ So lädst du ihn hoch:
    |---|---|
    | `BTB_DATABASE_URL` | Die angepasste Neon-URL aus Teil B (mit `+psycopg`). **Pflicht.** |
    | `BTB_SEITEN_PASSWORT` | **Dringend empfohlen** — das gemeinsame Passwort, mit dem sich die Kollegen an der Weboberfläche anmelden. Ohne dieses Feld kann jeder mit dem Link Baufotos hochladen und alle Daten sehen. Wird nur bei Render gesetzt, nie lokal. |
+   | `BTB_ABHOL_TOKEN` | **Pflicht, sobald oben ein Passwort steht.** Frei wählbares Losungswort für die Foto-Abholung der Bürorechner. Derselbe Wert muss auf jedem Abhol-PC in `einstellungen.txt` beim Feld `token =` stehen. Fehlt er, holt kein Bürorechner mehr Fotos ab (401). |
    | `BTB_SMTP_HOST` | Mailserver, z. B. `smtp.office365.com`. Nur nötig für „Baufotos direkt senden" — ohne diesen Wert bietet die App weiterhin den Outlook-Entwurf an. |
    | `BTB_SMTP_USER` | Das Absender-Postfach, z. B. `bautagesbericht@hpp.com`. |
    | `BTB_SMTP_PASSWORT` | Das **App-Passwort** dieses Postfachs (nicht das normale Login-Passwort). `BTB_SMTP_PASSWORD` gilt genauso. |
