@@ -543,7 +543,13 @@ def _fill_footer_line(doc, projekt: str, datum: date) -> None:
     PAGE/NUMPAGES-Feld. Word setzt sie damit auf jeder Seite und rechnet sie
     selbst aus.
     """
-    zeile_links = f"Bautagebuch - {projekt} - {_fmt_date(datum)}"
+    # Der Projektname einzeilig: Eine Fußzeile ist eine Zeile. Steckt im Namen
+    # ein Umbruchzeichen — aus einer Texterkennung oder aus dem Einfügen in
+    # das Formularfeld —, stünde die Fußzeile sonst zweizeilig auf jeder Seite
+    # und schöbe den Seitenspiegel nach oben.
+    zeile_links = (
+        f"Bautagebuch - {dokumenttext.einzeilig(projekt)} - {_fmt_date(datum)}"
+    )
 
     abschnitt = doc.sections[0]
     fuss = abschnitt.footer

@@ -174,6 +174,13 @@ if pfad_stoer is not None:
     gleich([l for l in laeufe if l.startswith("Testbaustelle")],
            ["Testbaustelle Nord"], "Projektname bleibt einzeilig")
 
+    # Die Fusszeile ist eine Zeile. Ein Umbruchzeichen im Projektnamen machte
+    # sie zweizeilig — auf jeder Seite, und der Seitenspiegel rutschte hoch.
+    stoer_fuss = "\n".join(v for k, v in teile(pfad_stoer).items() if "footer" in k)
+    pruefe("Bautagebuch - Testbaustelle Nord - 05.08.2026" in stoer_fuss,
+           "Fusszeile bleibt eine Zeile, auch mit Steuerzeichen im Namen")
+    pruefe("<w:br/>" not in stoer_fuss, "kein Umbruch in der Fusszeile")
+
 
 print("─── Temperaturdiagramm an einem Frosttag ───")
 

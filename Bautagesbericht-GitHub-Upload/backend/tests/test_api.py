@@ -263,10 +263,33 @@ with TestClient(app) as c:
     del_gewerk = c.delete(f"/api/gewerke/{g1['id']}")
     pruefe(del_gewerk.status_code == 409, f"gewerk konflikt: {del_gewerk.status_code}")
     pruefe(del_gewerk.json()["detail"]["anzahl_maengel"] >= 1, del_gewerk.text)
-    pruefe(c.delete(f"/api/gewerke/{g1['id']}?force=true").status_code == 204,
-           "gewerk force loeschen")
+
+    # Ein Kapitel der Besprechungsprotokolle, das auf dieselbe Firma zeigt.
+    # Genau daran scheiterte das Loeschen: "FOREIGN KEY constraint failed",
+    # fuer den Anwender ein Serverfehler ohne Erklaerung — die Firma blieb in
+    # den Stammdaten stehen. Ein Kapitel soll das Gewerk ausdruecklich
+    # ueberleben (siehe models.BesprechungsKapitel).
+    kapitel = c.post("/api/besprechungsprotokolle/kapitel", json={
+        "projekt_id": pid, "nummer": "2.", "titel": "VE01 Rohbau",
+        "sortierung": 1, "gewerk_id": g1["id"],
+    })
+    pruefe(kapitel.status_code in (200, 201),
+           f"Kapitel mit Gewerk angelegt: {kapitel.status_code} {kapitel.text[:120]}")
+
+    weg = c.delete(f"/api/gewerke/{g1['id']}?force=true")
+    pruefe(weg.status_code == 204,
+           f"gewerk force loeschen: {weg.status_code} {weg.text[:200]}")
     pruefe(c.get(f"/api/maengel/{m1['id']}").json()["gewerk_id"] is None,
            "Mangel muesste Firma verloren haben, aber erhalten bleiben")
+
+    if kapitel.status_code in (200, 201):
+        kid = kapitel.json()["id"]
+        uebrig = [k for k in c.get(f"/api/besprechungsprotokolle/kapitel?projekt_id={pid}").json()
+                  if k["id"] == kid]
+        pruefe(len(uebrig) == 1,
+               "das Kapitel ueberlebt das Loeschen der Firma")
+        pruefe(uebrig and uebrig[0]["gewerk_id"] is None,
+               f"…und hat nur den Verweis verloren: {uebrig[0]['gewerk_id'] if uebrig else '?'}")
 
     del_plan = c.delete(f"/api/plaene/{plan['id']}")
     pruefe(del_plan.status_code == 409, f"plan konflikt: {del_plan.status_code}")

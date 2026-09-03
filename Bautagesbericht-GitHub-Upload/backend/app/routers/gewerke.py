@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Gewerk, Mangel, Projekt
+from app.models import BesprechungsKapitel, Gewerk, Mangel, Projekt
 from app.schemas import GewerkCreate, GewerkResponse, GewerkUpdate
 from app.services.mangel_logik import gewerk_anzeige
 
@@ -103,5 +103,21 @@ def delete_gewerk(gewerk_id: int, force: bool = False, db: Session = Depends(get
         db.query(Mangel).filter(Mangel.gewerk_id == gewerk_id).update(
             {"gewerk_id": None}, synchronize_session=False
         )
+
+    # Kapitel der Besprechungsprotokolle verweisen ebenfalls auf das Gewerk.
+    #
+    # Ohne diese Zeile scheiterte das Löschen mit
+    # "FOREIGN KEY constraint failed" — für den Anwender ein Serverfehler ohne
+    # Erklärung, und die Firma blieb in den Stammdaten stehen. Genau das steht
+    # im Protokoll der laufenden App.
+    #
+    # Gemeldet wird das NICHT als Konflikt: Anders als beim Mangel ist der
+    # Verweis hier beiläufig. Ein Kapitel überlebt das Gewerk ausdrücklich
+    # (siehe models.BesprechungsKapitel) — die Firma wechselt, die Themen
+    # bleiben —, und ``gewerk_id`` merkt sich nur, woher der Vorschlag kam.
+    db.query(BesprechungsKapitel).filter(
+        BesprechungsKapitel.gewerk_id == gewerk_id
+    ).update({"gewerk_id": None}, synchronize_session=False)
+
     db.delete(gewerk)
     db.commit()
