@@ -306,15 +306,30 @@ with TestClient(app) as c:
     pruefe(rest["eltern_mangel_id"] is None and rest["eltern_nummer"] == "",
            f"Duplikat nach Loeschen des Originals: {rest['eltern_mangel_id']}")
 
+    # Ein Kapitel, das beim Loeschen des Projekts NOCH auf ein Gewerk zeigt.
+    # Das Aufraeumen muss die Kapitel abraeumen, BEVOR es die Gewerke
+    # entfernt — sonst endet "Projekt loeschen" in einem 500er
+    # ("FOREIGN KEY constraint failed", so im Protokoll der App zu sehen).
+    # Die Reihenfolge steht in services/cleanup und ist leicht zu zerbrechen.
+    kap2 = c.post("/api/besprechungsprotokolle/kapitel", json={
+        "projekt_id": pid, "nummer": "3.", "titel": "VE02 Ohne Mail",
+        "sortierung": 2, "gewerk_id": g2["id"],
+    })
+    pruefe(kap2.status_code in (200, 201),
+           f"zweites Kapitel angelegt: {kap2.status_code} {kap2.text[:120]}")
+
     # Projekt loeschen: 409, dann force
     konflikt = c.delete(f"/api/projekte/{pid}")
     pruefe(konflikt.status_code == 409, f"projekt konflikt: {konflikt.status_code}")
     pruefe(konflikt.json()["detail"]["anzahl_maengel"] == 3, konflikt.text)
-    pruefe(c.delete(f"/api/projekte/{pid}?force=true").status_code == 204,
-           "projekt force loeschen")
+    weg_projekt = c.delete(f"/api/projekte/{pid}?force=true")
+    pruefe(weg_projekt.status_code == 204,
+           f"projekt force loeschen: {weg_projekt.status_code} {weg_projekt.text[:200]}")
     pruefe(c.get(f"/api/maengel?projekt_id={pid}").json() == [], "Maengel noch da")
     pruefe(c.get(f"/api/gewerke?projekt_id={pid}").json() == [], "Gewerke noch da")
     pruefe(c.get(f"/api/plaene?projekt_id={pid}").json() == [], "Plaene noch da")
+    pruefe(c.get(f"/api/besprechungsprotokolle/kapitel?projekt_id={pid}").json() == [],
+           "Besprechungskapitel noch da")
 
 print(f"\n{ok} Pruefungen ok, {len(fehler)} Fehler")
 for f in fehler:
