@@ -250,6 +250,51 @@ try:
 finally:
     pdf_extraction.settings.anthropic_api_key = gemerkt
 
+abschnitt("Wenn nichts zu lesen war, bleibt der Bericht vorzeigbar")
+# Vorher stand die ganze Erklaerung im Feld "Leistung" eines Berichts, der an
+# den Bauherrn geht: "Von 2024-KW03_2024-01-16.pdf konnte nur der gedruckte
+# Vordruck gelesen werden ... Anthropic-Schluessel ... einstellungen.txt ...".
+# Eine Konfigurationsmeldung als Bautaetigkeit. Der Grund gehoert in die
+# Warnung der Oberflaeche, wo der Anwender etwas tun kann.
+from app.services.pdf_extraction import (  # noqa: E402
+    PLATZHALTER_FIRMA,
+    PLATZHALTER_LEISTUNG,
+    platzhalter,
+)
+from app.services.pipeline import _namen_pruefen  # noqa: E402
+
+eintraege = platzhalter("Von „x.pdf“ konnte nur der gedruckte Vordruck "
+                        "gelesen werden. Anthropic-Schluessel fehlt.")
+pruefe(len(eintraege) == 1, "genau ein Platzhalter-Eintrag")
+eintrag = eintraege[0]
+pruefe(eintrag["firma"] == PLATZHALTER_FIRMA,
+       f"kurzer Firmen-Platzhalter: {eintrag['firma']!r}")
+pruefe(eintrag["leistung"] == PLATZHALTER_LEISTUNG,
+       f"kurze Leistung: {eintrag['leistung']!r}")
+pruefe(len(eintrag["leistung"]) < 40,
+       f"die Leistung ist eine Zeile, keine Anleitung ({len(eintrag['leistung'])} Zeichen)")
+pruefe("Anthropic" not in eintrag["leistung"] and "einstellungen" not in eintrag["leistung"],
+       "kein Konfigurationshinweis im Dokumentfeld")
+pruefe("Anthropic" in eintrag["hinweis"], "der Grund haengt am Eintrag")
+
+# Und die Pipeline macht daraus die Warnung.
+warnungen = []
+_namen_pruefen(list(eintraege), (), warnungen)
+firmenwarnungen = [w for w in warnungen if w["feld"] == "firmen"]
+pruefe(any("Anthropic" in w["problem"] for w in firmenwarnungen),
+       f"der Grund steht in der Warnung: {[w['problem'][:50] for w in firmenwarnungen]}")
+
+# Fuenf unlesbare Blaetter einer Woche geben nicht fuenf Mal denselben Satz.
+viele = platzhalter("derselbe Grund") * 5
+warnungen = []
+_namen_pruefen(viele, (), warnungen)
+pruefe(len([w for w in warnungen if "derselbe Grund" in w["problem"]]) == 1,
+       "derselbe Grund wird nur einmal gemeldet")
+
+# Der Platzhalter darf nicht als Firma in den Bestand wandern.
+pruefe(firmennamen._merkwuerdig(PLATZHALTER_FIRMA),
+       "Platzhalter wird nicht als Firma gemerkt")
+
 abschnitt("Die Anweisung an die Bilderkennung kennt Tag und Baustelle")
 # Die Grundanweisung sagt "nimm alle Firmen aller Tage auf". Fuer ein Blatt,
 # das fuer EINEN Tag hochgeladen wurde, ist das falsch: Im Bericht vom Montag

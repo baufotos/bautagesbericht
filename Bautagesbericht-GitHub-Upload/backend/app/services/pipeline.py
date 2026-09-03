@@ -198,15 +198,28 @@ async def _firmen_sammeln(db: Session, einreichung,
 def _namen_pruefen(alle: list[dict], bekannte: tuple[str, ...],
                    warnungen: list[dict]) -> None:
     """Schreibweisen zusammenführen und melden, was nachzusehen ist."""
-    # Platzhalter erkennen (Scan ohne OCR / unbekanntes Format).
+    # Platzhalter erkennen (Scan ohne Schlüssel, unbekanntes Format, Störung
+    # der Schnittstelle). Der Grund steht am Eintrag unter "hinweis" — er
+    # gehört hierhin und nicht in das Feld "Leistung" des Berichts, in dem
+    # vorher die halbe Bedienungsanleitung stand (siehe
+    # pdf_extraction.platzhalter).
+    gesehen: set[str] = set()
     for eintrag in alle:
         name = str(eintrag.get("firma", ""))
-        if name.startswith("("):
-            warnungen.append({
-                "feld": "firmen",
-                "problem": f"Automatische Extraktion unvollständig: {name}",
-                "quelle_datei": "",
-            })
+        if not name.startswith("("):
+            continue
+        grund = str(eintrag.get("hinweis") or "").strip()
+        problem = grund or f"Automatische Extraktion unvollständig: {name}"
+        if problem in gesehen:
+            # Ein Wochenpaket mit fünf unlesbaren Blättern soll nicht fünf
+            # Mal denselben Satz an den Bericht hängen.
+            continue
+        gesehen.add(problem)
+        warnungen.append({
+            "feld": "firmen",
+            "problem": problem,
+            "quelle_datei": str(eintrag.get("quelle_datei") or ""),
+        })
 
     # OCR-gelesene Einträge (aus Scans) immer zur manuellen Kontrolle melden.
     if any(e.get("quelle") == "ocr" for e in alle):

@@ -667,7 +667,8 @@ async def _extract_scan_no_key(file_path: Path,
     from app.services.wochenaufteilung import datum_der_seite
 
     if windows_ocr.verfuegbar():
-        text = _text_per_windows_ocr(file_path)
+        seiten = _seiten_per_windows_ocr(file_path)
+        text = "\n\n".join(seiten)
         if text.strip():
             # Zuerst die Frage, ob überhaupt etwas Ausgefülltes angekommen ist.
             # Bei Schreibschrift liest Windows nur den gedruckten Vordruck —
@@ -675,7 +676,13 @@ async def _extract_scan_no_key(file_path: Path,
             # "Polier · Werkpolier · Vorarbeiter …" war. Ein Feld, das gefüllt
             # aussieht, prüft niemand nach; deshalb wird hier lieber offen
             # gemeldet, dass nichts gelesen wurde.
-            seiten = text.split(chr(10) + chr(10))
+            #
+            # Die Entscheidung gehört auf die EINZELNEN Seiten und nicht auf
+            # den zusammengefügten Text: Vorher wurden die Seiten mit einem
+            # Zeilenumbruch verbunden und hier am doppelten getrennt — aus
+            # zwölf Seiten wurde eine, und der Mittelwert über die Seiten,
+            # den ``handschrift_unlesbar`` ausdrücklich bilden will, war in
+            # Wahrheit ein einzelner Wert.
             if bautext.handschrift_unlesbar(
                 seiten, any(datum_der_seite(s) for s in seiten)
             ):
@@ -694,19 +701,65 @@ async def _extract_scan_no_key(file_path: Path,
     return await _scan_ohne_erkennung(file_path)
 
 
-def _text_per_windows_ocr(file_path: Path) -> str:
-    """Erkennt den Text einer Bild- oder Scan-Datei über Windows."""
+def _seiten_per_windows_ocr(file_path: Path) -> list[str]:
+    """Der Text einer Bild- oder Scan-Datei über Windows, Seite für Seite.
+
+    Bewusst als Liste und nicht als ein Text: Ob von einem Dokument nur der
+    gedruckte Vordruck angekommen ist, entscheidet sich am Mittelwert über die
+    Seiten (siehe ``bautext.handschrift_unlesbar``). Wer die Seiten vorher
+    zusammenklebt, hat diesen Mittelwert verloren.
+    """
     from app.services import windows_ocr
 
-    suffix = file_path.suffix.lower()
-    if suffix != ".pdf":
-        return windows_ocr.text_aus_bild(file_path)
+    if file_path.suffix.lower() != ".pdf":
+        return [windows_ocr.text_aus_bild(file_path)]
 
     from app.services.wochenaufteilung import seiten_lesen
 
     # seiten_lesen liest die Textebene und lässt fehlende Seiten von der
     # Windows-Erkennung nachtragen — genau das, was hier gebraucht wird.
-    return "\n".join(seiten_lesen(file_path))
+    return seiten_lesen(file_path)
+
+
+def _text_per_windows_ocr(file_path: Path) -> str:
+    """Derselbe Text als ein Stück, mit Leerzeile zwischen den Seiten."""
+    return "\n\n".join(_seiten_per_windows_ocr(file_path))
+
+
+#: Was im Bericht steht, wenn nichts zu lesen war.
+#:
+#: WARUM SO KURZ
+#: Vorher stand hier die ganze Erklärung — im Feld "Leistung" eines Berichts,
+#: der an den Bauherrn geht: "Von 2024-KW03_2024-01-16.pdf konnte nur der
+#: gedruckte Vordruck gelesen werden … Anthropic-Schlüssel … einstellungen.txt
+#: …". Eine Konfigurationsmeldung als Bautätigkeit. Der Grund gehört in die
+#: Warnung der Oberfläche, wo der Anwender ihn sieht und etwas tun kann; im
+#: Dokument bleibt die Zeile stehen, die jemand mit der Hand füllt.
+#:
+#: Die Klammer bleibt: An ihr erkennen ``pipeline._namen_pruefen`` und
+#: ``firmennamen._merkwuerdig`` einen Platzhalter — er darf weder als
+#: Firmenname in den Bestand wandern noch unbemerkt durchgehen.
+PLATZHALTER_FIRMA = "(nicht lesbar — bitte ergänzen)"
+PLATZHALTER_LEISTUNG = "Bitte von Hand ergänzen."
+
+
+def platzhalter(grund: str) -> list[dict]:
+    """Ein Eintrag für den Fall, dass nichts zu lesen war.
+
+    Steht an EINER Stelle, weil es fünf Wege hierher gibt — Scan ohne
+    Schlüssel, abgelehnter Schlüssel, unbekanntes Format, nicht auswertbarer
+    Textabschnitt, Fehler der Schnittstelle. Vorher trug jeder von ihnen
+    seinen eigenen Text im Feld "Leistung", und der Bericht an den Bauherrn
+    sah je nach Ursache anders aus.
+    """
+    return [{
+        "firma": PLATZHALTER_FIRMA,
+        "ort": "",
+        "personen": 0,
+        "leistung": PLATZHALTER_LEISTUNG,
+        "besonderes": None,
+        "hinweis": grund,
+    }]
 
 
 async def _scan_ohne_erkennung(file_path: Path, *,
@@ -717,25 +770,23 @@ async def _scan_ohne_erkennung(file_path: Path, *,
     Eintragungen nicht. Das ist die typische Lage bei Schreibschrift und
     verdient eine andere Erklärung als "gar nichts gelesen" — es sagt dem
     Nutzer nämlich genau, woran es liegt.
+
+    Der Eintrag trägt den Grund unter ``hinweis`` mit. Die Pipeline macht
+    daraus die Warnung am Bericht (siehe ``pipeline._namen_pruefen``); ins
+    Dokument kommt er nicht.
     """
     if nur_vordruck:
-        text = bautext.unlesbar_hinweis(file_path.name,
-                                        _wo_der_schluessel_hingehoert())
+        grund = bautext.unlesbar_hinweis(file_path.name,
+                                         _wo_der_schluessel_hingehoert())
     else:
-        text = (
-            "Aus dieser Datei ließ sich kein Text lesen. Bei gedruckten "
-            "Formblättern gelingt das meist; handschriftliche Berichte "
-            "brauchen einen Anthropic-Schlüssel ("
+        grund = (
+            f"Aus „{file_path.name}“ ließ sich kein Text lesen. Bei "
+            "gedruckten Formblättern gelingt das meist; handschriftliche "
+            "Berichte brauchen einen Anthropic-Schlüssel ("
             + _wo_der_schluessel_hingehoert()
-            + "). Bitte die Angaben hier von Hand ergänzen."
+            + "). Bitte die Angaben im Bericht von Hand ergänzen."
         )
-    return [{
-        "firma": f"(Handschrift/Scan: {file_path.name})",
-        "ort": "",
-        "personen": 0,
-        "leistung": text,
-        "besonderes": None,
-    }]
+    return platzhalter(grund)
 
 
 def handschrift_verfuegbar() -> bool:
@@ -1002,14 +1053,9 @@ async def _extract_scan_via_claude(
         # nur einen leeren Bericht.
         probleme = seitenlesung.fehlermeldungen(befunde)
         if probleme and not any(not b.fehler for b in befunde):
-            return [{
-                "firma": f"(Erkennung fehlgeschlagen: {file_path.name})",
-                "ort": "",
-                "personen": 0,
-                "leistung": " ".join(probleme),
-                "besonderes": None,
-                "quelle": "ocr",
-            }]
+            return platzhalter(
+                f"„{file_path.name}“ konnte nicht gelesen werden. "
+                + " ".join(probleme))
 
         alle_tage = seitenlesung.zu_tagen(befunde, bekannte_firmen)
         eintraege: list[dict] = []
@@ -1122,17 +1168,11 @@ async def _claude_bilder_auswerten(client, inhalt: list[dict], quelle: str,
     try:
         antwort = await schnittstelle.mit_wiederholung(ruf)
     except Exception as exc:
-        return [{
-            "firma": f"(Erkennung fehlgeschlagen: {quelle})",
-            "ort": "",
-            "personen": 0,
-            # Klartext statt der englischen Rohmeldung — sonst sucht der
-            # Anwender den Fehler beim Scan, während der Grund ein falscher
-            # Schlüssel oder ein leeres Konto ist.
-            "leistung": schnittstelle.fehlertext(exc),
-            "besonderes": None,
-            "quelle": "ocr",
-        }]
+        # Klartext statt der englischen Rohmeldung — sonst sucht der
+        # Anwender den Fehler beim Scan, während der Grund ein falscher
+        # Schlüssel oder ein leeres Konto ist.
+        return platzhalter(f"„{quelle}“ konnte nicht gelesen werden. "
+                           + schnittstelle.fehlertext(exc))
 
     for block in (antwort.content if antwort else []):
         if block.type == "tool_use" and block.name == "report_firms":
@@ -1273,13 +1313,9 @@ async def extract_from_file(
                                                 bekannte_firmen)
         if firmen:
             return firmen
-        return [{
-            "firma": f"(Textabschnitt {file_path.name} nicht auswertbar)",
-            "ort": "",
-            "personen": 0,
-            "leistung": "Automatische Extraktion nicht möglich — bitte manuell ergänzen",
-            "besonderes": None,
-        }]
+        return platzhalter(
+            f"Der Textabschnitt „{file_path.name}“ ließ sich nicht auswerten "
+            "— die Angaben im Bericht bitte von Hand ergänzen.")
 
     if suffix != ".pdf":
         return []
@@ -1316,10 +1352,6 @@ async def extract_from_file(
     if result:
         return result
 
-    return [{
-        "firma": f"(Format unbekannt: {file_path.name})",
-        "ort": "",
-        "personen": 0,
-        "leistung": "Automatische Extraktion nicht möglich — bitte manuell ergänzen",
-        "besonderes": None,
-    }]
+    return platzhalter(
+        f"„{file_path.name}“ hat ein Format, das die Auswertung nicht kennt "
+        "— die Angaben im Bericht bitte von Hand ergänzen.")
