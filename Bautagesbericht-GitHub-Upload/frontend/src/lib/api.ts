@@ -1,5 +1,14 @@
 import type {
   AnalyseErgebnis,
+  AnzeigeAntwortAnfrage,
+  AnzeigeAntwortVorschau,
+  AnzeigeAuslesenErgebnis,
+  AnzeigeBausteineErgebnis,
+  AnzeigeFormulierenAnfrage,
+  AnzeigeFormulierenErgebnis,
+  AnzeigeGlaettenErgebnis,
+  AnzeigeMailAnfrage,
+  AnzeigeVorbelegung,
   Baufoto,
   Bearbeiter,
   BesprechungsAnlage,
@@ -595,6 +604,69 @@ export const api = {
     /** Nur eines der beiden — für den Nachschub, wenn eines schon verschickt ist. */
     dokument: (data: MaengelanzeigeAnfrage, nur: "anschreiben" | "anlage") =>
       fetchDatei(`/maengelanzeige/dokumente?nur=${nur}`, json("POST", data)),
+  },
+
+  /**
+   * Anzeigen der Baufirmen beantworten.
+   *
+   * Nicht nur Mehrkostenanzeigen: ``auslesen`` erkennt auch
+   * Behinderungsanzeigen, Nachtragsangebote und die uebrigen Arten und
+   * traegt sie in Betreff und Mailbetreff.
+   *
+   * ``vorschau`` liefert genau die Texte, die anschliessend im Dokument
+   * stehen — dieselben Funktionen im Server, keine zweite Fassung.
+   */
+  anzeigen: {
+    /** Hochgeladene Anzeigen auslesen — eine Antwort je Datei. */
+    auslesen: (dateien: File[]) => {
+      const formular = new FormData();
+      dateien.forEach((datei) => formular.append("dateien", datei));
+      return fetchAPI<AnzeigeAuslesenErgebnis>("/anzeigen/auslesen", {
+        method: "POST",
+        body: formular,
+      });
+    },
+    /** Vorschlaege aus den Stammdaten. Alle drei Kennungen sind freiwillig. */
+    vorbelegung: (
+      projektId?: number | null,
+      gewerkId?: number | null,
+      bearbeiterId?: number | null
+    ) =>
+      fetchAPI<AnzeigeVorbelegung>(
+        `/anzeigen/vorbelegung${query({
+          projekt_id: projektId ?? undefined,
+          gewerk_id: gewerkId ?? undefined,
+          bearbeiter_id: bearbeiterId ?? undefined,
+        })}`
+      ),
+    /**
+     * Die Standardsaetze des Bueros, gefiltert auf die gewaehlte Haltung.
+     * Braucht keinen Anthropic-Schluessel.
+     */
+    bausteine: (haltung?: string) =>
+      fetchAPI<AnzeigeBausteineErgebnis>(
+        `/anzeigen/bausteine${query({ haltung: haltung || undefined })}`
+      ),
+    /** Stichworte in Briefform bringen — Form, nicht Inhalt. Ohne Schluessel. */
+    glaetten: (text: string) =>
+      fetchAPI<AnzeigeGlaettenErgebnis>("/anzeigen/glaetten", json("POST", { text })),
+    /**
+     * Stichpunkte ausformulieren. Das Ergebnis geht ins Infofeld, nicht ins
+     * Dokument — gelesen und geaendert wird davor, nicht danach.
+     */
+    formulieren: (data: AnzeigeFormulierenAnfrage) =>
+      fetchAPI<AnzeigeFormulierenErgebnis>(
+        "/anzeigen/formulieren",
+        json("POST", data)
+      ),
+    vorschau: (data: AnzeigeAntwortAnfrage) =>
+      fetchAPI<AnzeigeAntwortVorschau>("/anzeigen/vorschau", json("POST", data)),
+    /** Das Antwortschreiben. PDF nur, wo Word erreichbar ist. */
+    dokument: (data: AnzeigeAntwortAnfrage, format: "docx" | "pdf" = "docx") =>
+      fetchDatei(`/anzeigen/dokument?format=${format}`, json("POST", data)),
+    /** Fertige Mail als .eml — Outlook oeffnet sie als Entwurf zum Senden. */
+    mailEntwurf: (data: AnzeigeMailAnfrage) =>
+      fetchDatei("/anzeigen/mail/entwurf", json("POST", data)),
   },
 
   /**

@@ -1374,3 +1374,282 @@ class ProtokollFreigabe(BaseModel):
     #: Auch freigeben, wenn noch Zeilen ungeprüft sind. Standard: nein — die
     #: ganze Funktion existiert, damit nichts Ungeprüftes hinausgeht.
     trotz_ungeprueft: bool = False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mehrkostenanzeigen (und Behinderungsanzeigen, Nachträge, …) beantworten
+#
+# Der Ablauf hat drei Schritte, und die Schemas folgen ihnen:
+#
+#   1. auslesen   Dateien hoch  ->  GelesenesSchreibenSchema (je Datei)
+#   2. vorschau   Formular hin  ->  AnzeigeAntwortVorschau
+#   3. dokument   Formular hin  ->  die .docx, bzw. der Outlook-Entwurf
+#
+# Zwischen 1 und 2 liegt der Mensch: Was ausgelesen wurde, füllt das Formular
+# vor und ist dort Feld für Feld änderbar. Nichts aus einem fremden Dokument
+# geht ungesehen in ein Schreiben des Büros.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AnschriftSchema(BaseModel):
+    firma: str = ""
+    zusatz: str = ""
+    strasse: str = ""
+    plz: str = ""
+    ort: str = ""
+    land: str = ""
+
+
+class GelesenerPunktSchema(BaseModel):
+    """Ein nummerierter Abschnitt der eingegangenen Anzeige."""
+
+    nummer: str
+    titel: str
+    text: str = ""
+
+
+class GelesenesSchreibenSchema(BaseModel):
+    """Was aus einer hochgeladenen Anzeige herauszulesen war."""
+
+    quelle: str
+    seiten: int = 0
+
+    #: "Mehrkostenanzeige", "Behinderungsanzeige", "Nachtragsangebot", …
+    art: str = ""
+    nummer: str = ""
+    #: Wie die Firma selbst zählt: "MKA 01", "BEH 01", "MEKO 11".
+    kennung: str = ""
+    datum: date | None = None
+    betreff: str = ""
+    #: Betreff ohne die Zählung davor — der Sachverhalt allein.
+    kurzbezeichnung: str = ""
+
+    #: Die Anschrift der anzeigenden Firma. Sie bekommt die Antwort.
+    absender: AnschriftSchema = AnschriftSchema()
+    absender_email: str = ""
+    absender_telefon: str = ""
+    ansprechpartner: str = ""
+    ansprechpartner_email: str = ""
+
+    #: Wen die Firma angeschrieben hat (meist der Bauherr) — für den Verteiler.
+    empfaenger: AnschriftSchema = AnschriftSchema()
+
+    projektnummer: str = ""
+    leistungsort: str = ""
+    gewerk: str = ""
+
+    rechtsgrundlage: str = ""
+    punkte: list[GelesenerPunktSchema] = []
+    lv_positionen: list[str] = []
+    bauzeit: str = ""
+    forderung: str = ""
+    unterzeichner: str = ""
+    unterzeichner_funktion: str = ""
+
+    #: Der Wortlaut der Anzeige. Er geht mit an die Oberfläche, weil das
+    #: Ausformulieren der Stellungnahme ihn als Tatsachengrundlage braucht
+    #: (siehe ``app.services.anzeige_formulierung``) — die hochgeladene Datei
+    #: selbst ist danach gelöscht.
+    volltext: str = ""
+
+    #: Was unsicher war. Kein Fehler — eine Bitte, im Formular hinzusehen.
+    hinweise: list[str] = []
+
+
+class AnzeigeAuslesenErgebnis(BaseModel):
+    """Antwort des Auslesens: je Datei ein Ergebnis, dazu die Fehlschläge."""
+
+    schreiben: list[GelesenesSchreibenSchema] = []
+    #: Dateien, die sich nicht lesen ließen — mit dem Grund im Klartext.
+    fehlgeschlagen: list[str] = []
+
+
+class AnzeigeEmpfaengerSchema(BaseModel):
+    """Adressblock: die Firma, die die Anzeige geschrieben hat."""
+
+    firma: str
+    #: "Herr", "Frau" oder leer. Leer heißt "Sehr geehrte Damen und Herren" —
+    #: geraten wird nichts.
+    anrede: Literal["", "Herr", "Frau"] = ""
+    ansprechpartner: str = ""
+    strasse: str = ""
+    plz: str = ""
+    ort: str = ""
+    email: EmailStr | None = None
+
+    _norm_email = field_validator("email", mode="before")(_leer_zu_none)
+
+
+class AnzeigeSachbearbeiterSchema(BaseModel):
+    """Datumszeile und Unterschriftsblock des Briefs."""
+
+    name: str
+    funktion: str = "-Baumanagement-"
+    zeichen: str = ""
+    durchwahl: str = ""
+    email: EmailStr | None = None
+
+    _norm_email = field_validator("email", mode="before")(_leer_zu_none)
+
+
+class AnzeigeSchema(BaseModel):
+    """Die eingegangene Anzeige, soweit die Antwort sie braucht."""
+
+    art: str = "Mehrkostenanzeige"
+    nummer: str = ""
+    kennung: str = ""
+    datum: date | None = None
+    kurzbezeichnung: str = ""
+    #: Der Satz der Firma zur Bauzeit. Steht hier etwas, kann die Antwort ihn
+    #: ausdrücklich zurückweisen (``bauzeit_ablehnen``).
+    bauzeit: str = ""
+
+    _norm_datum = field_validator("datum", mode="before")(_leer_zu_none)
+
+
+class AnzeigeAntwortAnfrage(BaseModel):
+    """Alles, was das Formular für ein Antwortschreiben liefert."""
+
+    empfaenger: AnzeigeEmpfaengerSchema
+    sachbearbeiter: AnzeigeSachbearbeiterSchema
+    anzeige: AnzeigeSchema
+
+    #: Die fette Projektzeile, z. B. "G.100-DESYUM_Neubau Besucherzentrum".
+    projektzeile: str
+    #: Zweite fette Zeile, z. B. "VE300.01- Erweiterter Rohbau".
+    vergabeeinheit: str = ""
+    #: Leer = aus Art, Nummer, Datum und Sachverhalt der Anzeige gebildet.
+    betreff: str = ""
+    #: Ohne Angabe: heute.
+    briefdatum: date | None = None
+
+    #: Das Info-/Prompt-Feld: die Stellungnahme des Büros. Sie kommt Wort für
+    #: Wort in den Brief.
+    stellungnahme: str
+    #: Leer = Standardeinleitung ("wir haben Ihre … erhalten und nehmen …").
+    einleitung: str = ""
+    haltung: Literal[
+        "ablehnung", "teilweise", "pruefung", "anerkennung", "kenntnisnahme"
+    ] = "kenntnisnahme"
+    #: Leer = Standardschluss zur gewählten Haltung.
+    schlusssatz: str = ""
+    bauzeit_ablehnen: bool = False
+
+    anlagen: str = ""
+    verteiler: str = ""
+    #: Projektkürzel für den Dateinamen, z. B. "G.100-DESYUM".
+    dateikuerzel: str = ""
+
+    _norm_datum = field_validator("briefdatum", mode="before")(_leer_zu_none)
+
+
+class AnzeigeAbsatzVorschau(BaseModel):
+    text: str
+    zitat: bool = False
+
+
+class AnzeigeAntwortVorschau(BaseModel):
+    """Was entstehen würde — zur Kontrolle vor dem Erzeugen."""
+
+    dateiname: str
+    #: Die drei fetten Zeilen und die Anrede, so wie sie im Brief stehen.
+    projektzeile: str
+    vergabeeinheit: str = ""
+    betreff: str
+    anrede: str
+    adressblock: list[str] = []
+    datumszeile: list[str] = []
+    #: Der Briefkörper Absatz für Absatz; eingerückte LV-Zitate sind markiert.
+    absaetze: list[AnzeigeAbsatzVorschau] = []
+    verteilerseite: list[str] = []
+    #: Betreff und Text der E-Mail — genau das, was Outlook bekommt.
+    mail_betreff: str
+    mail_text: str
+    mail_an: str = ""
+    hinweise: list[str] = []
+
+
+class AnzeigeMailAnfrage(BaseModel):
+    """Outlook-Entwurf: dieselben Daten wie fürs Dokument, plus Mailfelder."""
+
+    antwort: AnzeigeAntwortAnfrage
+    #: Ohne Angabe: die Adresse aus dem Adressblock.
+    an: list[str] = []
+    kopie: list[str] = []
+    #: Ohne Angabe: der vorgeschlagene Betreff bzw. Text.
+    betreff: str = ""
+    text: str = ""
+    #: Das Schreiben als Anhang mitgeben. Aus heißt: nur Empfänger, Betreff
+    #: und Text — das Dokument hängt man selbst an.
+    dokument_anhaengen: bool = True
+
+
+class AnzeigeFormulierenAnfrage(BaseModel):
+    """Stichpunkte rein, ausformulierte Stellungnahme raus.
+
+    Das Ergebnis geht **ins Infofeld**, nicht ins Dokument: Erst liest ein
+    Mensch, was das Büro schreiben würde, dann entsteht das Schreiben. Siehe
+    ``app.services.anzeige_formulierung``.
+    """
+
+    #: Was in der Antwort stehen soll. Stichworte genügen.
+    stichpunkte: str
+    #: Die Angaben der eingegangenen Anzeige — die Tatsachengrundlage.
+    anzeige: AnzeigeSchema = AnzeigeSchema()
+    #: Die nummerierten Punkte der Anzeige, als "1. Titel" je Eintrag.
+    punkte: list[str] = []
+    lv_positionen: list[str] = []
+    rechtsgrundlage: str = ""
+    #: Der Volltext der Anzeige. Ohne ihn kann das Modell nur die Stichpunkte
+    #: verwenden — mit ihm kann es sich auf den Wortlaut der Firma beziehen.
+    anzeigetext: str = ""
+    haltung: Literal[
+        "ablehnung", "teilweise", "pruefung", "anerkennung", "kenntnisnahme"
+    ] = "kenntnisnahme"
+    projektzeile: str = ""
+    vergabeeinheit: str = ""
+
+
+class AnzeigeFormulierenErgebnis(BaseModel):
+    #: Fertig zum Einsetzen ins Infofeld.
+    stellungnahme: str
+    #: Angaben, die gefehlt haben — bewusst NICHT ausformuliert.
+    offene_fragen: list[str] = []
+    hinweise: list[str] = []
+
+
+class AnzeigeBausteinSchema(BaseModel):
+    """Ein Standardsatz des Büros, fertig zum Einsetzen ins Infofeld."""
+
+    kennung: str
+    #: Kurze Beschriftung für den Knopf.
+    titel: str
+    #: Der Satz. „___“ markiert eine Stelle, die noch zu füllen ist.
+    text: str
+    #: Eingerückt einsetzen (LV-Zitat).
+    zitat: bool = False
+
+
+class AnzeigeBausteinGruppeSchema(BaseModel):
+    kennung: str
+    titel: str
+    bausteine: list[AnzeigeBausteinSchema] = []
+
+
+class AnzeigeBausteineErgebnis(BaseModel):
+    """Der Katalog, gefiltert auf die gewählte Haltung."""
+
+    gruppen: list[AnzeigeBausteinGruppeSchema] = []
+    #: Die Zeichenfolge, die eine offene Lücke markiert.
+    luecke: str
+
+
+class AnzeigeGlaettenAnfrage(BaseModel):
+    #: Die Stichworte aus dem Infofeld.
+    text: str
+
+
+class AnzeigeGlaettenErgebnis(BaseModel):
+    text: str
+    #: Was auffiel — offene Lücken, Stichworte, fehlende Großschreibung.
+    hinweise: list[str] = []

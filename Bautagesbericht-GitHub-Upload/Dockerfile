@@ -43,6 +43,22 @@ RUN cd frontend && npm ci
 COPY backend ./backend
 COPY frontend ./frontend
 
+# --- Umfang der Weboberfläche ---
+#
+# Die Website zeigt nur, was auf der Baustelle gebraucht wird: Baufotos und
+# die Projekt-Stammdaten (siehe frontend/src/lib/umfang.ts). Mängelberichte,
+# Bautagesberichte, Protokolle und Schreiben entstehen im Büro im
+# Windows-Paket — dort baut erstellen.ps1 ohne diese Variable und bekommt
+# damit den vollen Umfang.
+#
+# Der Wert wird beim Bauen ins JavaScript-Bündel eingesetzt und MUSS deshalb
+# vor "npm run build" stehen; eine Umgebungsvariable zur Laufzeit käme zu
+# spät. Als ARG, damit man den Umfang auch ohne Änderung dieser Datei drehen
+# kann: "docker build --build-arg APP_UMFANG=voll". Ohne Angabe gilt "fotos" —
+# die Website hat damit nie versehentlich den vollen Umfang.
+ARG APP_UMFANG=fotos
+ENV APP_UMFANG=${APP_UMFANG}
+
 # --- Frontend bauen, danach Dev-Abhängigkeiten entfernen (kleineres Image) ---
 RUN cd frontend && npm run build && npm prune --omit=dev
 

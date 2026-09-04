@@ -26,7 +26,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import { formatBytes, formatDatumIso, relativeZeit } from "@/lib/formate";
@@ -65,6 +65,7 @@ export function FotosaetzeGalerie({
   empfaenger,
   gewerke,
   laedt,
+  startSuche = "",
   onAendern,
   onNeu,
 }: {
@@ -75,14 +76,27 @@ export function FotosaetzeGalerie({
   /** … und die Firmen des Projekts, soweit eine Adresse hinterlegt ist. */
   gewerke: Gewerk[];
   laedt: boolean;
+  /**
+   * Suchbegriff aus der Kopfzeile der App.
+   *
+   * Auf der Website sucht das Feld oben in den Fotosätzen (siehe
+   * lib/umfang.ts) und springt hierher. Danach gehört die Suche wieder dieser
+   * Ansicht: Das Feld unten bleibt bedienbar, und ein neuer Begriff von oben
+   * überschreibt es.
+   */
+  startSuche?: string;
   onAendern: () => void;
   onNeu: () => void;
 }) {
-  const [suche, setSuche] = useState("");
+  const [suche, setSuche] = useState(startSuche);
   const [kategorie, setKategorie] = useState("");
   const [fehler, setFehler] = useState<string | null>(null);
   const [meldung, setMeldung] = useState<string | null>(null);
   const [mailFuer, setMailFuer] = useState<FotosatzListItem | null>(null);
+
+  useEffect(() => {
+    setSuche(startSuche);
+  }, [startSuche]);
 
   const kategorien = Array.from(new Set(fotosaetze.map((f) => f.kategorie))).sort();
 

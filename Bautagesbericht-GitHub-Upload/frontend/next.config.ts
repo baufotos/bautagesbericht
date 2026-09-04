@@ -28,14 +28,40 @@ const BACKEND_URL = /^https?:\/\//.test(RAW_BACKEND_URL)
  */
 const STATISCHER_EXPORT = process.env.NEXT_EXPORT === "1";
 
+/**
+ * ZWEI UMFÄNGE — wie viel von der Oberfläche überhaupt erscheint.
+ *
+ *   "voll"    alle Bereiche (Windows-Paket, lokale Entwicklung) — Standard
+ *   "fotos"   nur Dashboard, Baufotos und Stammdaten · Projekte (die Website)
+ *
+ * Gesetzt wird der Wert beim Bauen: Die Dockerfile der Website trägt
+ * APP_UMFANG=fotos ein, sonst greift der Standard. Er wandert als
+ * NEXT_PUBLIC_UMFANG ins Bündel; ausgewertet wird er an einer einzigen
+ * Stelle, in src/lib/umfang.ts.
+ *
+ * Absichtlich NICHT an NEXT_EXPORT gekoppelt, obwohl heute beides
+ * zusammenfällt: Das sind zwei verschiedene Fragen ("wie wird ausgeliefert"
+ * und "was ist zu sehen"), und wer die Website einmal wieder vollständig
+ * braucht, soll dafür kein Auslieferungsverfahren umstellen müssen.
+ */
+const UMFANG = process.env.APP_UMFANG === "fotos" ? "fotos" : "voll";
+
+/** Was in beiden Betriebsarten gleich ist. */
+const GEMEINSAM = {
+  // Wird zur Bauzeit in den Code eingesetzt, siehe src/lib/umfang.ts.
+  env: { NEXT_PUBLIC_UMFANG: UMFANG },
+} satisfies NextConfig;
+
 const nextConfig: NextConfig = STATISCHER_EXPORT
   ? {
+      ...GEMEINSAM,
       output: "export",
       // Ordnerweise Ausgabe, damit auch der Aufruf ohne abschließenden
       // Schrägstrich die richtige Datei findet.
       trailingSlash: true,
     }
   : {
+      ...GEMEINSAM,
       async rewrites() {
         return [
           {

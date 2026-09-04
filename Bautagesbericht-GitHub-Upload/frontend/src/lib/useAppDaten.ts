@@ -18,6 +18,15 @@
  * Der Projektwechsel lädt nur die zweite Ebene neu — das ist der Unterschied
  * zwischen einem flüssigen Umschalten und einem kompletten Neuaufbau.
  *
+ * WAS DIE WEBSITE NICHT LÄDT
+ * ==========================
+ * Im Umfang "fotos" (lib/umfang.ts) gibt es weder Mängel noch
+ * Bautagesberichte, Pläne oder Wertelisten. Ihre Anfragen bleiben deshalb aus:
+ * Der Start auf der Baustelle kostet dann zwei statt sechs Runden über ein
+ * Mobilfunknetz, und es kann kein Fehlerbanner für einen Bereich erscheinen,
+ * den man hier gar nicht öffnen kann. Die Zustände bleiben als leere Listen
+ * bestehen — die Schnittstelle des Hooks ist in beiden Fassungen dieselbe.
+ *
  * Das gewählte Projekt wird im Browser gemerkt: Auf der Baustelle arbeitet man
  * einen Tag lang am selben Bauvorhaben und soll es nicht bei jedem Aufruf neu
  * heraussuchen müssen.
@@ -26,6 +35,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
+import { NUR_FOTOS } from "./umfang";
 import type {
   Einreichung,
   Empfaenger,
@@ -103,8 +113,10 @@ export function useAppDaten(): AppDaten {
     try {
       const [p, e, s] = await Promise.all([
         api.projekte.list(),
+        // Empfänger bleiben auch auf der Website nötig: Der Mailversand eines
+        // Fotosatzes schlägt ihre Adressen vor.
         api.empfaenger.list(),
-        api.einreichungen.list(),
+        NUR_FOTOS ? Promise.resolve<Einreichung[]>([]) : api.einreichungen.list(),
       ]);
       setProjekte(p);
       setEmpfaenger(e);
@@ -121,6 +133,7 @@ export function useAppDaten(): AppDaten {
   }, []);
 
   const ladeEinreichungen = useCallback(async () => {
+    if (NUR_FOTOS) return;
     try {
       setEinreichungen(await api.einreichungen.list());
     } catch {
@@ -129,6 +142,7 @@ export function useAppDaten(): AppDaten {
   }, []);
 
   const ladeStammdaten = useCallback(async () => {
+    if (NUR_FOTOS) return;
     try {
       setStammdaten(await api.mangelStammdaten.alle());
     } catch {
@@ -167,8 +181,13 @@ export function useAppDaten(): AppDaten {
     if (projektId === null) return;
     try {
       const [g, p] = await Promise.all([
+        // Firmen werden auch auf der Website gebraucht — der Mailversand
+        // eines Fotosatzes schlägt ihre Adressen vor.
         api.gewerke.list(projektId),
-        api.plaene.list(projektId),
+        // Pläne gehören zur Mangelerfassung.
+        NUR_FOTOS
+          ? Promise.resolve<ProjektPlan[]>([])
+          : api.plaene.list(projektId),
       ]);
       setGewerke(g);
       setPlaene(p);
@@ -178,7 +197,7 @@ export function useAppDaten(): AppDaten {
   }, [projektId]);
 
   const ladeMaengel = useCallback(async () => {
-    if (projektId === null) return;
+    if (NUR_FOTOS || projektId === null) return;
     setLaedtMaengel(true);
     try {
       setMaengel(await api.maengel.list({ ...maengelFilter, projekt_id: projektId }));

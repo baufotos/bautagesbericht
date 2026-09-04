@@ -15,6 +15,14 @@
  * aber immer — die alten Links aus Teams-Nachrichten und aus dem App-Manifest
  * (``?tab=maengel``, ``?mangel=<id>``, ``?neu=1``) funktionieren deshalb
  * weiter; sie werden hier auf die neuen Ansichtsnamen abgebildet.
+ *
+ * ZWEI UMFÄNGE
+ * ============
+ * Die Website zeigt nur Baufotos und die Projekt-Stammdaten (lib/umfang.ts).
+ * Der Router muss davon fast nichts wissen: Er prüft jede gemerkte und jede
+ * verlinkte Ansicht gegen ``ALLE_EINTRAEGE``, und das ist dort schon die
+ * gekürzte Liste. Was es nicht gibt, fällt aufs Dashboard zurück — kein
+ * Sonderweg und keine zweite Wahrheit darüber, was diese Fassung kann.
  */
 
 import { Loader2 } from "lucide-react";
@@ -32,7 +40,9 @@ import {
 import { InstallierenHinweis, VerbindungsHinweis } from "@/components/AppSchale";
 import { Karte, KarteInhalt, LeerHinweis, SeitenKopf } from "@/components/dashboard";
 import { Meldung } from "@/components/ui";
+import { NUR_FOTOS } from "@/lib/umfang";
 import { Dashboard } from "@/components/dashboards/Dashboard";
+import { FotoDashboard } from "@/components/dashboards/FotoDashboard";
 import { BaufotosHochladen } from "@/components/baufotos/BaufotosHochladen";
 import { FotosaetzeGalerie } from "@/components/baufotos/FotosaetzeGalerie";
 import { BerichtEinreichen } from "@/components/bautagesberichte/BerichtEinreichen";
@@ -42,6 +52,7 @@ import { EmpfaengerVerwaltung } from "@/components/stammdaten/EmpfaengerVerwaltu
 import { MangelUebersicht } from "@/components/maengel/MangelUebersicht";
 import { MangelErfassung } from "@/components/maengel/MangelErfassung";
 import { MaengelanzeigeErstellen } from "@/components/maengel/MaengelanzeigeErstellen";
+import { AnzeigeBeantworten } from "@/components/mehrkosten/AnzeigeBeantworten";
 import { MangelDetail } from "@/components/maengel/MangelDetail";
 import { ProjektberichteVerwaltung } from "@/components/projektberichte/ProjektberichteVerwaltung";
 import { BesprechungenUebersicht } from "@/components/besprechungen/BesprechungenUebersicht";
@@ -55,6 +66,21 @@ const ANSICHT_SPEICHER = "hpp-app-ansicht";
 /** Ansichten, die ihren Seitenkopf selbst setzen. */
 const EIGENER_KOPF: Ansicht[] = ["dashboard"];
 
+/**
+ * Alte ``?tab=``-Links auf die heutigen Ansichtsnamen.
+ *
+ * Sie stehen in Teams-Nachrichten, in Lesezeichen und im App-Manifest und
+ * dürfen nicht ins Leere laufen. Ob es die Ansicht in dieser Fassung
+ * überhaupt gibt, entscheidet danach ``istAnsicht``.
+ */
+const ALT_TAB: Record<string, Ansicht> = {
+  maengel: "maengel-uebersicht",
+  einreichen: "btb-einreichen",
+  uebersicht: "btb-uebersicht",
+  projekte: "stamm-projekte",
+  emails: "stamm-empfaenger",
+};
+
 function istAnsicht(wert: string | null): wert is Ansicht {
   return wert !== null && ALLE_EINTRAEGE.some((e) => e.key === wert);
 }
@@ -65,34 +91,41 @@ export default function Home() {
   const [offeneMangelId, setOffeneMangelId] = useState<number | null>(null);
   const [offenerMangel, setOffenerMangel] = useState<Mangel | null>(null);
   const [detailHinweis, setDetailHinweis] = useState<string | undefined>();
+  // Suchbegriff aus der Kopfzeile für die Fotosatz-Galerie. Nur im Umfang
+  // "fotos" belegt — sonst sucht die Kopfzeile in den Mängeln.
+  const [fotoSuche, setFotoSuche] = useState("");
 
   /* ───────── Startansicht: Link, dann Gedächtnis ───────── */
 
   useEffect(() => {
     const parameter = new URLSearchParams(window.location.search);
-    const gewuenscht = parameter.get("ansicht");
-    const alterTab = parameter.get("tab");
     const mangel = Number(parameter.get("mangel"));
     const neu = parameter.get("neu") === "1";
-    const gemerkt = window.localStorage.getItem(ANSICHT_SPEICHER);
 
-    if (istAnsicht(gewuenscht)) setAnsicht(gewuenscht);
-    else if (neu) setAnsicht("maengel-neu");
-    else if (mangel) setAnsicht("maengel-uebersicht");
-    else if (alterTab === "maengel") setAnsicht("maengel-uebersicht");
-    else if (alterTab === "einreichen") setAnsicht("btb-einreichen");
-    else if (alterTab === "uebersicht") setAnsicht("btb-uebersicht");
-    else if (alterTab === "projekte") setAnsicht("stamm-projekte");
-    else if (alterTab === "emails") setAnsicht("stamm-empfaenger");
-    else if (istAnsicht(gemerkt)) setAnsicht(gemerkt);
+    /* Die Reihenfolge ist die Rangfolge: ausdrücklicher Link, dann alter
+       Link, zuletzt das Gedächtnis. Jeder Kandidat wird gegen die Navigation
+       DIESER Fassung geprüft (ALLE_EINTRAEGE in AppShell) — auf der Website
+       landet ein alter Mängel-Link damit ruhig auf dem Dashboard. */
+    const kandidaten = [
+      parameter.get("ansicht"),
+      neu ? "maengel-neu" : null,
+      mangel ? "maengel-uebersicht" : null,
+      ALT_TAB[parameter.get("tab") ?? ""] ?? null,
+      window.localStorage.getItem(ANSICHT_SPEICHER),
+    ];
+    const ziel = kandidaten.find(istAnsicht);
+    if (ziel) setAnsicht(ziel);
 
-    if (mangel) setOffeneMangelId(mangel);
+    if (mangel && istAnsicht("maengel-uebersicht")) setOffeneMangelId(mangel);
   }, []);
 
   const wechsle = useCallback((ziel: Ansicht) => {
     setAnsicht(ziel);
     setOffeneMangelId(null);
     setDetailHinweis(undefined);
+    // Der Suchbegriff aus der Kopfzeile gehört zur Galerie. Wer sie verlässt,
+    // soll sie beim nächsten Öffnen nicht gefiltert vorfinden.
+    if (ziel !== "baufotos-galerie") setFotoSuche("");
     window.localStorage.setItem(ANSICHT_SPEICHER, ziel);
   }, []);
 
@@ -147,6 +180,13 @@ export default function Home() {
         setOffeneMangelId(null);
       }}
       onSuche={(begriff) => {
+        if (NUR_FOTOS) {
+          // Auf der Website ist die Galerie die einzige Liste, in der es
+          // etwas zu suchen gibt.
+          setFotoSuche(begriff);
+          wechsle("baufotos-galerie");
+          return;
+        }
         daten.setzeMaengelFilter({ ...daten.maengelFilter, suche: begriff || undefined });
         setOffeneMangelId(null);
         setAnsicht("maengel-uebersicht");
@@ -221,6 +261,7 @@ export default function Home() {
           <Inhalt
             ansicht={ansicht}
             daten={daten}
+            fotoSuche={fotoSuche}
             onAnsicht={wechsle}
             onMangel={oeffneMangel}
             onMangelHinweis={setDetailHinweis}
@@ -236,12 +277,15 @@ export default function Home() {
 function Inhalt({
   ansicht,
   daten,
+  fotoSuche,
   onAnsicht,
   onMangel,
   onMangelHinweis,
 }: {
   ansicht: Ansicht;
   daten: ReturnType<typeof useAppDaten>;
+  /** Suchbegriff aus der Kopfzeile für die Galerie (nur Umfang "fotos"). */
+  fotoSuche: string;
   onAnsicht: (ansicht: Ansicht) => void;
   onMangel: (id: number) => void;
   onMangelHinweis: (hinweis?: string) => void;
@@ -264,7 +308,16 @@ function Inhalt({
 
   switch (ansicht) {
     case "dashboard":
-      return (
+      // Zwei Dashboards, ein Platz: Auf der Website hätte das große nichts zu
+      // rechnen — Mängelquoten und Fristen stünden dort als lauter Nullen.
+      return NUR_FOTOS ? (
+        <FotoDashboard
+          projekt={projekt}
+          fotosaetze={daten.fotosaetze}
+          laedt={daten.laedt || daten.laedtFotos}
+          onAnsicht={onAnsicht}
+        />
+      ) : (
         <Dashboard
           projekt={projekt}
           maengel={daten.maengel}
@@ -299,6 +352,7 @@ function Inhalt({
           empfaenger={daten.empfaenger}
           gewerke={daten.gewerke}
           laedt={daten.laedtFotos}
+          startSuche={fotoSuche}
           onAendern={daten.ladeFotosaetze}
           onNeu={() => onAnsicht("baufotos-neu")}
         />
@@ -345,6 +399,18 @@ function Inhalt({
           onAnsicht={onAnsicht}
         />
       ));
+
+    case "anzeigen-beantworten":
+      // Bewusst ohne ``mitProjekt``: Eine Anzeige laesst sich vollstaendig aus
+      // dem hochgeladenen Schreiben beantworten. Wer auf ein Bauvorhaben
+      // antworten muss, das in der App noch nicht angelegt ist, soll das
+      // koennen, statt erst Stammdaten zu pflegen.
+      return (
+        <AnzeigeBeantworten
+          projekt={projekt}
+          onAnsicht={onAnsicht}
+        />
+      );
 
     case "projektberichte":
       return mitProjekt((p) => <ProjektberichteVerwaltung projekt={p} />);

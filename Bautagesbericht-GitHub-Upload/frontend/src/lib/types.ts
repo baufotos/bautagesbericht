@@ -751,3 +751,243 @@ export interface AnalyseErgebnis {
   teilnehmer: number;
   hinweise: string[];
 }
+
+
+/* ───────────────────────── Anzeigen beantworten ─────────────────────────
+ *
+ * "Anzeigen" heisst hier ausdruecklich nicht nur Mehrkostenanzeige: Es sind
+ * auch Behinderungsanzeigen, Behinderungs- und Mehrkostenanzeigen,
+ * Bedenkenanmeldungen, Nachtragsangebote, Stundenlohn- und
+ * Stoerungsanzeigen. Welche Art es ist, liest der Server aus dem Dokument
+ * und traegt sie in Betreff und Mailbetreff.
+ */
+
+export interface AnzeigeAnschrift {
+  firma: string;
+  zusatz: string;
+  strasse: string;
+  plz: string;
+  ort: string;
+  land: string;
+}
+
+export interface GelesenerPunkt {
+  nummer: string;
+  titel: string;
+  text: string;
+}
+
+/** Was aus einer hochgeladenen Anzeige herauszulesen war. */
+export interface GelesenesSchreiben {
+  quelle: string;
+  seiten: number;
+  art: string;
+  nummer: string;
+  /** Wie die Firma selbst zaehlt: "MKA 01", "BEH 01", "MEKO 11". */
+  kennung: string;
+  datum: string | null;
+  betreff: string;
+  /** Betreff ohne die Zaehlung davor — der Sachverhalt allein. */
+  kurzbezeichnung: string;
+  /** Die anzeigende Firma. Sie bekommt die Antwort. */
+  absender: AnzeigeAnschrift;
+  absender_email: string;
+  absender_telefon: string;
+  ansprechpartner: string;
+  ansprechpartner_email: string;
+  /** Wen die Firma angeschrieben hat — meist der Bauherr. */
+  empfaenger: AnzeigeAnschrift;
+  projektnummer: string;
+  leistungsort: string;
+  gewerk: string;
+  rechtsgrundlage: string;
+  punkte: GelesenerPunkt[];
+  lv_positionen: string[];
+  bauzeit: string;
+  forderung: string;
+  unterzeichner: string;
+  unterzeichner_funktion: string;
+  /** Wortlaut der Anzeige — Tatsachengrundlage fuer das Ausformulieren. */
+  volltext: string;
+  hinweise: string[];
+}
+
+export interface AnzeigeAuslesenErgebnis {
+  schreiben: GelesenesSchreiben[];
+  fehlgeschlagen: string[];
+}
+
+export interface AnzeigeEmpfaenger {
+  firma: string;
+  /** "Herr", "Frau" oder leer. Leer = "Sehr geehrte Damen und Herren". */
+  anrede: "" | "Herr" | "Frau";
+  ansprechpartner: string;
+  strasse: string;
+  plz: string;
+  ort: string;
+  email: string;
+}
+
+export interface AnzeigeSachbearbeiter {
+  name: string;
+  funktion: string;
+  zeichen: string;
+  durchwahl: string;
+  email: string;
+}
+
+export interface AnzeigeAngaben {
+  art: string;
+  nummer: string;
+  kennung: string;
+  datum: string | null;
+  kurzbezeichnung: string;
+  bauzeit: string;
+}
+
+export type AnzeigeHaltung =
+  | "ablehnung"
+  | "teilweise"
+  | "pruefung"
+  | "anerkennung"
+  | "kenntnisnahme";
+
+export interface AnzeigeAntwortAnfrage {
+  empfaenger: AnzeigeEmpfaenger;
+  sachbearbeiter: AnzeigeSachbearbeiter;
+  anzeige: AnzeigeAngaben;
+  projektzeile: string;
+  vergabeeinheit: string;
+  betreff: string;
+  briefdatum: string | null;
+  /** Das Infofeld: die Stellungnahme des Bueros, Wort fuer Wort. */
+  stellungnahme: string;
+  einleitung: string;
+  haltung: AnzeigeHaltung;
+  schlusssatz: string;
+  bauzeit_ablehnen: boolean;
+  anlagen: string;
+  verteiler: string;
+  dateikuerzel: string;
+}
+
+export interface AnzeigeAbsatz {
+  text: string;
+  zitat: boolean;
+}
+
+export interface AnzeigeAntwortVorschau {
+  dateiname: string;
+  projektzeile: string;
+  vergabeeinheit: string;
+  betreff: string;
+  anrede: string;
+  adressblock: string[];
+  datumszeile: string[];
+  absaetze: AnzeigeAbsatz[];
+  verteilerseite: string[];
+  mail_betreff: string;
+  mail_text: string;
+  mail_an: string;
+  hinweise: string[];
+}
+
+export interface AnzeigeGewerkVorschlag {
+  id: number;
+  firma_name: string;
+  vergabeeinheit_code: string;
+  vergabeeinheit_bezeichnung: string;
+}
+
+export interface AnzeigeBearbeiterVorschlag {
+  id: number;
+  name: string;
+  kuerzel: string;
+  durchwahl: string;
+  email: string;
+}
+
+export interface AnzeigeVorbelegung {
+  projektzeile: string;
+  vergabeeinheit: string;
+  dateikuerzel: string;
+  briefdatum: string;
+  empfaenger: AnzeigeEmpfaenger | null;
+  sachbearbeiter: AnzeigeSachbearbeiter | null;
+  bearbeiter: AnzeigeBearbeiterVorschlag[];
+  gewerke: AnzeigeGewerkVorschlag[];
+  /** Kennung -> Klartext, z. B. { ablehnung: "Ablehnung" }. */
+  haltungen: Record<string, string>;
+  /** Die Arten von Anzeigen, die der Server kennt. */
+  arten: string[];
+  /** Ist Word erreichbar? Bestimmt, ob der PDF-Knopf erscheint. */
+  word_vorhanden: boolean;
+  /** Steckt ein Anthropic-Schluessel? Ohne ihn kein Formulieren-Knopf. */
+  formulieren_verfuegbar: boolean;
+  /** Warum nicht — ein Satz fuer die Oberflaeche, sonst leer. */
+  formulieren_hinweis: string;
+}
+
+export interface AnzeigeMailAnfrage {
+  antwort: AnzeigeAntwortAnfrage;
+  an?: string[];
+  kopie?: string[];
+  betreff?: string;
+  text?: string;
+  dokument_anhaengen?: boolean;
+}
+
+export interface AnzeigeFormulierenAnfrage {
+  /** Was in der Antwort stehen soll. Stichworte genuegen. */
+  stichpunkte: string;
+  anzeige: AnzeigeAngaben;
+  punkte: string[];
+  lv_positionen: string[];
+  rechtsgrundlage: string;
+  /** Volltext der eingegangenen Anzeige — die Tatsachengrundlage. */
+  anzeigetext: string;
+  haltung: AnzeigeHaltung;
+  projektzeile: string;
+  vergabeeinheit: string;
+}
+
+export interface AnzeigeFormulierenErgebnis {
+  /** Fertig zum Einsetzen ins Infofeld. */
+  stellungnahme: string;
+  /** Angaben, die gefehlt haben — bewusst nicht ausformuliert. */
+  offene_fragen: string[];
+  hinweise: string[];
+}
+
+/* ── Textbausteine: die Stellungnahme ohne Sprachmodell ──
+ *
+ * Die Standardsaetze aus den acht Referenzbriefen des Bueros. Sie brauchen
+ * keinen Anthropic-Schluessel und funktionieren deshalb ueberall. "___" in
+ * einem Text ist eine Luecke, die im Formular zu fuellen ist.
+ */
+
+export interface AnzeigeBaustein {
+  kennung: string;
+  titel: string;
+  text: string;
+  /** Eingeruecktes LV-Zitat. */
+  zitat: boolean;
+}
+
+export interface AnzeigeBausteinGruppe {
+  kennung: string;
+  titel: string;
+  bausteine: AnzeigeBaustein[];
+}
+
+export interface AnzeigeBausteineErgebnis {
+  gruppen: AnzeigeBausteinGruppe[];
+  /** Die Zeichenfolge, die eine offene Luecke markiert. */
+  luecke: string;
+}
+
+export interface AnzeigeGlaettenErgebnis {
+  text: string;
+  /** Was das Glaetten nicht konnte — etwa die Grossschreibung. */
+  hinweise: string[];
+}

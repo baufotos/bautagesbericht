@@ -12,6 +12,14 @@
  * und macht sichtbar, wo man ist — so arbeitet jedes Bauprogramm auf dem
  * Windows-Rechner.
  *
+ * ZWEI UMFÄNGE, EINE HÜLLE
+ * ========================
+ * Dieselbe Hülle trägt beide Auslieferungen (siehe lib/umfang.ts). Im vollen
+ * Umfang steht die ganze Navigation darin, auf der Website nur Dashboard,
+ * Baufotos und Stammdaten · Projekte. Gefiltert wird an EINER Stelle — aus
+ * NAVIGATION_VOLL wird NAVIGATION —, damit Kopfzeile, Seitenleiste, untere
+ * Leiste und der Router in app/page.tsx nie auseinanderlaufen können.
+ *
  * DREI GERÄTEKLASSEN, EINE HÜLLE
  * ==============================
  *   ab lg   feste Seitenleiste (Arbeitsplatz am Schreibtisch)
@@ -40,6 +48,7 @@ import {
   Map,
   MapPin,
   Menu,
+  MailPlus,
   MessagesSquare,
   Moon,
   Plus,
@@ -56,6 +65,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useThema } from "@/lib/thema";
+import { NUR_FOTOS } from "@/lib/umfang";
 import type { Projekt } from "@/lib/types";
 import { HppWortmarke } from "@/components/HppLogo";
 
@@ -68,6 +78,7 @@ export type Ansicht =
   | "maengel-uebersicht"
   | "maengel-neu"
   | "maengel-anzeige"
+  | "anzeigen-beantworten"
   | "projektberichte"
   | "besprechungen"
   | "btb-einreichen"
@@ -95,7 +106,8 @@ export interface NavGruppe {
   eintraege: NavEintrag[];
 }
 
-export const NAVIGATION: NavGruppe[] = [
+/** Die vollständige Navigation. Was davon erscheint, entscheidet NAVIGATION. */
+const NAVIGATION_VOLL: NavGruppe[] = [
   {
     eintraege: [
       {
@@ -122,6 +134,7 @@ export const NAVIGATION: NavGruppe[] = [
       {
         key: "baufotos-galerie",
         label: "Fotosätze",
+        kurz: "Sätze",
         icon: Images,
         titel: "Fotosätze",
         bereich: "Baufotos",
@@ -152,6 +165,19 @@ export const NAVIGATION: NavGruppe[] = [
         icon: FileSignature,
         titel: "Mängelanzeige erstellen",
         bereich: "Mängelberichte",
+      },
+    ],
+  },
+  {
+    label: "Schreiben",
+    eintraege: [
+      {
+        key: "anzeigen-beantworten",
+        label: "Anzeige beantworten",
+        kurz: "Anzeige",
+        icon: MailPlus,
+        titel: "Anzeige beantworten",
+        bereich: "Schreiben",
       },
     ],
   },
@@ -207,6 +233,7 @@ export const NAVIGATION: NavGruppe[] = [
       {
         key: "stamm-projekte",
         label: "Projekte",
+        kurz: "Projekte",
         icon: MapPin,
         titel: "Projekte",
         bereich: "Stammdaten",
@@ -250,16 +277,46 @@ export const NAVIGATION: NavGruppe[] = [
   },
 ];
 
-/** Alle Einträge flach — für Titel-Suche und die untere Leiste. */
+/**
+ * Was die Website zeigt (Umfang "fotos").
+ *
+ * Bewusst eine Aufzählung und keine Regel wie „alles außer Mängel“: Wer hier
+ * später einen Bereich freischaltet, soll ihn hinschreiben müssen. Gruppen und
+ * Reihenfolge bleiben die aus NAVIGATION_VOLL — die Seitenleiste sieht damit
+ * aus wie immer, nur kürzer.
+ */
+const FOTO_ANSICHTEN: Ansicht[] = [
+  "dashboard",
+  "baufotos-neu",
+  "baufotos-galerie",
+  "stamm-projekte",
+];
+
+/** Die Navigation dieser Fassung. */
+export const NAVIGATION: NavGruppe[] = NUR_FOTOS
+  ? NAVIGATION_VOLL.map((gruppe) => ({
+      ...gruppe,
+      eintraege: gruppe.eintraege.filter((e) => FOTO_ANSICHTEN.includes(e.key)),
+    })).filter((gruppe) => gruppe.eintraege.length > 0)
+  : NAVIGATION_VOLL;
+
+/**
+ * Alle Einträge flach — für Titel-Suche und die untere Leiste.
+ *
+ * Zugleich die Liste der Ansichten, die es in dieser Fassung überhaupt gibt:
+ * app/page.tsx prüft gemerkte und verlinkte Ansichten hiergegen. Ein alter
+ * Link auf die Mängelübersicht landet auf der Website deshalb ruhig auf dem
+ * Dashboard statt in einer leeren Fläche.
+ */
 export const ALLE_EINTRAEGE: NavEintrag[] = NAVIGATION.flatMap((g) => g.eintraege);
 
 /** Die vier Einträge der unteren Leiste am Handy. */
-const MOBILE_LEISTE: Ansicht[] = [
-  "dashboard",
-  "baufotos-neu",
-  "maengel-uebersicht",
-  "btb-einreichen",
-];
+const MOBILE_LEISTE: Ansicht[] = NUR_FOTOS
+  ? ["dashboard", "baufotos-neu", "baufotos-galerie", "stamm-projekte"]
+  : ["dashboard", "baufotos-neu", "maengel-uebersicht", "btb-einreichen"];
+
+/** Beschriftung des Suchfelds — es sucht, was es hier zu suchen gibt. */
+const SUCHE_LABEL = NUR_FOTOS ? "Fotosätze durchsuchen" : "Mängel durchsuchen";
 
 export function eintragZu(ansicht: Ansicht): NavEintrag {
   return ALLE_EINTRAEGE.find((e) => e.key === ansicht) ?? ALLE_EINTRAEGE[0];
@@ -402,7 +459,10 @@ export function AppShell({
   projekte: Projekt[];
   projektId: number | null;
   onProjekt: (id: number) => void;
-  /** Enter im Suchfeld — springt in die Mängelübersicht. */
+  /**
+   * Enter im Suchfeld — springt in die Liste, in der wirklich gesucht wird:
+   * die Mängelübersicht im vollen Umfang, die Fotosätze auf der Website.
+   */
   onSuche: (begriff: string) => void;
   onAktualisieren: () => void;
   laedt?: boolean;
@@ -489,8 +549,8 @@ export function AppShell({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") onSuche(suchbegriff.trim());
                 }}
-                placeholder="Mängel durchsuchen…"
-                aria-label="Mängel durchsuchen"
+                placeholder={`${SUCHE_LABEL}…`}
+                aria-label={SUCHE_LABEL}
                 className="w-full rounded-full border border-app-linie bg-app-flaeche-still py-2 pr-3 pl-9 text-[12.5px] text-app-text outline-none transition-colors placeholder:text-app-text-leise focus:border-app-linie-stark focus:bg-app-flaeche-hoch"
               />
             </div>
@@ -519,19 +579,23 @@ export function AppShell({
               dreht={laedt}
             />
 
-            {/* Die Glocke trägt eine echte Zahl: überfällige Mängel. */}
-            <div className="hidden sm:block">
-              <KopfKnopf
-                icon={Bell}
-                label={
-                  ueberfaellig > 0
-                    ? `${ueberfaellig} überfällige Mängel anzeigen`
-                    : "Keine überfälligen Mängel"
-                }
-                onClick={() => onAnsicht("maengel-uebersicht")}
-                zaehler={ueberfaellig}
-              />
-            </div>
+            {/* Die Glocke trägt eine echte Zahl: überfällige Mängel. Auf der
+                Website gibt es keine Mängel — dort fällt sie ganz weg, statt
+                als Knopf ohne Ziel in der Zeile zu stehen. */}
+            {!NUR_FOTOS && (
+              <div className="hidden sm:block">
+                <KopfKnopf
+                  icon={Bell}
+                  label={
+                    ueberfaellig > 0
+                      ? `${ueberfaellig} überfällige Mängel anzeigen`
+                      : "Keine überfälligen Mängel"
+                  }
+                  onClick={() => onAnsicht("maengel-uebersicht")}
+                  zaehler={ueberfaellig}
+                />
+              </div>
+            )}
 
             <div className="hidden sm:block">
               <KopfKnopf

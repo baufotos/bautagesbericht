@@ -27,6 +27,14 @@ services:
     rootDir: Bautagesbericht-GitHub-Upload
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
+    # ── Umfang der Weboberfläche ──
+    #
+    # Die Website zeigt nur Baufotos und die Projekt-Stammdaten. Der Schalter
+    # dafür steht NICHT hier, sondern als "ARG APP_UMFANG=fotos" in der
+    # Dockerfile: Der Wert wird beim Bauen ins JavaScript-Bündel eingesetzt,
+    # eine Umgebungsvariable des laufenden Dienstes käme dafür zu spät. Wer
+    # die Website wieder vollständig braucht, ändert die Zeile in der
+    # Dockerfile und stößt ein neues Deploy an.
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"

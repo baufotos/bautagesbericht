@@ -13,6 +13,15 @@ bequem „mit GitHub" an, damit du dir nur ein Passwort merken musst:
 Plane rund **30 Minuten** ein (davon ~10 Minuten reine Wartezeit beim ersten
 Aufbau). Du kannst jederzeit pausieren.
 
+> **Was die Website zeigt.** Sie ist bewusst auf die Baustelle zugeschnitten:
+> **Dashboard, Baufotos hochladen, Fotosätze** und **Stammdaten · Projekte** —
+> mehr nicht. Mängelberichte, Bautagesberichte, Monatsberichte,
+> Baubesprechungen und Schreiben entstehen im Büro im Windows-Paket, das
+> weiterhin alles kann. Umgestellt wird das an einer einzigen Stelle: `ARG
+> APP_UMFANG=fotos` in der `Dockerfile` (`voll` schaltet alle Bereiche wieder
+> frei, danach ein neues Deploy). Die Datenbank ist dieselbe — was auf der
+> Baustelle hochgeladen wird, steht sofort im Büro zur Verfügung.
+
 > **Was ist mit meinem bisherigen PC-Betrieb?** Der bleibt unangetastet: Das
 > Skript `Start-Bautagesbericht.ps1` funktioniert weiter als Notlösung. Sobald
 > das Online-Deployment steht, brauchst du es aber nicht mehr.
@@ -125,13 +134,18 @@ also `https://bautagesbericht.onrender.com/api/health`. Es sollte
 ## Teil D — Ausprobieren
 
 1. Öffne die Render-Adresse im Browser.
-2. Lege ein **Projekt** an (mit Adresse — daraus kommen die Wetterdaten).
-3. Lege einen **Empfänger** an (E-Mail-Adresse).
-4. Reiche einen **Bericht** ein: Projekt und Empfänger wählen, PDF hochladen,
-   absenden.
-5. Nach kurzer Verarbeitung steht das **Word-Dokument zum Download** bereit —
-   und geht (falls SMTP eingerichtet ist) zusätzlich **per E-Mail** an den
-   Empfänger.
+2. Lege unter **Stammdaten · Projekte** ein **Projekt** an (mit Adresse). Trag
+   dort auch den **Fotoordner** im Netzlaufwerk ein — dorthin legt der
+   Bürorechner die Bilder später ab.
+3. Wähle das Projekt oben in der Kopfzeile aus.
+4. Klick auf dem **Dashboard** in das große Feld **„Fotos hochladen"** (oder
+   links im Menü, am Handy über die drei Striche oben links).
+5. Kategorie und Bautag eingeben, Fotos aufnehmen oder aus der Galerie wählen,
+   **hochladen**. Der Name des Archivs steht schon vorher da.
+6. Unter **Fotosätze** ist der Satz danach zu sehen — mit Vorschaubildern,
+   ZIP-Download und der Möglichkeit, ihn per E-Mail weiterzugeben.
+7. Auf dem Dashboard zeigt die Kachel **„Abholung ins Büro"**, wie viele Sätze
+   noch auf einen Bürorechner warten.
 
 Beim allerersten Aufruf nach einer Pause kann es 30–60 Sekunden dauern (siehe
 Teil F).

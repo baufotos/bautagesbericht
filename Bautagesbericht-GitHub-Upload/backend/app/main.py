@@ -17,6 +17,7 @@ from app.routers import (
     maengel,
     maengelanzeige,
     mangel_stammdaten,
+    mehrkostenanzeige,
     plaene,
     projekte,
     projektberichte,
@@ -63,6 +64,9 @@ app.include_router(plaene.router, prefix="/api")
 app.include_router(projektberichte.router, prefix="/api")
 app.include_router(maengel.router, prefix="/api")
 app.include_router(maengelanzeige.router, prefix="/api")
+
+# Anzeigen der Baufirmen beantworten (Mehrkosten-, Behinderungsanzeigen, …)
+app.include_router(mehrkostenanzeige.router, prefix="/api")
 
 # Baubesprechungsprotokolle
 app.include_router(besprechungsprotokolle.router, prefix="/api")

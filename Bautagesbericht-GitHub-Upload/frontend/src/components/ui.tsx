@@ -171,7 +171,14 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...rest} className={`${EINGABE_KLASSEN} ${className}`} />;
 }
 
-export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+/**
+ * ``ComponentPropsWithRef`` statt ``TextareaHTMLAttributes``: Damit laesst sich
+ * ein ``ref`` durchgeben. Gebraucht wird das dort, wo etwas an der
+ * Schreibmarke eingesetzt wird — die Textbausteine der Anzeigen-Antwort landen
+ * an der Stelle, an der der Zeiger steht, nicht am Ende des Feldes. In React 19
+ * reist ``ref`` als gewoehnliche Eigenschaft mit ``...rest`` mit.
+ */
+export function Textarea(props: React.ComponentPropsWithRef<"textarea">) {
   const { className = "", ...rest } = props;
   return (
     <textarea

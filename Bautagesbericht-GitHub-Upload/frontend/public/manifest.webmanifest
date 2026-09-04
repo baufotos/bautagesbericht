@@ -8,11 +8,18 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "browser"
+  ],
   "orientation": "any",
   "background_color": "#0D0E10",
   "theme_color": "#0D0E10",
-  "categories": ["business", "productivity"],
+  "categories": [
+    "business",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -39,21 +46,36 @@
       "short_name": "Mangel",
       "description": "Direkt zum Erfassungsformular für einen neuen Mangel",
       "url": "/?tab=maengel&neu=1",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Mängel-Übersicht",
       "short_name": "Mängel",
       "description": "Offene und überfällige Mängel des Projekts",
       "url": "/?tab=maengel",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Bericht einreichen",
       "short_name": "Bericht",
       "description": "Bautagesbericht einreichen",
       "url": "/?tab=einreichen",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

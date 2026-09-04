@@ -1,5 +1,7 @@
 /*
- * Stempelt vor jedem Build eine frische Kennung in public/sw.js.
+ * Stempelt vor jedem Build zwei Dinge in public/:
+ *   1. eine frische Kennung in sw.js,
+ *   2. Beschreibung und Verknüpfungen im Manifest, passend zum Umfang.
  *
  * WARUM ES DIESES SKRIPT GIBT
  * ===========================
@@ -22,6 +24,16 @@
  *
  * Die Kennung ist der Zeitpunkt des Builds. Sie muss nur *anders* sein als
  * vorher, nicht schön.
+ *
+ * UND WARUM AUCH DAS MANIFEST
+ * ===========================
+ * Das Manifest ist eine statische Datei und wird deshalb in beide Fassungen
+ * gleich ausgeliefert (siehe src/lib/umfang.ts). Seine Verknüpfungen landen
+ * aber im Startmenü und im Kontextmenü des Symbols auf dem Handy — und ein
+ * "Mangel erfassen" auf der Website führt zu einer Ansicht, die es dort nicht
+ * gibt. Weil derselbe prebuild-Lauf ohnehin die Umgebung kennt, wird das
+ * Manifest hier gleich mitgestempelt. Der Eingriff ist eng: nur description
+ * und shortcuts, alles andere bleibt, wie es in der Datei steht.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -30,6 +42,12 @@ import { fileURLToPath } from "node:url";
 
 const HIER = dirname(fileURLToPath(import.meta.url));
 const SW = join(HIER, "..", "public", "sw.js");
+const MANIFEST = join(HIER, "..", "public", "manifest.webmanifest");
+
+/** Muss zu next.config.ts passen: alles außer "fotos" ist der volle Umfang. */
+const UMFANG = process.env.APP_UMFANG === "fotos" ? "fotos" : "voll";
+
+/* ───────────────────────────── 1. Service Worker ───────────────────────────── */
 
 // Erkennt die Zeile unabhängig von ihrem bisherigen Wert.
 const MUSTER = /^const VERSION = "[^"]*";$/m;
@@ -59,3 +77,81 @@ if (!MUSTER.test(inhalt)) {
 const neu = inhalt.replace(MUSTER, `const VERSION = "hpp-${stempel}";`);
 writeFileSync(SW, neu);
 console.log(`sw-version: Service Worker auf hpp-${stempel} gestempelt.`);
+
+/* ───────────────────────────── 2. Manifest ───────────────────────────── */
+
+const SYMBOL = [{ src: "/icons/icon-192.png", sizes: "192x192" }];
+
+const BESCHREIBUNG = {
+  voll: "Bautagesberichte und Mängelmanagement für HPP Architekten Baumanagement",
+  fotos: "Baufotos der Baustelle hochladen — HPP Architekten Baumanagement",
+};
+
+const VERKNUEPFUNGEN = {
+  voll: [
+    {
+      name: "Mangel erfassen",
+      short_name: "Mangel",
+      description: "Direkt zum Erfassungsformular für einen neuen Mangel",
+      url: "/?tab=maengel&neu=1",
+      icons: SYMBOL,
+    },
+    {
+      name: "Mängel-Übersicht",
+      short_name: "Mängel",
+      description: "Offene und überfällige Mängel des Projekts",
+      url: "/?tab=maengel",
+      icons: SYMBOL,
+    },
+    {
+      name: "Bericht einreichen",
+      short_name: "Bericht",
+      description: "Bautagesbericht einreichen",
+      url: "/?tab=einreichen",
+      icons: SYMBOL,
+    },
+  ],
+  fotos: [
+    {
+      name: "Fotos hochladen",
+      short_name: "Fotos",
+      description: "Direkt zum Hochladen der Baufotos",
+      url: "/?ansicht=baufotos-neu",
+      icons: SYMBOL,
+    },
+    {
+      name: "Fotosätze",
+      short_name: "Sätze",
+      description: "Die hochgeladenen Fotosätze des Projekts",
+      url: "/?ansicht=baufotos-galerie",
+      icons: SYMBOL,
+    },
+  ],
+};
+
+const manifestRoh = readFileSync(MANIFEST, "utf8");
+// Zeilenenden der vorhandenen Datei behalten: Der Quellordner ist durchgängig
+// CRLF, und eine mit LF zurückgeschriebene Datei erzeugt beim Spiegeln ins
+// Git-Verzeichnis einen Commit, der nichts als Zeilenenden ändert.
+const zeilenende = manifestRoh.includes("\r\n") ? "\r\n" : "\n";
+
+let manifest;
+try {
+  manifest = JSON.parse(manifestRoh);
+} catch (fehler) {
+  console.error(`sw-version: ${MANIFEST} ist kein gültiges JSON — Build abgebrochen.`);
+  console.error(fehler.message);
+  process.exit(1);
+}
+
+manifest.description = BESCHREIBUNG[UMFANG];
+manifest.shortcuts = VERKNUEPFUNGEN[UMFANG];
+
+writeFileSync(
+  MANIFEST,
+  JSON.stringify(manifest, null, 2).replace(/\n/g, zeilenende) + zeilenende
+);
+console.log(
+  `sw-version: Manifest auf Umfang "${UMFANG}" gestempelt ` +
+    `(${manifest.shortcuts.length} Verknüpfungen).`
+);
