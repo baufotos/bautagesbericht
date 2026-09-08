@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/lib/api";
+import { MIT_FOTOS } from "@/lib/umfang";
 import {
   alsZeitstempel,
   formatDatumIso,
@@ -361,25 +362,40 @@ export function Dashboard({
           </KarteInhalt>
         </Karte>
 
+        {/* Ohne Baufotos ruecken die Bautagesberichte auf den Hauptplatz.
+            Die Kachel bleibt bestehen — eine Luecke im Raster waere
+            auffaelliger als eine Kachel mit einer Zahl weniger. */}
         <Karte>
-          <KarteKopf titel="Dokumentation" icon={Camera} />
+          <KarteKopf
+            titel="Dokumentation"
+            icon={MIT_FOTOS ? Camera : FileText}
+          />
           <KarteInhalt className="flex flex-col gap-3">
-            <Kennzahl
-              wert={fotosGesamt}
-              label={`Fotos in ${fotosaetze.length} Fotosatz/Fotosätzen`}
-              trend={trendAus(fotosaetzeNeu, neuFotosVorher, false)}
-            />
-            {/* Absichtlich keine Quote: Es gibt keine sinnvolle Bezugsgröße
-                für "wie viele Berichte sollten es sein" — ein erfundener
-                Prozentwert wäre schlimmer als die nackte Zahl. */}
-            <div className="flex items-baseline justify-between gap-2 border-t border-app-linie pt-2.5">
-              <span className="text-[12px] text-app-text-still">
-                Bautagesberichte, letzte {FENSTER_TAGE} Tage
-              </span>
-              <span className="text-[13px] font-semibold text-app-text">
-                {berichteNeu}
-              </span>
-            </div>
+            {MIT_FOTOS ? (
+              <>
+                <Kennzahl
+                  wert={fotosGesamt}
+                  label={`Fotos in ${fotosaetze.length} Fotosatz/Fotosätzen`}
+                  trend={trendAus(fotosaetzeNeu, neuFotosVorher, false)}
+                />
+                {/* Absichtlich keine Quote: Es gibt keine sinnvolle Bezugsgröße
+                    für "wie viele Berichte sollten es sein" — ein erfundener
+                    Prozentwert wäre schlimmer als die nackte Zahl. */}
+                <div className="flex items-baseline justify-between gap-2 border-t border-app-linie pt-2.5">
+                  <span className="text-[12px] text-app-text-still">
+                    Bautagesberichte, letzte {FENSTER_TAGE} Tage
+                  </span>
+                  <span className="text-[13px] font-semibold text-app-text">
+                    {berichteNeu}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <Kennzahl
+                wert={berichteNeu}
+                label={`Bautagesberichte, letzte ${FENSTER_TAGE} Tage`}
+              />
+            )}
           </KarteInhalt>
         </Karte>
       </div>
@@ -524,14 +540,16 @@ export function Dashboard({
 
         <Karte>
           <KarteKopf
-            titel="Berichte und Fotos"
+            titel={MIT_FOTOS ? "Berichte und Fotos" : "Bautagesberichte"}
             unterzeile={`letzte ${FENSTER_TAGE} Tage`}
             icon={TrendingUp}
           />
           <KarteInhalt className="flex flex-col gap-3">
             <div className="flex gap-6">
               <Kennzahl wert={berichteNeu} label="Bautagesberichte" />
-              <Kennzahl wert={fotosaetzeNeu} label="Fotosätze" />
+              {MIT_FOTOS && (
+                <Kennzahl wert={fotosaetzeNeu} label="Fotosätze" />
+              )}
             </div>
             <div>
               <div className="mb-1 text-[11px] text-app-text-still">
@@ -547,13 +565,15 @@ export function Dashboard({
               >
                 Berichte
               </Button>
-              <Button
-                variante="still"
-                icon={Images}
-                onClick={() => onAnsicht("baufotos-galerie")}
-              >
-                {fotosGesamt} Fotos
-              </Button>
+              {MIT_FOTOS && (
+                <Button
+                  variante="still"
+                  icon={Images}
+                  onClick={() => onAnsicht("baufotos-galerie")}
+                >
+                  {fotosGesamt} Fotos
+                </Button>
+              )}
             </div>
           </KarteInhalt>
         </Karte>
@@ -642,72 +662,78 @@ export function Dashboard({
           )}
         </Karte>
 
-        <Karte>
-          <KarteKopf
-            titel="Fotodokumentation"
-            unterzeile={
-              fotosaetze.length > 0
-                ? `zuletzt ${formatDatumIso(fotosaetze[0].datum)}`
-                : undefined
-            }
-            icon={Camera}
-            aktion={
-              <Button
-                variante="sekundaer"
-                onClick={() => onAnsicht("baufotos-galerie")}
-              >
-                Öffnen
-              </Button>
-            }
-          />
-          <KarteInhalt className="flex flex-col gap-2.5">
-            {neuesteFotosaetze.length === 0 ? (
-              <LeerHinweis>
-                Noch keine Baufotos. Fotos werden beim Hochladen automatisch
-                umbenannt und als ZIP bereitgestellt.
-              </LeerHinweis>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {neuesteFotosaetze.map((satz) => (
-                    <button
-                      key={satz.id}
-                      type="button"
-                      onClick={() => onAnsicht("baufotos-galerie")}
-                      className="relative aspect-[4/3] cursor-pointer overflow-hidden rounded-app-sm border border-app-linie bg-app-flaeche-still"
-                      title={`${satz.kategorie} · ${formatDatumIso(satz.datum)}`}
-                    >
-                      {satz.titel_foto_id ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={api.baufotos.fotoUrl(satz.titel_foto_id, true)}
-                          alt={`${satz.kategorie} vom ${formatDatumIso(satz.datum)}`}
-                          className="size-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="flex size-full items-center justify-center text-app-text-leise">
-                          <Images size={18} />
+        {/* Die Fotodokumentation gibt es in der Buero-Fassung nicht —
+            dafuer ist die Baustellen-Website da (siehe lib/umfang.ts).
+            Ausgeblendet statt entfernt: Das Windows-Paket zeigt sie
+            weiterhin, es ist der Notweg ohne Netz. */}
+        {MIT_FOTOS && (
+          <Karte>
+            <KarteKopf
+              titel="Fotodokumentation"
+              unterzeile={
+                fotosaetze.length > 0
+                  ? `zuletzt ${formatDatumIso(fotosaetze[0].datum)}`
+                  : undefined
+              }
+              icon={Camera}
+              aktion={
+                <Button
+                  variante="sekundaer"
+                  onClick={() => onAnsicht("baufotos-galerie")}
+                >
+                  Öffnen
+                </Button>
+              }
+            />
+            <KarteInhalt className="flex flex-col gap-2.5">
+              {neuesteFotosaetze.length === 0 ? (
+                <LeerHinweis>
+                  Noch keine Baufotos. Fotos werden beim Hochladen automatisch
+                  umbenannt und als ZIP bereitgestellt.
+                </LeerHinweis>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {neuesteFotosaetze.map((satz) => (
+                      <button
+                        key={satz.id}
+                        type="button"
+                        onClick={() => onAnsicht("baufotos-galerie")}
+                        className="relative aspect-[4/3] cursor-pointer overflow-hidden rounded-app-sm border border-app-linie bg-app-flaeche-still"
+                        title={`${satz.kategorie} · ${formatDatumIso(satz.datum)}`}
+                      >
+                        {satz.titel_foto_id ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={api.baufotos.fotoUrl(satz.titel_foto_id, true)}
+                            alt={`${satz.kategorie} vom ${formatDatumIso(satz.datum)}`}
+                            className="size-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span className="flex size-full items-center justify-center text-app-text-leise">
+                            <Images size={18} />
+                          </span>
+                        )}
+                        <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1.5 py-0.5 text-left text-[10px] text-white">
+                          {satz.kategorie}
                         </span>
-                      )}
-                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1.5 py-0.5 text-left text-[10px] text-white">
-                        {satz.kategorie}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between gap-2 text-[11.5px] text-app-text-still">
-                  <span>
-                    {fotosaetze.length} Fotosatz/Fotosätze · {fotosGesamt} Fotos
-                  </span>
-                  {fotosaetze[0] && (
-                    <Plakette art="neutral">{fotosaetze[0].kategorie}</Plakette>
-                  )}
-                </div>
-              </>
-            )}
-          </KarteInhalt>
-        </Karte>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[11.5px] text-app-text-still">
+                    <span>
+                      {fotosaetze.length} Fotosatz/Fotosätze · {fotosGesamt} Fotos
+                    </span>
+                    {fotosaetze[0] && (
+                      <Plakette art="neutral">{fotosaetze[0].kategorie}</Plakette>
+                    )}
+                  </div>
+                </>
+              )}
+            </KarteInhalt>
+          </Karte>
+        )}
       </KartenGitter>
     </div>
   );

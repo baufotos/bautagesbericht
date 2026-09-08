@@ -66,7 +66,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { THEMA_STANDARD, useThema } from "@/lib/thema";
-import { NUR_FOTOS } from "@/lib/umfang";
+import { NUR_FOTOS, OHNE_FOTOS } from "@/lib/umfang";
 import type { Projekt } from "@/lib/types";
 import { HppWortmarke } from "@/components/HppLogo";
 
@@ -315,13 +315,29 @@ const FOTO_ANSICHTEN: Ansicht[] = [
   "stamm-projekte",
 ];
 
+/**
+ * Die Ansichten, die der Büro-Website fehlen — sie hat die Baufotos nicht,
+ * dafür gibt es die Baustellen-Website (siehe lib/umfang.ts).
+ *
+ * Wieder eine Aufzählung statt einer Regel: Wer hier etwas herausnimmt oder
+ * hinzufügt, soll es hinschreiben müssen.
+ */
+const BUERO_OHNE: Ansicht[] = ["baufotos-neu", "baufotos-galerie"];
+
 /** Die Navigation dieser Fassung. */
-export const NAVIGATION: NavGruppe[] = NUR_FOTOS
-  ? NAVIGATION_VOLL.map((gruppe) => ({
-      ...gruppe,
-      eintraege: gruppe.eintraege.filter((e) => FOTO_ANSICHTEN.includes(e.key)),
-    })).filter((gruppe) => gruppe.eintraege.length > 0)
-  : NAVIGATION_VOLL;
+export const NAVIGATION: NavGruppe[] = (() => {
+  const behalten = NUR_FOTOS
+    ? (e: NavEintrag) => FOTO_ANSICHTEN.includes(e.key)
+    : OHNE_FOTOS
+      ? (e: NavEintrag) => !BUERO_OHNE.includes(e.key)
+      : null;
+
+  if (!behalten) return NAVIGATION_VOLL;
+  return NAVIGATION_VOLL.map((gruppe) => ({
+    ...gruppe,
+    eintraege: gruppe.eintraege.filter(behalten),
+  })).filter((gruppe) => gruppe.eintraege.length > 0);
+})();
 
 /**
  * Alle Einträge flach — für Titel-Suche und die untere Leiste.
@@ -336,7 +352,11 @@ export const ALLE_EINTRAEGE: NavEintrag[] = NAVIGATION.flatMap((g) => g.eintraeg
 /** Die vier Einträge der unteren Leiste am Handy. */
 const MOBILE_LEISTE: Ansicht[] = NUR_FOTOS
   ? ["dashboard", "baufotos-neu", "baufotos-galerie", "stamm-projekte"]
-  : ["dashboard", "baufotos-neu", "maengel-uebersicht", "btb-einreichen"];
+  : OHNE_FOTOS
+    // Ohne Baufotos rückt die Mängelanzeige nach — der vierte Platz darf
+    // nicht leer bleiben, sonst steht die Leiste schief.
+    ? ["dashboard", "maengel-uebersicht", "btb-einreichen", "besprechungen"]
+    : ["dashboard", "baufotos-neu", "maengel-uebersicht", "btb-einreichen"];
 
 /** Beschriftung des Suchfelds — es sucht, was es hier zu suchen gibt. */
 const SUCHE_LABEL = NUR_FOTOS ? "Fotosätze durchsuchen" : "Mängel durchsuchen";

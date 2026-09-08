@@ -44,8 +44,10 @@ const HIER = dirname(fileURLToPath(import.meta.url));
 const SW = join(HIER, "..", "public", "sw.js");
 const MANIFEST = join(HIER, "..", "public", "manifest.webmanifest");
 
-/** Muss zu next.config.ts passen: alles außer "fotos" ist der volle Umfang. */
-const UMFANG = process.env.APP_UMFANG === "fotos" ? "fotos" : "voll";
+/** Muss zu lib/umfang.ts passen — dieselben drei Werte, dieselbe Rueckfallregel. */
+const UMFANG = ["fotos", "buero"].includes(process.env.APP_UMFANG)
+  ? process.env.APP_UMFANG
+  : "voll";
 
 /* ───────────────────────────── 1. Service Worker ───────────────────────────── */
 
@@ -84,9 +86,12 @@ const SYMBOL = [{ src: "/icons/icon-192.png", sizes: "192x192" }];
 
 const BESCHREIBUNG = {
   voll: "Bautagesberichte und Mängelmanagement für HPP Architekten Baumanagement",
+  buero: "Bautagesberichte und Mängelmanagement für HPP Architekten Baumanagement",
   fotos: "Baufotos der Baustelle hochladen — HPP Architekten Baumanagement",
 };
 
+// "buero" teilt sich die Verknuepfungen mit "voll": Beide zeigen Maengel
+// und Bautagesberichte, keine davon fuehrt zu den Baufotos.
 const VERKNUEPFUNGEN = {
   voll: [
     {
@@ -133,6 +138,7 @@ const VERKNUEPFUNGEN = {
  *  lib/thema.ts fuer die jeweilige Standardfassung. */
 const FASSUNGSFARBE = {
   voll: "#FFFFFF",   // HPP-Fassung
+  buero: "#FFFFFF",  // HPP-Fassung
   fotos: "#0D0E10",  // dunkle Fassung
 };
 
@@ -152,7 +158,7 @@ try {
 }
 
 manifest.description = BESCHREIBUNG[UMFANG];
-manifest.shortcuts = VERKNUEPFUNGEN[UMFANG];
+manifest.shortcuts = VERKNUEPFUNGEN[UMFANG === "buero" ? "voll" : UMFANG];
 
 // Startfarbe der installierten App. MUSS zur Standardfassung passen (siehe
 // lib/thema.ts): Die Baumanagement-App startet im weissen HPP-Design, die

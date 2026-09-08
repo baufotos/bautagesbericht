@@ -141,11 +141,16 @@ services:
         value: http://127.0.0.1:8000
       # ── Der einzige echte Unterschied zur Baustellen-Seite ──
       #
-      # "voll" schaltet alle Bereiche der Oberfläche frei UND sorgt dafür,
-      # dass die Dockerfile LibreOffice installiert. Ohne LibreOffice gäbe es
-      # hier kein "Als PDF" — auf Linux kann Word nicht angesteuert werden.
+      # "buero" schaltet alle Bereiche frei AUSSER den Baufotos — die haben
+      # ihre eigene Website, und beide hängen an derselben Datenbank. Der
+      # Wert sorgt zugleich dafür, dass die Dockerfile LibreOffice
+      # installiert; ohne das gäbe es hier kein "Als PDF", denn auf Linux
+      # lässt sich Word nicht ansteuern.
+      #
+      # NICHT auf "voll" ändern: Das ist der Umfang des Windows-Pakets und
+      # brächte die Baufotos hier ein zweites Mal in die Navigation.
       - key: APP_UMFANG
-        value: voll
+        value: buero
       # ── Gemeinsame Datenbank ──
       # DERSELBE Wert wie beim Dienst "bautagesbericht", sonst sind es zwei
       # getrennte Datenbestände und die Baustellenfotos fehlen im Büro.

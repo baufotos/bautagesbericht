@@ -32,19 +32,30 @@ const STATISCHER_EXPORT = process.env.NEXT_EXPORT === "1";
  * ZWEI UMFÄNGE — wie viel von der Oberfläche überhaupt erscheint.
  *
  *   "voll"    alle Bereiche (Windows-Paket, lokale Entwicklung) — Standard
- *   "fotos"   nur Dashboard, Baufotos und Stammdaten · Projekte (die Website)
+ *   "buero"   alle Bereiche AUSSER Baufotos (die Büro-Website)
+ *   "fotos"   nur Dashboard, Baufotos und Stammdaten · Projekte (Baustelle)
  *
- * Gesetzt wird der Wert beim Bauen: Die Dockerfile der Website trägt
- * APP_UMFANG=fotos ein, sonst greift der Standard. Er wandert als
- * NEXT_PUBLIC_UMFANG ins Bündel; ausgewertet wird er an einer einzigen
- * Stelle, in src/lib/umfang.ts.
+ * Gesetzt wird der Wert beim Bauen: render.yaml trägt ihn je Dienst ein
+ * ("buero" bzw. der Dockerfile-Standard "fotos"), das Windows-Paket setzt
+ * nichts und bekommt "voll". Er wandert als NEXT_PUBLIC_UMFANG ins Bündel;
+ * ausgewertet wird er an einer einzigen Stelle, in src/lib/umfang.ts.
+ *
+ * Die Liste unten MUSS zu der in src/lib/umfang.ts passen. Stand hier einmal
+ * nur "fotos", wurde aus einem unbekannten Wert stillschweigend "voll" — die
+ * Büro-Website zeigte dann trotz APP_UMFANG=buero wieder ihre Baufotos, ohne
+ * dass irgendwo ein Fehler erschien.
  *
  * Absichtlich NICHT an NEXT_EXPORT gekoppelt, obwohl heute beides
  * zusammenfällt: Das sind zwei verschiedene Fragen ("wie wird ausgeliefert"
  * und "was ist zu sehen"), und wer die Website einmal wieder vollständig
  * braucht, soll dafür kein Auslieferungsverfahren umstellen müssen.
  */
-const UMFANG = process.env.APP_UMFANG === "fotos" ? "fotos" : "voll";
+const UMFAENGE = ["voll", "buero", "fotos"] as const;
+const UMFANG = (UMFAENGE as readonly string[]).includes(
+  process.env.APP_UMFANG ?? ""
+)
+  ? (process.env.APP_UMFANG as string)
+  : "voll";
 
 /** Was in beiden Betriebsarten gleich ist. */
 const GEMEINSAM = {

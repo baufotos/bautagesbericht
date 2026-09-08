@@ -12,8 +12,8 @@
 #     einen Umbruch-Algorithmus. Auf dem Buerorechner macht das Word; im
 #     Linux-Container gibt es kein Word, dort springt LibreOffice ein (siehe
 #     backend/app/services/word_pdf.py). Die Baufoto-Website kennt keine
-#     PDF-Funktion und bleibt deshalb ohne LibreOffice: ~400 MB kleiner und
-#     deutlich schneller gebaut.
+#     PDF-Funktion und bleibt als einzige ohne LibreOffice: ~400 MB kleiner
+#     und deutlich schneller gebaut.
 #
 # Laufzeit: start.sh startet uvicorn intern auf 127.0.0.1:8000 und next start
 # nach außen auf $PORT. next.config.ts proxyt /api/* an BACKEND_URL (=8000),
@@ -36,16 +36,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 # --- Umfang der Weboberfläche (Bauzeit-Schalter) ---
 #
 # "fotos"  = Baustellen-Website: Dashboard, Baufotos, Stammdaten · Projekte.
-# "voll"   = Büro-Website und Windows-Paket: alle Bereiche.
+# "buero"  = Büro-Website: alle Bereiche AUSSER Baufotos — dafür gibt es die
+#            Baustellen-Website, und beide teilen dieselbe Datenbank.
+# "voll"   = Windows-Paket: alles. Es ist der Notweg ohne Netz und darf
+#            deshalb nicht weniger können als die Websites.
 #
 # Steht hier oben, weil schon der naechste Schritt davon abhaengt. Render
 # reicht die Umgebungsvariablen eines Dienstes automatisch als Build-Argument
-# durch — der Buero-Dienst setzt in render.yaml also einfach APP_UMFANG=voll,
+# durch — der Buero-Dienst setzt in render.yaml also APP_UMFANG=buero,
 # ohne dass diese Datei angefasst werden muss. Ohne Angabe gilt "fotos": die
 # Website hat damit nie versehentlich den vollen Umfang.
 ARG APP_UMFANG=fotos
 
-# --- LibreOffice: nur beim vollen Umfang (PDF-Ausgabe) ---
+# --- LibreOffice: überall außer bei der Baufoto-Website (PDF-Ausgabe) ---
 #
 # "-nogui" spart die Oberflaechen-Abhaengigkeiten; existiert das Paket in der
 # Distribution nicht, wird auf das normale libreoffice-writer zurueckgefallen.
@@ -57,7 +60,7 @@ ARG APP_UMFANG=fotos
 # nur ein "--version": Er beweist, dass Programmdatei, Suchpfad, Schriften und
 # Benutzerprofil zusammenspielen. Scheitert das, soll der BUILD scheitern —
 # nicht erst der erste PDF-Versuch eines Kollegen Wochen spaeter.
-RUN if [ "$APP_UMFANG" = "voll" ]; then \
+RUN if [ "$APP_UMFANG" != "fotos" ]; then \
       apt-get update \
    && ( apt-get install -y --no-install-recommends libreoffice-writer-nogui fonts-liberation \
      || apt-get install -y --no-install-recommends libreoffice-writer      fonts-liberation ) \
@@ -71,7 +74,7 @@ RUN if [ "$APP_UMFANG" = "voll" ]; then \
    && rm -f /tmp/probe.txt /tmp/probe.pdf \
    && echo "LibreOffice einsatzbereit: $(soffice --headless --version | head -1)" ; \
     else \
-      echo "APP_UMFANG=$APP_UMFANG - kein PDF-Export noetig, LibreOffice uebersprungen." ; \
+      echo "APP_UMFANG=$APP_UMFANG - keine PDF-Ausgabe, LibreOffice uebersprungen." ; \
     fi
 
 WORKDIR /app
