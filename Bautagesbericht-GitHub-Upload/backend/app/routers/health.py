@@ -58,15 +58,42 @@ def dokumente():
     nur, was der Rechner kann.
     """
     import os
+    from pathlib import Path
 
     from app.services import word_pdf
     from app.services.pdf_extraction import erkennung_beschreibung
 
     scan_moeglich, scan_hinweis = erkennung_beschreibung()
-    return {
-        "umfang": os.environ.get("APP_UMFANG") or "voll",
+
+    # Der Umfang steckt im JavaScript-Bündel und wird beim BAUEN eingesetzt.
+    # Die Datei schreibt die Dockerfile in genau dem Lauf, der auch das Bündel
+    # erzeugt hat — sie kann also nicht lügen. Die Umgebungsvariable dagegen
+    # schon: Ändert man sie bei Render allein am Dienst, wird nur neu
+    # gestartet, nicht neu gebaut.
+    gebaut = ""
+    quelle = Path("/app/umfang-beim-bauen.txt")
+    try:
+        gebaut = quelle.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass                       # Windows-Paket, lokale Entwicklung
+
+    laufzeit = (os.environ.get("APP_UMFANG") or "").strip()
+    umfang = gebaut or laufzeit or "voll"
+
+    antwort = {
+        "umfang": umfang,
         "pdf_moeglich": word_pdf.pdf_moeglich(),
         "pdf_weg": word_pdf.pdf_weg(),
         "scan_erkennung": scan_moeglich,
         "scan_hinweis": scan_hinweis,
     }
+
+    if gebaut and laufzeit and gebaut != laufzeit:
+        antwort["warnung"] = (
+            f"Die Oberfläche wurde mit APP_UMFANG={gebaut} gebaut, am Dienst "
+            f"steht inzwischen {laufzeit}. Eine geänderte Umgebungsvariable "
+            "allein startet den Dienst nur neu — das Bündel bleibt, wie es "
+            "war. Ein neues Deploy (Push oder „Clear build cache & deploy“) "
+            "bringt beide wieder zusammen."
+        )
+    return antwort

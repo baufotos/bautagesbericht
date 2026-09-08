@@ -101,6 +101,18 @@ COPY frontend ./frontend
 # und die moeglichen Werte stehen oben beim ARG.
 ENV APP_UMFANG=${APP_UMFANG}
 
+# Den Wert, mit dem WIRKLICH gebaut wurde, ins Image schreiben.
+#
+# Warum das noetig ist: Render reicht Umgebungsvariablen zwar als
+# Build-Argument durch, aendert man sie aber spaeter allein am Dienst,
+# wird nur neu GESTARTET und nicht neu GEBAUT. Der Server meldet dann den
+# neuen Wert, waehrend im JavaScript-Buendel noch der alte steckt — die
+# Oberflaeche zeigt also etwas anderes, als die Auskunft behauptet. Genau
+# darauf bin ich am 08.09.2026 hereingefallen. Diese Datei kann sich nicht
+# nachtraeglich aendern; /api/health/dokumente liest sie und meldet eine
+# Abweichung ausdruecklich.
+RUN printf %s "$APP_UMFANG" > /app/umfang-beim-bauen.txt
+
 # --- Frontend bauen, danach Dev-Abhängigkeiten entfernen (kleineres Image) ---
 RUN cd frontend && npm run build && npm prune --omit=dev
 
