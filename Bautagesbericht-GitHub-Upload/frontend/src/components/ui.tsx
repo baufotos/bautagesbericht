@@ -242,7 +242,7 @@ const BUTTON_VARIANTEN: Record<ButtonVariante, string> = {
 
 function buttonKlassen(variante: ButtonVariante, className: string) {
   return (
-    "inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2.5 " +
+    "inline-flex items-center justify-center gap-1.5 rund-voll px-4 py-2.5 " +
     "text-[13px] font-medium tracking-[0.01em] cursor-pointer transition-colors " +
     "disabled:opacity-45 disabled:cursor-not-allowed " +
     `${BUTTON_VARIANTEN[variante]} ${className}`
@@ -322,7 +322,7 @@ export function Chip({
     <button
       type="button"
       onClick={onClick}
-      className={`font-mono text-[11px] tracking-[0.06em] px-3 py-1.5 rounded-full border cursor-pointer whitespace-nowrap transition-colors ${
+      className={`font-mono text-[11px] tracking-[0.06em] px-3 py-1.5 rund-voll border cursor-pointer whitespace-nowrap transition-colors ${
         aktiv
           ? "bg-ui-accent text-ui-accent-text border-ui-accent"
           : "bg-ui-surface-muted text-ui-text-muted border-ui-line hover:border-ui-line-strong hover:text-ui-text"
@@ -355,7 +355,7 @@ export function StatusBadge({
   const { ton, rand, flaeche } = statusFarben(farbe);
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border font-medium whitespace-nowrap ${
+      className={`inline-flex items-center gap-1.5 rund-voll border font-medium whitespace-nowrap ${
         klein ? "px-2 py-0.5 text-[10.5px]" : "px-2.5 py-1 text-[11.5px]"
       }`}
       style={{ color: ton, borderColor: rand, background: flaeche }}

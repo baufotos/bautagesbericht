@@ -122,7 +122,7 @@ export function FotoAuswahl({
                   type="button"
                   onClick={() => onChange(dateien.filter((_, j) => j !== i))}
                   aria-label={`Foto ${i + 1} entfernen`}
-                  className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
+                  className="absolute right-1 top-1 rund-voll bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
                 >
                   <X size={13} />
                 </button>
@@ -222,7 +222,7 @@ export function FotoGalerie({
                 type="button"
                 onClick={() => entfernen(foto)}
                 aria-label="Foto löschen"
-                className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
+                className="absolute right-1 top-1 rund-voll bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
               >
                 <Trash2 size={13} />
               </button>
@@ -297,7 +297,7 @@ export function FotoGalerie({
             type="button"
             onClick={() => setGross(null)}
             aria-label="Schließen"
-            className="absolute right-4 top-4 rounded-full bg-white/90 p-2 text-ui-text cursor-pointer"
+            className="absolute right-4 top-4 rund-voll bg-white/90 p-2 text-ui-text cursor-pointer"
           >
             <X size={18} />
           </button>

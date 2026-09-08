@@ -219,7 +219,7 @@ export function FotosaetzeGalerie({
           type="button"
           onClick={onNeu}
           aria-label="Fotos hochladen"
-          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 flex size-14 cursor-pointer items-center justify-center rounded-full bg-app-akzent text-app-akzent-text schatten-akzent transition-colors hover:bg-app-akzent-hover"
+          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 flex size-14 cursor-pointer items-center justify-center rund-voll bg-app-akzent text-app-akzent-text schatten-akzent transition-colors hover:bg-app-akzent-hover"
         >
           <Plus size={24} />
         </button>
@@ -484,7 +484,7 @@ function FotosatzKarte({
                       type="button"
                       onClick={() => fotoLoeschen(foto)}
                       aria-label={`${foto.dateiname} löschen`}
-                      className="absolute top-1 right-1 cursor-pointer rounded-full bg-white/90 p-1 text-app-text-still transition-colors hover:text-app-gefahr"
+                      className="absolute top-1 right-1 cursor-pointer rund-voll bg-white/90 p-1 text-app-text-still transition-colors hover:text-app-gefahr"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -518,7 +518,7 @@ function FotosatzKarte({
             type="button"
             onClick={() => setGross(null)}
             aria-label="Schließen"
-            className="absolute top-4 right-4 cursor-pointer rounded-full bg-white/90 p-2 text-app-text"
+            className="absolute top-4 right-4 cursor-pointer rund-voll bg-white/90 p-2 text-app-text"
           >
             <X size={18} />
           </button>

@@ -4,9 +4,17 @@
    DESIGNSYSTEM HPP BAUMANAGEMENT
    ═══════════════════════════════════════════════════════════════════════════
 
-   Dunkles Arbeitsprogramm im Stil moderner Fintech-Dashboards: tiefer,
-   leicht verlaufender Hintergrund, davor Karten in einem Ton heller, mit
-   1px-Kante aus 8 % Weiß und weichem Schatten für Tiefe.
+   Drei Fassungen aus EINEM Satz Token-Namen — Farben, Schrift und Rundungen
+   werden je Fassung ausgetauscht, die Views wissen davon nichts.
+
+       hpp      das Hausdesign von hpp.com: weiß, schwarz, Helvetica,
+                keine Rundung. Standard der Baumanagement-App (Umfang "voll").
+       dunkel   Arbeitsprogramm im Stil moderner Dashboards. Standard der
+                Baufotos-App, und dort die Alternative zu hpp.
+       hell     helle Abwandlung von dunkel, für draußen bei Sonne.
+
+   Welche Fassung wo gilt und welche der Umschalter anbietet, steht in
+   lib/thema.ts — nicht hier.
 
    WARUM DER AKZENT MONOCHROM IST
    ==============================
@@ -18,16 +26,18 @@
    grün für erledigt und positive Trends, rot für überfällig, gelb für
    Fristen. So heißt Farbe in dieser App immer etwas.
 
-   ZWEI FASSUNGEN, EIN SATZ NAMEN
-   ==============================
-   Dunkel ist der Standard. ``data-theme="hell"`` am <html> schaltet um; die
-   Wahl merkt sich lib/thema.ts im localStorage. Möglich wird das durch
-   ``@theme inline``: Die Tailwind-Klassen zeigen damit direkt auf die
-   ``--t-*``-Variablen, und die tauschen wir pro Fassung aus. Kein
-   ``dark:``-Präfix an tausend Stellen, kein zweiter Satz Klassennamen.
+   EIN SATZ NAMEN FÜR ALLE FASSUNGEN
+   =================================
+   ``data-theme`` am <html> entscheidet; die Wahl merkt sich lib/thema.ts im
+   localStorage. Möglich wird das durch ``@theme inline``: Die
+   Tailwind-Klassen zeigen direkt auf die ``--t-*``-Variablen, und die
+   tauschen wir pro Fassung aus. Kein ``dark:``-Präfix an tausend Stellen,
+   kein zweiter Satz Klassennamen — und deshalb kostet eine dritte Fassung
+   auch nur einen Block, keine Änderung an einer einzigen View.
 
-   Bewusst folgt die App NICHT der Systemeinstellung: Dunkel ist die
-   Hausfassung, hell die Ausnahme für draußen bei Sonne.
+   Bewusst folgt die App NICHT der Systemeinstellung: Wer sie in einer
+   Fassung kennt, soll sie nicht anders vorfinden, weil ein Gerät anders
+   eingestellt ist.
 
    BEIM ÄNDERN
    ===========
@@ -46,7 +56,9 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme inline {
-  --font-sans: var(--font-ibm-plex-sans);
+  /* Über ein Token, nicht direkt auf die Schriftart: Die HPP-Fassung setzt
+     hier den Helvetica-Satz ein (siehe unten). */
+  --font-sans: var(--t-font);
   --font-mono: var(--font-ibm-plex-mono);
 
   /* ── app-* — Programmhülle: Seitenleiste, Kopfzeile, Karten ────────────── */
@@ -96,9 +108,12 @@
   --color-app-chart-still: var(--t-chart-still);
   --color-app-chart-spur: var(--t-chart-spur);
 
-  --radius-app: 16px;
-  --radius-app-lg: 20px;
-  --radius-app-sm: 10px;
+  /* Auch die Rundung ist eine Fassungs-Entscheidung: Das HPP-Haus­design
+     kennt keinen einzigen gerundeten Rahmen, dort stehen alle vier Werte
+     auf 0 (siehe die HPP-Fassung unten). */
+  --radius-app: var(--t-radius-app);
+  --radius-app-lg: var(--t-radius-app-lg);
+  --radius-app-sm: var(--t-radius-app-sm);
 
   /* ── ui-* — Formular- und Listenbausteine (components/ui.tsx) ──────────── */
   --color-ui-bg: var(--t-bg);
@@ -122,8 +137,8 @@
   --color-ui-ok: var(--t-ok);
   --color-ui-ok-soft: var(--t-ok-sanft);
 
-  --radius-ui: 12px;
-  --radius-ui-sm: 8px;
+  --radius-ui: var(--t-radius-ui);
+  --radius-ui-sm: var(--t-radius-ui-sm);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -131,6 +146,23 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
+  /* Schrift und Rundung der beiden Arbeits-Fassungen. Die HPP-Fassung
+     überschreibt beides; hell erbt es von hier. */
+  --t-font: var(--font-ibm-plex-sans);
+  --t-radius-app: 16px;
+  --t-radius-app-lg: 20px;
+  --t-radius-app-sm: 10px;
+  --t-radius-ui: 12px;
+  --t-radius-ui-sm: 8px;
+  /* Kapselform für Knöpfe, Plaketten, Suchfeld. Siehe @utility
+     rund-voll ganz unten — Tailwinds rounded-full ist eine feste
+     Zahl und ließe sich pro Fassung nicht austauschen. */
+  --t-radius-pille: 999px;
+  /* Diagrammbalken, Kontrollkästchen und die Kappen des Rings. */
+  --t-radius-balken: 7px;
+  --t-radius-klein: 3px;
+  --t-kappe: round;
+
   /* Seitenleiste tiefer als der Inhalt: Sie tritt zurück und rahmt. */
   --t-sidebar: #0B0B0D;
   --t-sidebar-tief: #08080A;
@@ -267,6 +299,145 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   HPP — das Hausdesign von hpp.com
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Die Standardfassung der Baumanagement-App (Umfang "voll"). Die Werte sind
+   nicht nachempfunden, sondern am 08.09.2026 aus der laufenden Seite
+   ausgelesen:
+
+       Grundtext     19 px / 34,2 px, Zeichenabstand 0,342 px  (= 0,018em)
+       Überschrift   60 px / 72 px, Zeichenabstand −0,3 px
+       Zwischentitel 30 px / 39 px
+       Schrift       HelveticaNeueLTStd-Roman / -Bd
+       Farben        #000 Text, #FFF Grund, #121514 Wortmarke, #F2F2F2 Fläche
+       Rundung       0 px — an keiner einzigen Stelle
+       Knöpfe        ohne Füllung, ohne Rundung, Text schwarz
+
+   WARUM KEINE WEBSCHRIFT NACHGELADEN WIRD
+   =======================================
+   Helvetica Neue LT Std ist lizenzpflichtig und darf nicht ausgeliefert
+   werden. hpp.com selbst fällt für alle ohne diese Schrift auf
+   ``Helvetica, sans-serif`` zurück — genau diesen Satz nimmt die App. Auf
+   dem Mac steht damit echtes Helvetica, unter Windows Arial, das
+   maßgleich ist. Ergebnis: dasselbe Schriftbild wie auf hpp.com, ohne eine
+   einzige zusätzlich geladene Datei und ohne Lizenzbruch.
+
+   WAS BEWUSST NICHT ÜBERNOMMEN WURDE
+   ==================================
+   Die Statusfarben. hpp.com ist eine Imageseite und braucht keine; ein
+   Werkzeug schon — überfällig muss rot sein, erledigt grün. Sie sind aus
+   der hellen Fassung übernommen, weil dort bereits gegen Weiß gerechnet.
+   Ebenso bleibt ein Hauch Schatten für Dialoge: Ein Fenster ohne jede
+   Abhebung ist auf Weiß nicht als Fenster zu erkennen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="hpp"] {
+  --t-font: "Helvetica Neue", Helvetica, Arial, "Segoe UI", sans-serif;
+
+  /* Nirgends eine Rundung — das ist die auffälligste Eigenheit des Hauses. */
+  --t-radius-app: 0px;
+  --t-radius-app-lg: 0px;
+  --t-radius-app-sm: 0px;
+  --t-radius-ui: 0px;
+  --t-radius-ui-sm: 0px;
+  --t-radius-pille: 0px;
+  --t-radius-balken: 0px;
+  --t-radius-klein: 0px;
+  /* butt statt round: Der Fortschrittsring hätte sonst einen
+     sichtbaren Tropfen an seinem Anfang — die einzige Rundung im
+     ganzen Bild. */
+  --t-kappe: butt;
+
+  /* Die Seitenleiste ist hier WEISS — anders als in den beiden anderen
+     Fassungen. hpp.com hat eine weiße Kopfzeile mit schwarzer Wortmarke;
+     eine dunkle Leiste davor wäre der eine Fremdkörper im ganzen Bild. */
+  --t-sidebar: #FFFFFF;
+  --t-sidebar-tief: #FFFFFF;
+  --t-sidebar-linie: #E2E2E2;
+  --t-sidebar-text: #000000;
+  --t-sidebar-text-hell: #000000;
+  --t-sidebar-label: #6B6B6B;
+  --t-sidebar-hover: rgba(0, 0, 0, 0.05);
+  --t-sidebar-aktiv: rgba(0, 0, 0, 0.09);
+  --t-sidebar-kante: #000000;
+
+  --t-bg: #FFFFFF;
+  --t-flaeche: #FFFFFF;
+  --t-flaeche-still: #F2F2F2;   /* der eine Grauton der Seite */
+  --t-flaeche-hoch: #FFFFFF;
+  --t-linie: #E2E2E2;
+  --t-linie-stark: #000000;
+
+  --t-text: #000000;
+  --t-text-still: #565656;
+  --t-text-leise: #6B6B6B;
+
+  /* Knopf: schwarze Fläche, weiße Schrift, keine Rundung. */
+  --t-akzent: #121514;          /* der Farbwert der Wortmarke */
+  --t-akzent-hover: #000000;
+  --t-akzent-sanft: rgba(0, 0, 0, 0.06);
+  --t-akzent-text: #FFFFFF;
+
+  /* Eine Spur dunkler als in der hellen Fassung: Dort steht die
+     Erledigt-Plakette mit 4,65:1 knapp über der Grenze, hier mit
+     5,53:1 klar darüber. Nachgerechnet mit _kontrast-pruefen.py. */
+  --t-ok: #046B4E;
+  --t-ok-sanft: #D9F2E6;
+  --t-warn: #95530A;
+  --t-warn-sanft: #FDF0D5;
+  --t-gefahr: #B42318;
+  --t-gefahr-sanft: #FDE4E1;
+  --t-info: #1D4ED8;
+  --t-info-sanft: #E2E9FE;
+
+  --t-chart: #121514;
+  --t-chart-still: #8A8A8A;
+  --t-chart-spur: rgba(0, 0, 0, 0.08);
+
+  /* Flach. hpp.com hat keinen einzigen Verlauf. */
+  --t-bg-verlauf: none;
+
+  /* Kein Weichzeichner, sondern eine haarfeine Kante — so sieht Abgrenzung
+     in diesem Haus aus. Nur Dialoge bekommen zusätzlich etwas Tiefe. */
+  --t-schatten-karte: 0 0 0 1px #E2E2E2;
+  --t-schatten-hoch:
+    0 0 0 1px #CCCCCC,
+    0 18px 40px -28px rgba(0, 0, 0, 0.4);
+  --t-schatten-akzent: none;
+
+  --t-scroll-daumen: rgba(0, 0, 0, 0.22);
+  --t-scroll-daumen-aktiv: rgba(0, 0, 0, 0.36);
+
+  --t-tint: #000000;
+  --t-tint-anteil: 0%;
+
+  color-scheme: light;
+}
+
+/* Typografie der HPP-Fassung. Steht hier und nicht in den Views, damit die
+   anderen beiden Fassungen unberührt bleiben.
+
+   Der Zeichenabstand ist der halbe Trick des Schriftbilds: 0,018em im Text,
+   ins Negative gedreht bei großen Überschriften. Ohne ihn wirkt Helvetica
+   im Fließtext eng und in der Überschrift auseinandergefallen. */
+:root[data-theme="hpp"] body {
+  letter-spacing: 0.018em;
+}
+
+:root[data-theme="hpp"] h1,
+:root[data-theme="hpp"] h2 {
+  letter-spacing: -0.005em;
+}
+
+/* Die Seite arbeitet mit echtem Fett, nicht mit halbfett. */
+:root[data-theme="hpp"] h1,
+:root[data-theme="hpp"] h2,
+:root[data-theme="hpp"] h3 {
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Grundlagen
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -338,6 +509,37 @@ body {
 /* Primärknöpfe: ein Hauch Streulicht, damit sie auf Dunkel abheben. */
 @utility schatten-akzent {
   box-shadow: var(--t-schatten-akzent);
+}
+
+/* Kapselform — ersetzt Tailwinds rounded-full überall dort, wo die Rundung
+   Zierde ist (Knöpfe, Plaketten, Eingabefelder, Chips).
+
+   WARUM NICHT rounded-full: Das ist bei Tailwind eine feste Zahl im
+   Klassennamen und damit nicht pro Fassung austauschbar. Im HPP-Design ist
+   aber genau das nötig — dort ist keine einzige Ecke rund.
+
+   ECHTE PUNKTE behalten rounded-full: die farbigen Statuspunkte in
+   dashboard.tsx, ui.tsx und MangelUebersicht.tsx. Ein Punkt ist rund, weil er
+   ein Punkt ist, nicht weil eine Fassung das so möchte — als Quadrat wäre er
+   ein anderes Zeichen. */
+@utility rund-voll {
+  border-radius: var(--t-radius-pille);
+}
+
+/* Diagrammbalken und Ringkappen — dieselbe Überlegung wie bei rund-voll,
+   nur für die Formen in dashboard.tsx. Die DATENLINIE des Verlaufsdiagramms
+   behält ihre runden Verbindungen: Die verhindern Spitzen an scharfen
+   Knicken und sind damit Technik, nicht Zierde. */
+@utility rund-balken {
+  border-radius: var(--t-radius-balken);
+}
+
+@utility rund-klein {
+  border-radius: var(--t-radius-klein);
+}
+
+@utility kappe-fassung {
+  stroke-linecap: var(--t-kappe);
 }
 
 @keyframes spin {

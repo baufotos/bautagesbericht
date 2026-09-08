@@ -170,10 +170,33 @@ pruefe(not bautext.handschrift_unlesbar([RIEDEL_NUR_VORDRUCK], True),
        "mit gefundenem Datum wird nichts verworfen")
 pruefe(bautext.handschrift_unlesbar([], False), "leeres Dokument ist unlesbar")
 
-hinweis = bautext.unlesbar_hinweis("2024-KW03.pdf", "einstellungen.txt")
-pruefe("2024-KW03.pdf" in hinweis, "Hinweis nennt die Datei")
-pruefe("Schreibschrift" in hinweis, "Hinweis nennt den Grund")
-pruefe("einstellungen.txt" in hinweis, "Hinweis nennt den Weg")
+# Der Hinweis muss zum Rechner passen: Auf dem Buerorechner scheitert die
+# Windows-Texterkennung an verbundener Schrift, im Linux-Container gibt es
+# sie gar nicht. Beide Zweige werden geprueft, indem die Verfuegbarkeit
+# untergeschoben wird — sonst haetten wir einen Test, der je nach Rechner
+# etwas anderes behauptet.
+from app.services import windows_ocr as _ocr  # noqa: E402
+
+_echt_verfuegbar = _ocr.verfuegbar
+try:
+    _ocr.verfuegbar = lambda: True
+    mit = bautext.unlesbar_hinweis("2024-KW03.pdf", "einstellungen.txt")
+    _ocr.verfuegbar = lambda: False
+    ohne = bautext.unlesbar_hinweis("2024-KW03.pdf", "BTB_ANTHROPIC_API_KEY")
+finally:
+    _ocr.verfuegbar = _echt_verfuegbar
+
+pruefe("2024-KW03.pdf" in mit, "Hinweis nennt die Datei")
+pruefe("einstellungen.txt" in mit, "Hinweis nennt den Weg")
+pruefe("Schreibschrift" in mit, "mit Windows-Erkennung: Grund ist die Schrift")
+pruefe("Windows-Texterkennung" in mit, "mit Windows-Erkennung: nennt sie")
+
+pruefe("2024-KW03.pdf" in ohne, "Serverfassung nennt die Datei")
+pruefe("BTB_ANTHROPIC_API_KEY" in ohne, "Serverfassung nennt den Weg")
+pruefe("Windows" not in ohne,
+       f"Serverfassung darf Windows NICHT erwaehnen: {ohne}")
+pruefe("keine eigene Texterkennung" in ohne,
+       "Serverfassung nennt den richtigen Grund")
 
 
 abschnitt("Firmennamen zusammenführen")

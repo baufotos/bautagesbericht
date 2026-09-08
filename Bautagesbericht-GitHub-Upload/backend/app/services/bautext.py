@@ -214,11 +214,33 @@ def handschrift_unlesbar(seiten: list[str], datum_gefunden: bool) -> bool:
 #: hier und nicht verstreut im Code, weil dieselbe Erklärung an drei Stellen
 #: gebraucht wird: Wochenanalyse, Einzeldatei und Protokoll.
 def unlesbar_hinweis(dateiname: str, wo_der_schluessel: str) -> str:
+    """Warum nur der Vordruck lesbar war — je nach Rechner ein anderer Grund.
+
+    Die Begründung MUSS zum Rechner passen. Auf dem Bürorechner scheitert die
+    Windows-Texterkennung an verbundener Schrift; im Linux-Container gibt es
+    diese Texterkennung überhaupt nicht, dort ist ohne Schlüssel auch ein
+    sauber gedruckter Scan nicht lesbar. Stand hier lange nur der
+    Windows-Satz, schickte er jeden Leser der Website auf die falsche Fährte:
+    Er sucht dann nach einer Erkennung, die auf dem Server nie existiert hat.
+    """
+    from app.services import windows_ocr
+
+    if windows_ocr.verfuegbar():
+        grund = (
+            "Das ist der Normalfall bei Schreibschrift: Die "
+            "Windows-Texterkennung liest Druckbuchstaben, verbundene "
+            "Handschrift kann sie nicht."
+        )
+    else:
+        grund = (
+            "Auf diesem Server gibt es keine eigene Texterkennung — gelesen "
+            "wird dort nur, was als Textebene im PDF steht. Bei einem Scan "
+            "oder Foto ist das höchstens der Vordruck, oft gar nichts."
+        )
+
     return (
         f"Von „{dateiname}“ konnte nur der gedruckte Vordruck gelesen werden — "
-        "die ausgefüllten Felder nicht. Das ist der Normalfall bei "
-        "Schreibschrift: Die Windows-Texterkennung liest Druckbuchstaben, "
-        "verbundene Handschrift kann sie nicht. Dafür wird ein "
+        "die ausgefüllten Felder nicht. " + grund + " Dafür wird ein "
         "Anthropic-Schlüssel gebraucht (" + wo_der_schluessel + "). "
         "Ohne ihn bitte die Angaben von Hand eintragen."
     )

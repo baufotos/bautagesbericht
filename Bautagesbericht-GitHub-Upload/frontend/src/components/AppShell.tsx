@@ -65,7 +65,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useThema } from "@/lib/thema";
+import { THEMA_STANDARD, useThema } from "@/lib/thema";
 import { NUR_FOTOS } from "@/lib/umfang";
 import type { Projekt } from "@/lib/types";
 import { HppWortmarke } from "@/components/HppLogo";
@@ -436,11 +436,11 @@ function KopfKnopf({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="relative cursor-pointer rounded-full border border-transparent p-2 text-app-text-still transition-colors hover:border-app-linie hover:bg-app-flaeche-hoch hover:text-app-text"
+      className="relative cursor-pointer rund-voll border border-transparent p-2 text-app-text-still transition-colors hover:border-app-linie hover:bg-app-flaeche-hoch hover:text-app-text"
     >
       <Icon size={16} className={dreht ? "animate-spin" : ""} />
       {zaehler > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 flex min-w-[16px] items-center justify-center rounded-full bg-app-gefahr px-1 text-[9px] font-bold text-app-flaeche">
+        <span className="absolute -top-0.5 -right-0.5 flex min-w-[16px] items-center justify-center rund-voll bg-app-gefahr px-1 text-[9px] font-bold text-app-flaeche">
           {zaehler > 99 ? "99+" : zaehler}
         </span>
       )}
@@ -552,7 +552,7 @@ export function AppShell({
             type="button"
             onClick={() => setSchubladeOffen(true)}
             aria-label="Menü öffnen"
-            className="shrink-0 cursor-pointer rounded-full p-2 text-app-text-still transition-colors hover:bg-app-flaeche-hoch hover:text-app-text lg:hidden"
+            className="shrink-0 cursor-pointer rund-voll p-2 text-app-text-still transition-colors hover:bg-app-flaeche-hoch hover:text-app-text lg:hidden"
           >
             <Menu size={18} />
           </button>
@@ -574,7 +574,7 @@ export function AppShell({
                 }}
                 placeholder={`${SUCHE_LABEL}…`}
                 aria-label={SUCHE_LABEL}
-                className="w-full rounded-full border border-app-linie bg-app-flaeche-still py-2 pr-3 pl-9 text-[12.5px] text-app-text outline-none transition-colors placeholder:text-app-text-leise focus:border-app-linie-stark focus:bg-app-flaeche-hoch"
+                className="w-full rund-voll border border-app-linie bg-app-flaeche-still py-2 pr-3 pl-9 text-[12.5px] text-app-text outline-none transition-colors placeholder:text-app-text-leise focus:border-app-linie-stark focus:bg-app-flaeche-hoch"
               />
             </div>
           </div>
@@ -585,7 +585,7 @@ export function AppShell({
               value={projektId ?? ""}
               onChange={(e) => onProjekt(Number(e.target.value))}
               aria-label="Projekt wählen"
-              className="max-w-[130px] cursor-pointer truncate rounded-full border border-app-linie bg-app-flaeche-still px-3 py-1.5 text-[12px] text-app-text outline-none transition-colors hover:bg-app-flaeche-hoch focus:border-app-linie-stark sm:max-w-[240px]"
+              className="max-w-[130px] cursor-pointer truncate rund-voll border border-app-linie bg-app-flaeche-still px-3 py-1.5 text-[12px] text-app-text outline-none transition-colors hover:bg-app-flaeche-hoch focus:border-app-linie-stark sm:max-w-[240px]"
             >
               {projekte.length === 0 && <option value="">kein Projekt</option>}
               {projekte.map((p) => (
@@ -628,9 +628,19 @@ export function AppShell({
               />
             </div>
 
+            {/* Der Knopf führt immer zur jeweils anderen Fassung. Welche das
+                ist, hängt an der Auslieferung: im Büro HPP ⇄ dunkel, auf der
+                Baustelle dunkel ⇄ hell (siehe lib/thema.ts). Beschriftet wird
+                deshalb das Ziel, nicht der Zustand. */}
             <KopfKnopf
               icon={thema === "dunkel" ? Sun : Moon}
-              label={thema === "dunkel" ? "Helle Fassung" : "Dunkle Fassung"}
+              label={
+                thema === "dunkel"
+                  ? THEMA_STANDARD === "hpp"
+                    ? "HPP-Fassung"
+                    : "Helle Fassung"
+                  : "Dunkle Fassung"
+              }
               onClick={umschalten}
             />
 
@@ -638,7 +648,7 @@ export function AppShell({
                 Büros als ruhiger Abschluss der Zeile. */}
             <span
               aria-hidden
-              className="ml-0.5 hidden size-8 items-center justify-center rounded-full border border-app-linie bg-app-flaeche-hoch text-[10.5px] font-semibold tracking-[0.04em] text-app-text-still lg:flex"
+              className="ml-0.5 hidden size-8 items-center justify-center rund-voll border border-app-linie bg-app-flaeche-hoch text-[10.5px] font-semibold tracking-[0.04em] text-app-text-still lg:flex"
             >
               HPP
             </span>

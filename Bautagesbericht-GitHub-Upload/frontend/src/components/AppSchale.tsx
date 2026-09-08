@@ -178,7 +178,7 @@ export function InstallierenHinweis() {
               await ereignis.prompt();
               setEreignis(null);
             }}
-            className="shrink-0 cursor-pointer rounded-full bg-ui-accent px-2.5 py-1 font-medium text-ui-accent-text"
+            className="shrink-0 cursor-pointer rund-voll bg-ui-accent px-2.5 py-1 font-medium text-ui-accent-text"
           >
             Installieren
           </button>

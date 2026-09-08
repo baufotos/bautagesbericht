@@ -159,7 +159,7 @@ export function BerichtEinreichen({
      Empfängerliste und die Spalte rechts; der Rest ist verschieden genug,
      dass ein früher Ausstieg lesbarer bleibt als Bedingungen im Baum. */
   const umschalter = (
-    <div className="flex gap-1.5 rounded-full border border-app-linie bg-app-flaeche p-1">
+    <div className="flex gap-1.5 rund-voll border border-app-linie bg-app-flaeche p-1">
       {(
         [
           ["tag", "Einzelner Tag"],
@@ -171,7 +171,7 @@ export function BerichtEinreichen({
           type="button"
           onClick={() => setModus(wert)}
           aria-pressed={modus === wert}
-          className={`flex-1 cursor-pointer rounded-full px-4 py-2 text-[13px] font-medium transition-colors ${
+          className={`flex-1 cursor-pointer rund-voll px-4 py-2 text-[13px] font-medium transition-colors ${
             modus === wert
               ? "bg-ui-accent text-ui-accent-text"
               : "text-app-text-still hover:text-app-text"
@@ -389,7 +389,7 @@ export function BerichtEinreichen({
                 ],
               ].map(([titel, text], i) => (
                 <li key={titel} className="flex gap-2.5">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-app-akzent-sanft text-[11px] font-semibold text-app-akzent">
+                  <span className="flex size-5 shrink-0 items-center justify-center rund-voll bg-app-akzent-sanft text-[11px] font-semibold text-app-akzent">
                     {i + 1}
                   </span>
                   <span className="min-w-0">

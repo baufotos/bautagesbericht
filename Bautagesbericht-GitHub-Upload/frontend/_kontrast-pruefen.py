@@ -3,7 +3,7 @@
 WOZU
 ====
 Das Designsystem legt Farben als Tokens fest (``--t-*`` in
-``src/app/globals.css``, einmal für dunkel und einmal für hell). Ob ein
+``src/app/globals.css``, je einmal für dunkel, hell und hpp). Ob ein
 gedämpftes Grau auf der Kartenfläche noch lesbar ist, kann man ansehen und
 sich täuschen — oder ausrechnen. Dieses Skript rechnet.
 
@@ -52,6 +52,7 @@ def bloecke_lesen(text: str) -> dict[str, dict[str, str]]:
     for name, muster in (
         ("dunkel", r"^:root\s*\{(.*?)^\}"),
         ("hell", r'^:root\[data-theme="hell"\]\s*\{(.*?)^\}'),
+        ("hpp", r'^:root\[data-theme="hpp"\]\s*\{(.*?)^\}'),
     ):
         treffer = re.search(muster, text, re.S | re.M)
         if not treffer:

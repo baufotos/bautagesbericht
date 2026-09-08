@@ -97,7 +97,7 @@ function HochladenFeld({
       onClick={onHochladen}
       className="group flex w-full cursor-pointer flex-col items-center gap-3 rounded-app border border-dashed border-app-linie-stark bg-app-flaeche-still px-5 py-7 text-center transition-colors hover:border-app-akzent hover:bg-app-flaeche-hoch"
     >
-      <span className="flex size-14 items-center justify-center rounded-full bg-app-akzent-sanft text-app-text">
+      <span className="flex size-14 items-center justify-center rund-voll bg-app-akzent-sanft text-app-text">
         <Camera size={24} strokeWidth={1.9} />
       </span>
       <span className="block">

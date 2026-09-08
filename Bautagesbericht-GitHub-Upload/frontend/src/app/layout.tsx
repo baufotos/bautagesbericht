@@ -3,6 +3,17 @@ import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegistrierung } from "@/components/AppSchale";
 import { Anmeldeschutz } from "@/components/Anmeldeschutz";
+// Absichtlich aus umfang.ts und nicht aus lib/thema.ts: Diese Datei ist eine
+// Server-Komponente, thema.ts trägt "use client". Die drei Werte hier
+// abzuleiten kostet drei Zeilen und erspart eine Client-Grenze.
+import { NUR_FOTOS } from "@/lib/umfang";
+
+/** Fassung ohne gemerkte Wahl — muss zu THEMA_STANDARD in lib/thema.ts passen. */
+const STANDARD_THEMA = NUR_FOTOS ? "dunkel" : "hpp";
+/** Die zweite wählbare Fassung — muss zu THEMA_ALTERNATIVE passen. */
+const ZWEITE_FASSUNG = NUR_FOTOS ? "hell" : "dunkel";
+/** Leistenfarbe der Standardfassung. */
+const STANDARD_LEISTE = NUR_FOTOS ? "#0D0E10" : "#FFFFFF";
 
 const ibmPlexSans = IBM_Plex_Sans({
   variable: "--font-ibm-plex-sans",
@@ -51,24 +62,37 @@ export const viewport: Viewport = {
   // Randloses Layout auf Geräten mit Aussparung; die Navigation unten
   // berücksichtigt den Sicherheitsabstand selbst.
   viewportFit: "cover",
-  // Dunkel ist die Hausfassung; beim Umschalten zieht lib/thema.ts diese
+  // Je Auslieferung verschieden: Die Büro-App startet im weißen HPP-Design,
+  // die Baustellen-App dunkel. Beim Umschalten zieht lib/thema.ts diese
   // Marke mit, damit die Systemleiste am Handy nicht aus dem Rahmen fällt.
-  themeColor: "#0D0E10",
+  themeColor: STANDARD_LEISTE,
 };
 
 /**
- * Läuft vor dem ersten Anzeigen und setzt die gemerkte Fassung.
+ * Läuft vor dem ersten Anzeigen und setzt die geltende Fassung.
  *
- * Ohne dieses Skript sähe jeder, der "hell" gewählt hat, für einen Wimpernschlag
- * die dunkle Fassung — React schaltet erst nach dem ersten Rendern um. Deshalb
- * synchron im <head>, klein gehalten und ohne Abhängigkeiten.
+ * Ohne dieses Skript sähe jeder für einen Wimpernschlag die falsche Fassung —
+ * React schaltet erst nach dem ersten Rendern um, und der Sprung von Weiß auf
+ * Schwarz (oder umgekehrt) ist genau der Fehler, den niemand übersieht.
+ * Deshalb synchron im <head>, klein gehalten und ohne Abhängigkeiten.
+ *
+ * Die Werte werden beim Bauen eingesetzt; welche Auslieferung läuft, steht
+ * dann längst fest. Eine gemerkte Fassung aus der jeweils anderen
+ * Auslieferung wird verworfen — sonst öffnete die Baustellen-App weiß, nur
+ * weil derselbe Browser einmal die Büro-App gesehen hat.
  */
 const THEMA_STARTSKRIPT = `
 try {
-  if (localStorage.getItem("hpp-thema") === "hell") {
-    document.documentElement.setAttribute("data-theme", "hell");
-  }
-} catch (e) {}
+  var standard = ${JSON.stringify(STANDARD_THEMA)};
+  var zweite = ${JSON.stringify(ZWEITE_FASSUNG)};
+  var gemerkt = localStorage.getItem("hpp-thema");
+  var gilt = (gemerkt === standard || gemerkt === zweite) ? gemerkt : standard;
+  if (gilt === "dunkel") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", gilt);
+} catch (e) {
+  var s = ${JSON.stringify(STANDARD_THEMA)};
+  if (s !== "dunkel") document.documentElement.setAttribute("data-theme", s);
+}
 `;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -76,6 +100,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="de"
       className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} h-full antialiased`}
+      // Die Standardfassung steht schon im ausgelieferten HTML, damit die
+      // Seite nie in der falschen aufblitzt. Das Startskript korrigiert
+      // gleich darauf nur noch, wenn jemand die andere gewählt hat.
+      data-theme={STANDARD_THEMA === "dunkel" ? undefined : STANDARD_THEMA}
       // Das Startskript ändert das data-theme, bevor React übernimmt.
       suppressHydrationWarning
     >

@@ -211,7 +211,7 @@ export function MangelUebersicht({
           type="button"
           onClick={onNeu}
           aria-label="Mangel erfassen"
-          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 flex size-14 cursor-pointer items-center justify-center rounded-full bg-ui-accent text-ui-accent-text schatten-akzent transition-colors hover:bg-ui-accent-hover"
+          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 flex size-14 cursor-pointer items-center justify-center rund-voll bg-ui-accent text-ui-accent-text schatten-akzent transition-colors hover:bg-ui-accent-hover"
         >
           <Plus size={24} />
         </button>

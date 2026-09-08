@@ -371,7 +371,7 @@ export function MaengelanzeigeErstellen({
                       }`}
                     >
                       <span
-                        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[3px] border ${
+                        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rund-klein border ${
                           aktiv
                             ? "border-app-akzent bg-app-akzent text-app-akzent-text"
                             : "border-app-linie-stark"

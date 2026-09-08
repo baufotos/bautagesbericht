@@ -146,7 +146,7 @@ export function Plakette({
 }) {
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full font-semibold uppercase tracking-[0.04em] ${
+      className={`inline-flex items-center whitespace-nowrap rund-voll font-semibold uppercase tracking-[0.04em] ${
         gross ? "px-3 py-1 text-[10.5px]" : "px-2.5 py-0.5 text-[10px]"
       } ${PLAKETTE[art]}`}
     >
@@ -165,7 +165,7 @@ export function FarbPlakette({ text, farbe }: { text: string; farbe?: string }) 
   const { ton, rand, flaeche } = statusFarben(farbe);
   return (
     <span
-      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-medium"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rund-voll border px-2.5 py-0.5 text-[11px] font-medium"
       style={{ color: ton, borderColor: rand, background: flaeche }}
     >
       <span className="size-1.5 shrink-0 rounded-full" style={{ background: ton }} />
@@ -241,7 +241,7 @@ export function Trend({ text, auf, gut = auf, bezug }: TrendWert) {
   return (
     <span className="inline-flex items-baseline gap-1.5">
       <span
-        className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+        className={`inline-flex items-center gap-0.5 rund-voll px-2 py-0.5 text-[11px] font-semibold ${
           gut ? "bg-app-ok-sanft text-app-ok" : "bg-app-gefahr-sanft text-app-gefahr"
         }`}
       >
@@ -298,7 +298,7 @@ export function Ring({
             fill="none"
             stroke={farbe}
             strokeWidth={dicke}
-            strokeLinecap="round"
+            className="kappe-fassung"
             strokeDasharray={`${gefuellt} ${umfang - gefuellt}`}
           />
         </g>
@@ -364,7 +364,7 @@ export function BalkenGruppe({
               style={{ height: hoehe }}
             >
               <div
-                className="w-full max-w-[46px] rounded-[7px]"
+                className="w-full max-w-[46px] rund-balken"
                 style={{
                   height: `${Math.max(anteil * 100, w.wert > 0 ? 4 : 0)}%`,
                   background:
@@ -406,9 +406,9 @@ export function Quote({
           {rechts ?? `${Math.round(wert)} %`}
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-app-chart-spur">
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rund-voll bg-app-chart-spur">
         <div
-          className="h-full rounded-full"
+          className="h-full rund-voll"
           style={{ width: `${wert}%`, background: farbe }}
         />
       </div>
@@ -616,7 +616,7 @@ export function Zeitleiste({
                 </div>
                 <div className="relative h-4 flex-1">
                   <div
-                    className="absolute top-0 h-4 rounded-[3px]"
+                    className="absolute top-0 h-4 rund-klein"
                     style={{
                       left: `${links}%`,
                       width: `${breite}%`,
@@ -653,7 +653,7 @@ export function Initialen({ name, groesse = 28 }: { name: string; groesse?: numb
 
   return (
     <span
-      className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
+      className="inline-flex shrink-0 items-center justify-center rund-voll font-semibold text-white"
       style={{
         width: groesse,
         height: groesse,

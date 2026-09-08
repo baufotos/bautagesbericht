@@ -637,7 +637,7 @@ export function AnzeigeBeantworten({
                     setAktiv(nr);
                     uebernehmen(s);
                   }}
-                  className={`cursor-pointer rounded-full border px-3 py-1.5 text-[12.5px] ${
+                  className={`cursor-pointer rund-voll border px-3 py-1.5 text-[12.5px] ${
                     nr === aktiv
                       ? "border-ui-accent bg-ui-accent-soft text-ui-accent"
                       : "border-ui-line text-ui-text-muted hover:border-ui-line-strong"
@@ -1074,7 +1074,7 @@ export function AnzeigeBeantworten({
                         type="button"
                         title={baustein.text}
                         onClick={() => setzeBaustein(baustein)}
-                        className="cursor-pointer rounded-full border border-ui-line bg-ui-surface px-2.5 py-1 text-[12px] text-ui-text hover:border-ui-line-strong"
+                        className="cursor-pointer rund-voll border border-ui-line bg-ui-surface px-2.5 py-1 text-[12px] text-ui-text hover:border-ui-line-strong"
                       >
                         {baustein.titel}
                       </button>
