@@ -99,3 +99,106 @@ services:
       # dem Link offen, auch zum Hochladen von Baufotos.
       - key: BTB_SEITEN_PASSWORT
         sync: false
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # ZWEITER DIENST — die Büro-Website (voller Funktionsumfang)
+  # ─────────────────────────────────────────────────────────────────────────
+  #
+  # Zwei getrennte Adressen, ein Programm, eine Datenbank:
+  #
+  #   bautagesbericht          Baustelle. Dashboard, Baufotos, Projekte.
+  #   hpp-baumanagement-buero  Büro. Zusätzlich Mängelberichte,
+  #                            Baubesprechungen, Bautagesberichte, Schreiben.
+  #
+  # Der Unterschied ist EIN Wert: APP_UMFANG. Er wird von Render automatisch
+  # als Docker-Build-Argument durchgereicht, deshalb genügt für beide Dienste
+  # dieselbe Dockerfile — und deshalb bekommt nur dieser Dienst LibreOffice
+  # für den PDF-Export mit ins Image (siehe Dockerfile).
+  #
+  # Die Datenbank ist mit Absicht dieselbe: Was auf der Baustelle
+  # hochgeladen wird, steht sofort im Büro zur Verfügung, und die Projekte
+  # werden nur an einer Stelle gepflegt. Der Preis dafür ist, dass die Werte
+  # unten mit denen des ersten Dienstes übereinstimmen MÜSSEN.
+  #
+  # Warum die Geheimwerte hier trotzdem noch einmal einzeln stehen und nicht
+  # per "fromService" vom ersten Dienst geholt werden: Render kann Werte mit
+  # "sync: false" nicht zwischen Diensten weiterreichen. Sie einmal von Hand
+  # einzutragen ist der sichere Weg — jeder Versuch, sie stattdessen in eine
+  # gemeinsame Gruppe zu verschieben, würde sie dem laufenden ersten Dienst
+  # beim nächsten Blueprint-Abgleich wegnehmen.
+  - type: web
+    name: hpp-baumanagement-buero
+    runtime: docker
+    plan: free
+    rootDir: Bautagesbericht-GitHub-Upload
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Interner Proxy: Frontend -> Backend im selben Container.
+      - key: BACKEND_URL
+        value: http://127.0.0.1:8000
+      # ── Der einzige echte Unterschied zur Baustellen-Seite ──
+      #
+      # "voll" schaltet alle Bereiche der Oberfläche frei UND sorgt dafür,
+      # dass die Dockerfile LibreOffice installiert. Ohne LibreOffice gäbe es
+      # hier kein "Als PDF" — auf Linux kann Word nicht angesteuert werden.
+      - key: APP_UMFANG
+        value: voll
+      # ── Gemeinsame Datenbank ──
+      # DERSELBE Wert wie beim Dienst "bautagesbericht", sonst sind es zwei
+      # getrennte Datenbestände und die Baustellenfotos fehlen im Büro.
+      # Muss mit "postgresql+psycopg://" beginnen.
+      - key: BTB_DATABASE_URL
+        sync: false
+      # ── Passwort der Weboberfläche ──
+      # Nach Absprache derselbe Wert wie bei der Baustellen-Seite.
+      - key: BTB_SEITEN_PASSWORT
+        sync: false
+      # Losungswort der Foto-Abholung. Denselben Wert eintragen wie beim
+      # ersten Dienst, damit die Abholskripte der Bürorechner auch gegen
+      # diese Adresse arbeiten können. Pflicht, sobald oben ein Passwort
+      # steht (siehe backend/app/security.py).
+      - key: BTB_ABHOL_TOKEN
+        sync: false
+      # ── Fotospeicher ──
+      # MUSS "db" sein wie beim ersten Dienst: Beide schreiben in dieselbe
+      # Datenbank, und das Dateisystem des Containers ist flüchtig. Stünde
+      # hier "datei", lägen die hier hochgeladenen Bilder auf einer Platte,
+      # die beim nächsten Einschlafen des Dienstes verschwindet — während
+      # die Datenbank ihre Verweise behielte.
+      - key: BTB_FOTOSPEICHER
+        value: db
+      - key: BTB_FOTOS_AUFBEWAHREN_TAGE
+        value: "2"
+      - key: BTB_FOTOS_MAX_MB
+        value: "300"
+      # ── Texterkennung eingescannter Bautagesberichte ──
+      #
+      # Hier ist der Schlüssel wichtiger als auf der Baustellen-Seite: Die
+      # Bautagesberichte werden in diesem Dienst eingelesen, und im
+      # Linux-Container gibt es die Windows-Texterkennung nicht. OHNE diesen
+      # Wert kann online GAR KEIN Scan gelesen werden — weder gedruckt noch
+      # handschriftlich. Die Oberfläche sagt das dann von sich aus
+      # (erkennung_beschreibung() in services/pdf_extraction.py), es geht
+      # also nichts still verloren; die Angaben müssen aber von Hand
+      # eingetippt werden.
+      - key: BTB_ANTHROPIC_API_KEY
+        sync: false
+      # ── Optional: Teams-Kanal als Rückfallweg für Benachrichtigungen ──
+      - key: BTB_TEAMS_WEBHOOK_URL
+        sync: false
+      # ── Optional: Mailversand ──
+      # Ohne BTB_SMTP_HOST bietet die App weiterhin den Outlook-Entwurf an,
+      # verschickt aber nichts selbst.
+      - key: BTB_SMTP_PORT
+        value: "587"
+      - key: BTB_SMTP_HOST
+        sync: false
+      - key: BTB_SMTP_USER
+        sync: false
+      - key: BTB_SMTP_PASSWORT
+        sync: false
+      - key: BTB_SMTP_ABSENDER
+        sync: false

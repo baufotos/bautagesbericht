@@ -12,11 +12,13 @@ from app.routers import (
     besprechungsprotokolle,
     einreichungen,
     empfaenger,
+    fachplaner,
     gewerke,
     health,
     maengel,
     maengelanzeige,
     mangel_stammdaten,
+    mcdonalds,
     mehrkostenanzeige,
     plaene,
     projekte,
@@ -73,6 +75,15 @@ app.include_router(besprechungsprotokolle.router, prefix="/api")
 
 # Baufotos
 app.include_router(baufotos.router, prefix="/api")
+
+# McDonald's — automatisierte Projektanlage + Beauftragung
+#
+# Zwei Router, weil es zwei Dinge sind: der Ablauf selbst (Mail hochladen,
+# Ordner anlegen, Angebot verschicken) und die Stammdaten der Unternehmen, die
+# beauftragt werden. Die Fachplaner stehen deshalb bei den anderen Stammdaten
+# in der Oberfläche und nicht im McDonald's-Bereich.
+app.include_router(mcdonalds.router, prefix="/api")
+app.include_router(fachplaner.router, prefix="/api")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

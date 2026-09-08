@@ -163,6 +163,26 @@ class Settings(BaseSettings):
     )
     smtp_absender_name: str = "HPP Baumanagement"
 
+    # ── McDonald's: wohin der Projektordner angelegt wird ──
+    #
+    # Zum Ablauf siehe app.services.mcdonalds_ordner. Der übergeordnete Ordner
+    # heißt ``<UNLOCODE>_<Standortname>`` und entsteht zweimal: einmal im
+    # Netzlaufwerk, einmal auf SharePoint.
+    #
+    # Beide Werte sind absichtlich leer. Solange einer fehlt, legt die App den
+    # betreffenden Ordner nicht an, sondern schreibt eine sprechende Meldung an
+    # den Fall (``ordner_status="fehler"``) — die Mail-Analyse, das Angebot und
+    # der Outlook-Entwurf funktionieren davon unabhängig weiter. Ein Absturz
+    # oder ein still ins Nichts geschriebener Ordner wäre die schlechtere
+    # Variante: Im Büro würde niemand merken, dass die Ablage fehlt.
+    #
+    # TODO McDonald's: Echte Zielpfade eintragen, sobald sie feststehen —
+    # z. B. BTB_MCDONALDS_BASIS_H=H:\McDonalds\Projekte. Auf dem Bürorechner
+    # geht das über einstellungen.txt (mcdonalds_ordner_h /
+    # mcdonalds_ordner_sharepoint), siehe desktop/paket/server_starten.py.
+    mcdonalds_basis_h: str = ""            # TODO / später: Basispfad Netzlaufwerk H:
+    mcdonalds_basis_sharepoint: str = ""   # TODO / später: SharePoint-Zielbibliothek/-pfad
+
     # Öffentlich erreichbare Basis-URL der App, um im Teams-Post einen
     # funktionierenden Download-Link zu erzeugen, z. B.
     # "https://bautagesbericht.onrender.com". Wird bei Render automatisch

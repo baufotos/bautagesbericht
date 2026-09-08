@@ -920,8 +920,8 @@ export interface AnzeigeVorbelegung {
   haltungen: Record<string, string>;
   /** Die Arten von Anzeigen, die der Server kennt. */
   arten: string[];
-  /** Ist Word erreichbar? Bestimmt, ob der PDF-Knopf erscheint. */
-  word_vorhanden: boolean;
+  /** Laesst sich hier ein PDF erzeugen (Word oder LibreOffice)? Bestimmt, ob der PDF-Knopf erscheint. */
+  pdf_moeglich: boolean;
   /** Steckt ein Anthropic-Schluessel? Ohne ihn kein Formulieren-Knopf. */
   formulieren_verfuegbar: boolean;
   /** Warum nicht — ein Satz fuer die Oberflaeche, sonst leer. */
@@ -990,4 +990,148 @@ export interface AnzeigeGlaettenErgebnis {
   text: string;
   /** Was das Glaetten nicht konnte — etwa die Grossschreibung. */
   hinweise: string[];
+}
+
+
+/* ───────────────────────── McDonald's ─────────────────────────
+ *
+ * Automatisierte Projektanlage und Beauftragung. Zum Ablauf siehe
+ * components/mcdonalds/ und backend/app/models.py (Abschnitt McDonald's).
+ */
+
+/** Ein Fachplaner-Unternehmen aus den Stammdaten. */
+export interface Fachplaner {
+  id: number;
+  name: string;
+  ansprechpartner: string;
+  email: string;
+  adresse: string;
+  erstellt_am: string;
+}
+
+/** Eine Zeile im Abschnitt „Mehrleistungen“ eines Angebots. */
+export interface Mehrleistung {
+  bezeichnung: string;
+  /** Darf fehlen: Oft steht erst die Leistung fest, der Preis später. */
+  betrag: number | null;
+}
+
+export interface McdonaldsAngebot {
+  id: number;
+  fall_id: number;
+  fachplaner_id: number;
+  fachplaner_name: string;
+  fachplaner_email: string;
+  betreff: string;
+  leistungsphase: number | null;
+  angaben: Record<string, string>;
+  mehrleistungen: Mehrleistung[];
+  dokument_vorhanden: boolean;
+  mail_versendet_am: string | null;
+  /** "entwurf" (Outlook hat den Entwurf) | "smtp" | "". */
+  mail_weg: string;
+  erstellt_am: string;
+}
+
+/** Zustand der Ordneranlage — die Plakette in der Übersicht. */
+export type OrdnerStatus = "ausstehend" | "angelegt" | "fehler";
+
+export interface McdonaldsFall {
+  id: number;
+  /** "eml" (Mail hochgeladen) | "telefon" (von Hand erfasst). */
+  quelle: string;
+  eml_dateiname: string;
+  /** null = nicht per KI ausgewertet (kein Schlüssel, oder Handeingabe). */
+  analysiert_am: string | null;
+  auftraggeber: string;
+  standort_name: string;
+  standort_adresse: string;
+  standort_ort: string;
+  leistungsphase: number | null;
+  eckdaten: Record<string, string>;
+  anhaenge: string[];
+  unlocode: string | null;
+  ordner_name: string;
+  ordner_status: OrdnerStatus;
+  ordner_pfad_h: string | null;
+  ordner_pfad_sharepoint: string | null;
+  fehlermeldung: string | null;
+  erstellt_am: string;
+  aktualisiert_am: string | null;
+  /** Nur in der Detailansicht belegt — in der Liste leer. */
+  roh_text: string;
+  angebote: McdonaldsAngebot[];
+  /** Rückmeldung auf genau diesen Aufruf, nicht gespeichert. */
+  hinweise: string[];
+}
+
+/** Angaben der telefonischen Beauftragung. */
+export interface McdonaldsFallManuell {
+  standort_name: string;
+  standort_adresse?: string;
+  standort_ort?: string;
+  auftraggeber?: string;
+  leistungsphase?: number | null;
+  eckdaten?: Record<string, string>;
+  notiz?: string;
+}
+
+/** Nachträgliche Korrektur eines Falls. Nicht gesetzte Felder bleiben. */
+export interface McdonaldsFallUpdate {
+  standort_name?: string;
+  standort_adresse?: string;
+  standort_ort?: string;
+  auftraggeber?: string;
+  leistungsphase?: number | null;
+  eckdaten?: Record<string, string>;
+  unlocode?: string;
+}
+
+export interface McdonaldsAngebotEingabe {
+  fachplaner_id: number;
+  betreff?: string;
+  leistungsphase?: number | null;
+  angaben?: Record<string, string>;
+  mehrleistungen?: Mehrleistung[];
+}
+
+/** Was der Server in diesem Bereich kann — steuert die Knöpfe. */
+export interface McdonaldsFaehigkeiten {
+  analyse: boolean;
+  smtp: boolean;
+  absender: string;
+  ordner_h: boolean;
+  ordner_sharepoint: boolean;
+  unlocode_eintraege: number;
+}
+
+export interface UnlocodeLadeErgebnis {
+  eingelesen: number;
+  uebersprungen: number;
+  blatt: string;
+  hinweise: string[];
+}
+
+export interface UnlocodeTreffer {
+  code: string;
+  ort: string;
+  bundesland: string;
+  /** "exakt" | "unscharf" — ein unscharfer Treffer gehört gegengelesen. */
+  art: string;
+  guete: number;
+}
+
+export interface McdonaldsMailAnfrage {
+  empfaenger?: string[];
+  kopie?: string[];
+  betreff?: string;
+  nachricht?: string;
+}
+
+export interface McdonaldsMailVorschlag {
+  empfaenger: string[];
+  betreff: string;
+  nachricht: string;
+  dokument_dateiname: string;
+  dokument_vorhanden: boolean;
 }

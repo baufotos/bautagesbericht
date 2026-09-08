@@ -34,6 +34,7 @@
  */
 
 import {
+  Beef,
   Bell,
   Building2,
   Camera,
@@ -81,10 +82,12 @@ export type Ansicht =
   | "anzeigen-beantworten"
   | "projektberichte"
   | "besprechungen"
+  | "mcdonalds"
   | "btb-einreichen"
   | "btb-uebersicht"
   | "stamm-projekte"
   | "stamm-empfaenger"
+  | "stamm-fachplaner"
   | "stamm-firmen"
   | "stamm-plaene"
   | "stamm-besprechung"
@@ -208,6 +211,19 @@ const NAVIGATION_VOLL: NavGruppe[] = [
     ],
   },
   {
+    label: "McDonald's",
+    eintraege: [
+      {
+        key: "mcdonalds",
+        label: "Beauftragungen",
+        kurz: "McD",
+        icon: Beef,
+        titel: "McDonald's — Beauftragungen",
+        bereich: "McDonald's",
+      },
+    ],
+  },
+  {
     label: "Bautagesberichte",
     eintraege: [
       {
@@ -257,6 +273,13 @@ const NAVIGATION_VOLL: NavGruppe[] = [
         label: "Empfänger",
         icon: Mail,
         titel: "Empfänger",
+        bereich: "Stammdaten",
+      },
+      {
+        key: "stamm-fachplaner",
+        label: "Fachplaner",
+        icon: Building2,
+        titel: "Fachplaner-Unternehmen",
         bereich: "Stammdaten",
       },
       {

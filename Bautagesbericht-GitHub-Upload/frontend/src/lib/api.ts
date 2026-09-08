@@ -19,6 +19,7 @@ import type {
   Einreichung,
   EinreichungFaehigkeiten,
   Empfaenger,
+  Fachplaner,
   Fotosatz,
   FotosatzFilter,
   FotosatzListItem,
@@ -45,6 +46,14 @@ import type {
   MangelTyp,
   MangelUpdateInput,
   MangelVersandErgebnis,
+  McdonaldsAngebot,
+  McdonaldsAngebotEingabe,
+  McdonaldsFaehigkeiten,
+  McdonaldsFall,
+  McdonaldsFallManuell,
+  McdonaldsFallUpdate,
+  McdonaldsMailAnfrage,
+  McdonaldsMailVorschlag,
   Projekt,
   Projektbeteiligter,
   Projektbericht,
@@ -58,6 +67,8 @@ import type {
   ProtokollListItem,
   StandortSucheAntwort,
   ThemaUpdate,
+  UnlocodeLadeErgebnis,
+  UnlocodeTreffer,
   WochenAnalyse,
   WochenErgebnis,
   WochenTag,
@@ -862,6 +873,107 @@ export const api = {
     dokument: (id: number, alsPdf = false) =>
       fetchDatei(
         `/besprechungsprotokolle/${id}/dokument${query({ als_pdf: alsPdf })}`
+      ),
+  },
+
+  /** Fachplaner-Unternehmen (Stammdaten für die Beauftragung). */
+  fachplaner: {
+    list: () => fetchAPI<Fachplaner[]>("/fachplaner"),
+    create: (data: {
+      name: string;
+      email: string;
+      ansprechpartner?: string;
+      adresse?: string;
+    }) => fetchAPI<Fachplaner>("/fachplaner", json("POST", data)),
+    delete: (id: number) =>
+      fetchAPI<void>(`/fachplaner/${id}`, { method: "DELETE" }),
+  },
+
+  /**
+   * McDonald's — automatisierte Projektanlage und Beauftragung.
+   *
+   * Der Upload einer ``.eml`` scheitert bewusst nicht daran, dass die
+   * KI-Analyse nicht möglich ist (kein Anthropic-Schlüssel, Schnittstelle
+   * überlastet): Der Fall wird angelegt, und in ``hinweise`` steht, was
+   * nachzutragen ist. Deshalb muss die Oberfläche die Hinweise auch zeigen.
+   */
+  mcdonalds: {
+    /** Was der Server hier kann — steuert die Knöpfe der Ansicht. */
+    faehigkeiten: () =>
+      fetchAPI<McdonaldsFaehigkeiten>("/mcdonalds/faehigkeiten"),
+
+    faelle: () => fetchAPI<McdonaldsFall[]>("/mcdonalds/faelle"),
+    fall: (id: number) => fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}`),
+
+    /** Als ``.eml`` exportierte Auftragsmail hochladen. */
+    hochladen: (datei: File) => {
+      const formular = new FormData();
+      formular.append("datei", datei);
+      return fetchAPI<McdonaldsFall>("/mcdonalds/faelle", {
+        method: "POST",
+        body: formular,
+      });
+    },
+    /** Telefonische Beauftragung — dieselbe Weiterverarbeitung ohne Analyse. */
+    manuell: (data: McdonaldsFallManuell) =>
+      fetchAPI<McdonaldsFall>("/mcdonalds/faelle/manuell", json("POST", data)),
+    aendern: (id: number, data: McdonaldsFallUpdate) =>
+      fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}`, json("PATCH", data)),
+    /**
+     * Ordneranlage erneut anstoßen — nach einer Korrektur oder nachdem der
+     * Basispfad eingetragen wurde. Antwortet erst, wenn es durch ist: Wer
+     * hier klickt, will wissen, ob es jetzt geht.
+     */
+    ordnerAnlegen: (id: number) =>
+      fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}/ordner`, {
+        method: "POST",
+      }),
+    fallLoeschen: (id: number) =>
+      fetchAPI<void>(`/mcdonalds/faelle/${id}`, { method: "DELETE" }),
+
+    /** UN/LOCODE-Referenztabelle (Anlage 5.1) hochladen — ersetzt den Bestand. */
+    unlocodeTabelle: (datei: File) => {
+      const formular = new FormData();
+      formular.append("datei", datei);
+      return fetchAPI<UnlocodeLadeErgebnis>("/mcdonalds/unlocode-tabelle", {
+        method: "POST",
+        body: formular,
+      });
+    },
+    unlocodeSuche: (ort: string, bundesland = "") =>
+      fetchAPI<UnlocodeTreffer>(
+        `/mcdonalds/unlocode${query({ ort, bundesland })}`
+      ),
+
+    angebotAnlegen: (fallId: number, data: McdonaldsAngebotEingabe) =>
+      fetchAPI<McdonaldsAngebot>(
+        `/mcdonalds/faelle/${fallId}/angebote`,
+        json("POST", data)
+      ),
+    angebot: (id: number) =>
+      fetchAPI<McdonaldsAngebot>(`/mcdonalds/angebote/${id}`),
+    angebotLoeschen: (id: number) =>
+      fetchAPI<void>(`/mcdonalds/angebote/${id}`, { method: "DELETE" }),
+
+    /** Dokument erzeugen und herunterladen. */
+    dokumentErzeugen: (id: number) =>
+      fetchDatei(`/mcdonalds/angebote/${id}/dokument`, { method: "POST" }),
+    /** Schon erzeugtes Dokument erneut holen. */
+    dokument: (id: number) =>
+      fetchDatei(`/mcdonalds/angebote/${id}/dokument`),
+
+    mailVorschlag: (id: number) =>
+      fetchAPI<McdonaldsMailVorschlag>(
+        `/mcdonalds/angebote/${id}/mail/vorschlag`
+      ),
+    /** Fertige Mail als .eml — Outlook öffnet sie als Entwurf zum Senden. */
+    entwurf: (id: number, data: McdonaldsMailAnfrage = {}) =>
+      fetchDatei(`/mcdonalds/angebote/${id}/versenden`, json("POST", data)),
+    /** Wirklich verschicken — nur mit hinterlegtem Postausgangsserver. */
+    senden: (id: number, data: McdonaldsMailAnfrage = {}) =>
+      fetchAPI<{ angebot_id: number; versendet: boolean; empfaenger: string[]; nachricht: string }>(
+        `/mcdonalds/angebote/${id}/mail/senden`,
+        json("POST", data)
       ),
   },
 };

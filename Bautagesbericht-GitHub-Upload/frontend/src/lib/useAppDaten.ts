@@ -39,11 +39,14 @@ import { NUR_FOTOS } from "./umfang";
 import type {
   Einreichung,
   Empfaenger,
+  Fachplaner,
   FotosatzListItem,
   Gewerk,
   MangelFilter,
   MangelListItem,
   MangelStammdaten,
+  McdonaldsFaehigkeiten,
+  McdonaldsFall,
   Projekt,
   ProjektPlan,
 } from "./types";
@@ -57,6 +60,13 @@ export interface AppDaten {
   projekte: Projekt[];
   empfaenger: Empfaenger[];
   einreichungen: Einreichung[];
+
+  /* McDonald's — projektunabhängig, siehe Kommentar bei ladeMcdonalds. */
+  mcdonaldsFaelle: McdonaldsFall[];
+  fachplaner: Fachplaner[];
+  mcdonaldsFaehigkeiten: McdonaldsFaehigkeiten | null;
+  laedtMcdonalds: boolean;
+  ladeMcdonalds: () => Promise<void>;
 
   projektId: number | null;
   projekt: Projekt | null;
@@ -100,6 +110,12 @@ export function useAppDaten(): AppDaten {
   const [stammdaten, setStammdaten] = useState<MangelStammdaten | null>(null);
 
   const [maengelFilter, setMaengelFilter] = useState<MangelFilter>({});
+
+  const [mcdonaldsFaelle, setMcdonaldsFaelle] = useState<McdonaldsFall[]>([]);
+  const [fachplaner, setFachplaner] = useState<Fachplaner[]>([]);
+  const [mcdonaldsFaehigkeiten, setMcdonaldsFaehigkeiten] =
+    useState<McdonaldsFaehigkeiten | null>(null);
+  const [laedtMcdonalds, setLaedtMcdonalds] = useState(false);
 
   const [laedt, setLaedt] = useState(true);
   const [laedtMaengel, setLaedtMaengel] = useState(false);
@@ -151,10 +167,38 @@ export function useAppDaten(): AppDaten {
     }
   }, []);
 
+  /**
+   * McDonald's: Beauftragungen, Fachplaner und die Fähigkeiten des Servers.
+   *
+   * Projektunabhängig und deshalb bei den globalen Daten: Eine Beauftragung
+   * ist das, was *vor* einem Projekt passiert (siehe backend/app/models.py).
+   * Auf der Website (Umfang "fotos") gibt es den Bereich nicht — die Anfragen
+   * bleiben dort aus, wie bei den Mängeln.
+   */
+  const ladeMcdonalds = useCallback(async () => {
+    if (NUR_FOTOS) return;
+    setLaedtMcdonalds(true);
+    try {
+      const [faelle, planer, faehig] = await Promise.all([
+        api.mcdonalds.faelle(),
+        api.fachplaner.list(),
+        api.mcdonalds.faehigkeiten(),
+      ]);
+      setMcdonaldsFaelle(faelle);
+      setFachplaner(planer);
+      setMcdonaldsFaehigkeiten(faehig);
+    } catch {
+      /* Der globale Fehlerhinweis steht schon; hier nicht überschreiben. */
+    } finally {
+      setLaedtMcdonalds(false);
+    }
+  }, []);
+
   useEffect(() => {
     ladeGlobal();
     ladeStammdaten();
-  }, [ladeGlobal, ladeStammdaten]);
+    ladeMcdonalds();
+  }, [ladeGlobal, ladeStammdaten, ladeMcdonalds]);
 
   /* ───────── Projektwahl mit Gedächtnis ───────── */
 
@@ -253,13 +297,30 @@ export function useAppDaten(): AppDaten {
     return () => clearInterval(zeitgeber);
   }, [inArbeit, ladeEinreichungen]);
 
+  const ordnerInArbeit = mcdonaldsFaelle.some(
+    (f) => f.ordner_status === "ausstehend"
+  );
+
+  useEffect(() => {
+    // Solange ein Projektordner angelegt wird, alle vier Sekunden nachsehen —
+    // aus demselben Grund wie oben bei den Einreichungen: Die Anlage läuft im
+    // Hintergrund des Servers und meldet sich nicht von selbst.
+    if (!ordnerInArbeit) return;
+    const zeitgeber = setInterval(() => {
+      ladeMcdonalds();
+    }, 4000);
+    return () => clearInterval(zeitgeber);
+  }, [ordnerInArbeit, ladeMcdonalds]);
+
   const ladeAlles = useCallback(() => {
     ladeGlobal();
     ladeStammdaten();
     ladeProjektDaten();
     ladeMaengel();
     ladeFotosaetze();
-  }, [ladeGlobal, ladeStammdaten, ladeProjektDaten, ladeMaengel, ladeFotosaetze]);
+    ladeMcdonalds();
+  }, [ladeGlobal, ladeStammdaten, ladeProjektDaten, ladeMaengel,
+      ladeFotosaetze, ladeMcdonalds]);
 
   return {
     projekte,
@@ -279,6 +340,12 @@ export function useAppDaten(): AppDaten {
 
     maengelFilter,
     setzeMaengelFilter: setMaengelFilter,
+
+    mcdonaldsFaelle,
+    fachplaner,
+    mcdonaldsFaehigkeiten,
+    laedtMcdonalds,
+    ladeMcdonalds,
 
     laedt,
     laedtMaengel,

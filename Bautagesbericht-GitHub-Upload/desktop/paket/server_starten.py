@@ -91,6 +91,15 @@ def umgebung_vorbereiten() -> Path:
         ("smtp_kennwort", "BTB_SMTP_PASSWORT"),
         ("smtp_tls", "BTB_SMTP_TLS"),
         ("smtp_absender", "BTB_SMTP_ABSENDER"),
+        # McDonald's: wohin die Projektordner angelegt werden. Ohne Eintrag
+        # laeuft der Rest des Bereichs weiter (Mail-Analyse, Angebot,
+        # Outlook-Entwurf) und die App meldet am Fall, dass die Ablage fehlt
+        # (siehe app.services.mcdonalds_ordner).
+        # TODO McDonald's: Sobald die echten Zielpfade feststehen, sie hier
+        # NICHT eintragen, sondern in einstellungen.txt — diese Zuordnung
+        # bleibt, wie sie ist.
+        ("mcdonalds_ordner_h", "BTB_MCDONALDS_BASIS_H"),
+        ("mcdonalds_ordner_sharepoint", "BTB_MCDONALDS_BASIS_SHAREPOINT"),
     ):
         if werte.get(schluessel):
             os.environ.setdefault(variable, werte[schluessel])

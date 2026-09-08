@@ -1653,3 +1653,249 @@ class AnzeigeGlaettenErgebnis(BaseModel):
     text: str
     #: Was auffiel — offene Lücken, Stichworte, fehlende Großschreibung.
     hinweise: list[str] = []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# McDonald's — automatisierte Projektanlage + Beauftragung
+#
+# Zum Ablauf siehe app.models (Abschnitt McDonald's) und
+# app.routers.mcdonalds.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class FachplanerCreate(BaseModel):
+    """Ein neues Fachplaner-Unternehmen in den Stammdaten."""
+
+    name: str
+    ansprechpartner: str = ""
+    #: Empfänger des Outlook-Entwurfs — deshalb geprüft und nicht Freitext.
+    email: EmailStr
+    adresse: str = ""
+
+
+class FachplanerResponse(BaseModel):
+    id: int
+    name: str
+    ansprechpartner: str = ""
+    email: str
+    adresse: str = ""
+    erstellt_am: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class Mehrleistung(BaseModel):
+    """Eine Zeile des Abschnitts "Mehrleistungen" eines Angebots.
+
+    ``betrag`` darf fehlen: Im Gespräch steht oft erst die Leistung fest und
+    der Preis später. Eine Null einzutragen wäre eine falsche Aussage.
+    """
+
+    bezeichnung: str
+    betrag: float | None = None
+
+
+class McdonaldsFallManuell(BaseModel):
+    """Telefonische Beauftragung — die Angaben kommen von Hand.
+
+    Kein Feld ist zwingend außer dem Standort: Am Telefon erfährt man nicht
+    immer alles auf einmal, und ein Fall mit drei von fünf Angaben ist
+    brauchbar. Ohne Standort ließe sich aber kein Ordner benennen.
+    """
+
+    standort_name: str = Field(min_length=1)
+    standort_adresse: str = ""
+    #: Leer = wird aus der Adresse abgeleitet (siehe mcdonalds_unlocode).
+    standort_ort: str = ""
+    auftraggeber: str = ""
+    leistungsphase: int | None = Field(default=None, ge=1, le=9)
+    #: Sonstige Eckdaten als {Bezeichnung: Wert}.
+    eckdaten: dict[str, str] = {}
+    #: Was am Telefon gesagt wurde — landet in ``roh_text``, damit auch beim
+    #: telefonischen Weg nachvollziehbar bleibt, worauf die Angaben beruhen.
+    notiz: str = ""
+
+
+class McdonaldsFallUpdate(BaseModel):
+    """Nachträgliche Korrektur. Nicht gesetzte Felder bleiben, wie sie sind.
+
+    Gibt es, weil die Analyse *vorschlägt*: Ein falsch gelesener Standort muss
+    sich richtigstellen lassen, und ohne Anthropic-Schlüssel werden alle
+    Angaben von Hand nachgetragen. Ein Fall wäre sonst unwiderruflich so, wie
+    er hochgeladen wurde.
+    """
+
+    standort_name: str | None = None
+    standort_adresse: str | None = None
+    standort_ort: str | None = None
+    auftraggeber: str | None = None
+    leistungsphase: int | None = Field(default=None, ge=1, le=9)
+    eckdaten: dict[str, str] | None = None
+    #: Von Hand gesetzter UN/LOCODE — überstimmt den Abgleich. Drei Buchstaben.
+    unlocode: str | None = Field(default=None, min_length=3, max_length=3)
+
+
+class McdonaldsAngebotCreate(BaseModel):
+    """Die Angaben aus dem Formular "Angebot erstellen"."""
+
+    fachplaner_id: int
+    betreff: str = ""
+    leistungsphase: int | None = Field(default=None, ge=1, le=9)
+    #: Kernangaben als {Bezeichnung: Wert}.
+    #: TODO McDonald's: Wird durch echte Felder ersetzt, sobald das Feldschema
+    #: des Büros vorliegt (siehe models.McdonaldsAngebot).
+    angaben: dict[str, str] = {}
+    mehrleistungen: list[Mehrleistung] = []
+
+    @field_validator("mehrleistungen", mode="before")
+    @classmethod
+    def _leere_zeilen_weg(cls, wert):
+        """Zeilen ohne Bezeichnung verwerfen, statt sie zu bemängeln.
+
+        Die dynamische Zeilenliste im Formular endet fast immer mit einer
+        angefangenen leeren Zeile. Sie zu bemängeln hieße, den Kollegen für
+        etwas zu tadeln, was die Oberfläche selbst angelegt hat.
+        """
+        if isinstance(wert, list):
+            return [
+                eintrag for eintrag in wert
+                if not isinstance(eintrag, dict)
+                or str(eintrag.get("bezeichnung") or "").strip()
+            ]
+        return wert
+
+
+class McdonaldsAngebotResponse(BaseModel):
+    id: int
+    fall_id: int
+    fachplaner_id: int
+    #: Mitgeliefert, damit die Liste keinen zweiten Aufruf je Angebot braucht.
+    fachplaner_name: str = ""
+    fachplaner_email: str = ""
+    betreff: str = ""
+    leistungsphase: int | None = None
+    angaben: dict[str, str] = {}
+    mehrleistungen: list[Mehrleistung] = []
+    #: Gesetzt, sobald das Dokument erzeugt wurde.
+    dokument_vorhanden: bool = False
+    mail_versendet_am: date | None = None
+    #: "entwurf" (Outlook hat den Entwurf bekommen) | "smtp" | "".
+    mail_weg: str = ""
+    erstellt_am: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class McdonaldsFallResponse(BaseModel):
+    id: int
+    quelle: str
+    eml_dateiname: str = ""
+    analysiert_am: datetime | None = None
+    auftraggeber: str = ""
+    standort_name: str = ""
+    standort_adresse: str = ""
+    standort_ort: str = ""
+    leistungsphase: int | None = None
+    eckdaten: dict[str, str] = {}
+    anhaenge: list[str] = []
+    unlocode: str | None = None
+    ordner_name: str = ""
+    #: "ausstehend" | "angelegt" | "fehler" — der Hintergrundstatus, den die
+    #: Übersicht anzeigt.
+    ordner_status: str
+    ordner_pfad_h: str | None = None
+    ordner_pfad_sharepoint: str | None = None
+    fehlermeldung: str | None = None
+    erstellt_am: datetime
+    aktualisiert_am: datetime | None = None
+    #: Nur in der Detailansicht belegt — in der Liste bleibt es leer, damit
+    #: nicht bei jedem Aufbau der ganze Mailtext mitkommt.
+    roh_text: str = ""
+    angebote: list[McdonaldsAngebotResponse] = []
+    #: Was beim Auswerten aufgefallen ist. Nicht gespeichert, sondern die
+    #: Rückmeldung auf genau diesen Aufruf.
+    hinweise: list[str] = []
+
+    model_config = {"from_attributes": True}
+
+
+class McdonaldsFaehigkeiten(BaseModel):
+    """Was der Server in diesem Bereich kann — steuert die Knöpfe.
+
+    Dasselbe Muster wie ``/api/fotosaetze/mail/faehigkeiten``: Die Oberfläche
+    soll nichts anbieten, was hier nicht funktioniert. Ohne
+    Anthropic-Schlüssel gibt es keine Mail-Analyse, ohne Postausgangsserver
+    kein Direktsenden, und ohne konfigurierte Basispfade keine Ordneranlage.
+    """
+
+    analyse: bool
+    smtp: bool
+    absender: str = ""
+    #: Ist ein Basispfad für das Netzlaufwerk hinterlegt?
+    ordner_h: bool = False
+    #: Ist ein SharePoint-Ziel hinterlegt? (Anbindung noch nicht in Betrieb.)
+    ordner_sharepoint: bool = False
+    #: Wie viele Orte in der UN/LOCODE-Tabelle stehen. 0 = noch nicht geladen.
+    unlocode_eintraege: int = 0
+
+
+class UnlocodeLadeErgebnis(BaseModel):
+    """Rückmeldung des Excel-Uploads der Referenztabelle."""
+
+    eingelesen: int
+    uebersprungen: int
+    blatt: str
+    hinweise: list[str] = []
+
+
+class UnlocodeTreffer(BaseModel):
+    """Ein nachgeschlagener Code samt Begründung — zum Gegenlesen."""
+
+    code: str
+    ort: str
+    bundesland: str = ""
+    #: "exakt" | "unscharf".
+    art: str
+    guete: float
+
+
+class McdonaldsMailAnfrage(BaseModel):
+    """Angaben aus dem Versand-Dialog eines Angebots.
+
+    Leerer ``empfaenger`` heißt: die hinterlegte Adresse des Fachplaners.
+    Leerer ``betreff`` bzw. ``nachricht``: der Vorschlag des Servers. So
+    bleibt der Aufruf auch aus einem Skript brauchbar.
+    """
+
+    empfaenger: list[EmailStr] = []
+    kopie: list[EmailStr] = []
+    betreff: str = ""
+    nachricht: str = ""
+
+    @field_validator("empfaenger", "kopie", mode="before")
+    @classmethod
+    def _leere_weg(cls, wert):
+        """Leere Zeilen aus dem Formular verwerfen, statt sie zu bemängeln."""
+        if isinstance(wert, list):
+            return [eintrag for eintrag in wert
+                    if not isinstance(eintrag, str) or eintrag.strip()]
+        return wert
+
+
+class McdonaldsMailVorschlag(BaseModel):
+    """Vorbelegung des Versand-Dialogs, vom Server berechnet."""
+
+    empfaenger: list[str] = []
+    betreff: str
+    nachricht: str
+    dokument_dateiname: str
+    #: Liegt schon ein erzeugtes Dokument vor, oder wird es beim Versand neu
+    #: gebaut? Beides geht — die Oberfläche sagt nur, was passiert.
+    dokument_vorhanden: bool = False
+
+
+class McdonaldsMailErgebnis(BaseModel):
+    angebot_id: int
+    versendet: bool
+    empfaenger: list[str] = []
+    nachricht: str

@@ -13,14 +13,24 @@ bequem „mit GitHub" an, damit du dir nur ein Passwort merken musst:
 Plane rund **30 Minuten** ein (davon ~10 Minuten reine Wartezeit beim ersten
 Aufbau). Du kannst jederzeit pausieren.
 
-> **Was die Website zeigt.** Sie ist bewusst auf die Baustelle zugeschnitten:
-> **Dashboard, Baufotos hochladen, Fotosätze** und **Stammdaten · Projekte** —
-> mehr nicht. Mängelberichte, Bautagesberichte, Monatsberichte,
-> Baubesprechungen und Schreiben entstehen im Büro im Windows-Paket, das
-> weiterhin alles kann. Umgestellt wird das an einer einzigen Stelle: `ARG
-> APP_UMFANG=fotos` in der `Dockerfile` (`voll` schaltet alle Bereiche wieder
-> frei, danach ein neues Deploy). Die Datenbank ist dieselbe — was auf der
-> Baustelle hochgeladen wird, steht sofort im Büro zur Verfügung.
+> **Zwei Websites, ein Programm, eine Datenbank.** Seit September 2026 gibt es
+> die App online in zwei getrennten Ausgaben:
+>
+> | Adresse | Wofür | Was zu sehen ist |
+> |---|---|---|
+> | `bautagesbericht.onrender.com` | **Baustelle** | Dashboard, Baufotos hochladen, Fotosätze, Stammdaten · Projekte |
+> | `hpp-baumanagement-buero.onrender.com` | **Büro** | zusätzlich Mängelberichte, Baubesprechungen, Bautagesberichte, Monatsberichte und Schreiben |
+>
+> Getrennt sind **Adresse und Funktionsumfang** — die **Datenbank ist
+> dieselbe**. Was auf der Baustelle hochgeladen wird, steht sofort im Büro zur
+> Verfügung, und Projekte werden nur an einer Stelle gepflegt. Beide Dienste
+> stehen in derselben `render.yaml` und werden aus derselben `Dockerfile`
+> gebaut; der einzige Unterschied ist die Umgebungsvariable `APP_UMFANG`
+> (`fotos` bzw. `voll`).
+>
+> Das **Windows-Paket** für den Bürorechner bleibt davon völlig unberührt und
+> kann weiterhin alles — es ist keine der beiden Websites und braucht kein
+> Internet.
 
 > **Was ist mit meinem bisherigen PC-Betrieb?** Der bleibt unangetastet: Das
 > Skript `Start-Bautagesbericht.ps1` funktioniert weiter als Notlösung. Sobald
@@ -131,6 +141,59 @@ also `https://bautagesbericht.onrender.com/api/health`. Es sollte
 
 ---
 
+## Teil C2 — Die zweite Website für das Büro
+
+Die `render.yaml` beschreibt **zwei** Dienste. Beim ersten Blueprint-Lauf legt
+Render beide auf einmal an; steht der Baustellen-Dienst schon, erscheint der
+zweite beim nächsten Abgleich (Dashboard → **Blueprints** → dein Blueprint →
+**Sync**).
+
+1. Render zeigt den neuen Dienst **`hpp-baumanagement-buero`** an und fragt
+   nach denselben Geheimwerten wie beim ersten Mal.
+2. **Trage dieselben Werte ein wie beim Dienst `bautagesbericht`** — vor allem:
+
+   | Feld | Wert |
+   |---|---|
+   | `BTB_DATABASE_URL` | **Exakt dieselbe** Neon-URL. Steht hier eine andere, sind es zwei getrennte Datenbestände und die Baustellenfotos fehlen im Büro. |
+   | `BTB_SEITEN_PASSWORT` | Dasselbe Passwort wie bei der Baustellen-Seite. |
+   | `BTB_ABHOL_TOKEN` | Dasselbe Losungswort. |
+   | `BTB_ANTHROPIC_API_KEY` | Hier besonders wichtig — siehe Teil G. |
+   | `BTB_SMTP_*` | Nur nötig, wenn die App selbst Mails verschicken soll. |
+
+   `APP_UMFANG` ist bereits auf `voll` vorbelegt und darf **nicht** geändert
+   werden — daran hängt sowohl die vollständige Oberfläche als auch der
+   PDF-Export.
+3. Der erste Aufbau dieses Dienstes dauert **länger als beim ersten** (rund
+   10–15 Minuten): Er installiert zusätzlich LibreOffice für die PDF-Ausgabe.
+4. Kurztest, sobald der Dienst grün ist:
+
+   ```
+   https://hpp-baumanagement-buero.onrender.com/api/health
+   https://hpp-baumanagement-buero.onrender.com/api/health/dokumente
+   ```
+
+   Der erste muss `{"status":"ok"}` liefern. Der zweite sagt in Klartext, was
+   dieser Dienst kann — dort sollte stehen:
+
+   ```json
+   { "umfang": "voll", "pdf_moeglich": true, "pdf_weg": "libreoffice",
+     "scan_erkennung": true }
+   ```
+
+   Steht dort `"pdf_weg": "keins"`, fehlt LibreOffice im Image; steht
+   `"scan_erkennung": false`, fehlt der Anthropic-Schlüssel (Teil G).
+   Beide Auskünfte sind absichtlich **ohne Anmeldung** abrufbar, damit man
+   beim Einrichten nicht im Dunkeln tappt — sie verraten nichts über Projekte
+   oder Daten.
+
+> **Warum die Werte doppelt eingetragen werden müssen.** Render kann Felder
+> mit `sync: false` (also die Geheimwerte) nicht von einem Dienst zum anderen
+> weiterreichen. Sie in eine gemeinsame Gruppe zu verschieben wäre bequemer,
+> würde sie aber beim nächsten Blueprint-Abgleich dem bereits laufenden ersten
+> Dienst wegnehmen. Einmal abtippen ist der sichere Weg.
+
+---
+
 ## Teil D — Ausprobieren
 
 1. Öffne die Render-Adresse im Browser.
@@ -166,26 +229,88 @@ Die Render-Adresse bleibt **dauerhaft gleich**. Weitergeben kannst du sie so:
 - **Aufwachzeit.** Wird die App 15 Minuten nicht benutzt, „schläft" sie. Der
   nächste Aufruf dauert dann **30–60 Sekunden**, danach läuft alles normal.
   Für ein Werkzeug, das ein paar Mal am Tag benutzt wird, gut vertretbar.
-- **Kein dauerhafter Dateispeicher — das ist die wichtigste Einschränkung.**
-  Alles, was in der **Neon-Datenbank** steht, bleibt erhalten: Projekte,
-  Empfänger, Firmen, Mängel mit allen Fristen und Texten, Fotosätze mit ihren
-  Angaben. **Dateien** liegen dagegen auf der Festplatte des Render-Containers
-  und können bei einem Neustart verschwinden:
+- **Dateispeicher — gelöst, aber mit Verfallsdatum.** Das Dateisystem des
+  Containers ist flüchtig: Es startet bei jedem Deploy und nach jedem
+  Einschlafen leer. Deshalb steht bei **beiden** Diensten
+  `BTB_FOTOSPEICHER=db` — hochgeladene Fotos liegen in der Neon-Datenbank und
+  überstehen einen Neustart. Nachprüfen lässt sich das ohne Anmeldung unter
+  `…/api/health/speicher`; dort muss `"dauerhaft": true` stehen.
 
-  | Betrifft | Was zu tun ist |
+  Die Datenbank ist dabei ein **Durchgang, kein Archiv**:
+
+  | | |
   |---|---|
-  | Baufotos (Bilddateien) | ZIP-Datei nach dem Hochladen herunterladen und in den Projektordner legen — genau dafür ist sie da. |
-  | Mängelfotos und Anhänge | Wichtige Mängellisten als Word-Dokument exportieren; darin sind die Fotos eingebettet. |
-  | Fertige Word-Berichte | Aus der Übersicht herunterladen und ablegen. |
-  | Hochgeladene Pläne | Original behalten; ein Plan lässt sich jederzeit neu hochladen. |
+  | Noch nicht abgeholt | bleibt unter allen Umständen liegen |
+  | Abgeholt | Bilddaten werden nach **2 Tagen** freigegeben (`BTB_FOTOS_AUFBEWAHREN_TAGE`) |
+  | Über **300 MB** gesamt | zusätzlich werden die ältesten abgeholten Sätze geleert (`BTB_FOTOS_MAX_MB`) |
 
-  Verschwindet eine Bilddatei, bleibt der Datensatz erhalten und die App sagt
-  es (die ZIP-Datei enthält dann eine `FEHLT.txt`) — es entsteht also kein
-  stiller Datenverlust. Wer die Fotos dauerhaft auf dem Server halten will,
-  braucht einen bezahlten Render-Plan mit „Persistent Disk" oder einen
-  Objektspeicher.
+  Das dauerhafte Archiv ist und bleibt der **Projektordner im Netzlaufwerk** —
+  dorthin holt der Bürorechner die Sätze ab. Ist ein Bild freigegeben, bleibt
+  der Datensatz mit Name, Größe und Zielordner erhalten, und die App sagt
+  ausdrücklich „Bilddatei nicht mehr auf dem Server". Es gibt also **keinen
+  stillen Verlust** — aber wer einen Satz nie abholt und nach Wochen die
+  Vorschaubilder sucht, sollte wissen, warum sie fehlen.
+
+  Andere Dateien (fertige Word-Dokumente, hochgeladene Pläne) liegen weiterhin
+  im flüchtigen Dateisystem. Sie lassen sich jederzeit neu erzeugen bzw. neu
+  hochladen — trotzdem gilt: heruntergeladen und im Projektordner abgelegt ist
+  sicher, auf dem Server liegengelassen ist es nicht.
+
 - **Kosten.** GitHub, Neon und Render bleiben in dieser Nutzung dauerhaft
   kostenlos. Keine Kreditkarte, kein Ablaufdatum.
+
+---
+
+## Teil G — Zwei Dinge, die online anders sind als auf dem Bürorechner
+
+Beides betrifft nur die **Büro-Website**; die Baustellen-Seite kennt diese
+Funktionen gar nicht.
+
+### 1. Texterkennung eingescannter Bautagesberichte
+
+Auf dem Bürorechner liest die App gedruckte Formblätter mit der **Windows-
+eigenen Texterkennung** — kostenlos, offline, ohne Schlüssel. Die gibt es im
+Linux-Container **nicht**. Online führt deshalb nur ein Weg zum Ziel: der
+**Anthropic-Schlüssel** (`BTB_ANTHROPIC_API_KEY`).
+
+| | Bürorechner (Windows-Paket) | Büro-Website |
+|---|---|---|
+| PDF **mit** Textebene | geht immer, ohne Schlüssel | geht immer, ohne Schlüssel |
+| Gedruckter **Scan** | Windows-Texterkennung | **nur mit Schlüssel** |
+| **Handschrift** | nur mit Schlüssel | **nur mit Schlüssel** |
+
+Ohne Schlüssel kann online also **gar kein** Scan gelesen werden. Das geht
+nicht still verloren: Die Oberfläche schreibt es hin
+(`erkennung_beschreibung()` in `backend/app/services/pdf_extraction.py`), und
+`…/api/health/dokumente` meldet `"scan_erkennung": false`. Die Angaben müssen
+dann von Hand eingetippt werden.
+
+**Kosten:** Der Schlüssel wird nur beim Einlesen eines Scans benutzt, nicht im
+laufenden Betrieb. Er ist bei Render unter *Environment* einzutragen und taucht
+nirgends im Code auf.
+
+### 2. „Als PDF"
+
+Das **Word-Dokument ist und bleibt die verbindliche Ausgabe** — das PDF ist die
+Zugabe. Erzeugen kann es nur ein Textprogramm mit Umbruch-Algorithmus:
+
+| | Womit | Stand |
+|---|---|---|
+| Windows-Paket | Microsoft Word über PowerShell | unverändert wie bisher |
+| Büro-Website | **LibreOffice Writer, kopflos** | seit September 2026 |
+| Baustellen-Seite | — | kennt keine PDF-Funktion |
+
+LibreOffice steckt nur im Image der Büro-Website (rund 400 MB, deshalb dauert
+deren erster Aufbau länger). Seitenzahlen und Verzeichnis stimmen, weil die
+Dokumente auf „Felder beim Öffnen aktualisieren" gestellt sind und LibreOffice
+das beim Laden auswertet.
+
+**Bekannte Restunterschiede:** LibreOffice ist nicht Word. Bei sehr eng
+gesetzten Vorlagen können Umbrüche um eine Zeile abweichen. Wo das Layout auf
+den Millimeter zählt, bleibt der verlässliche Weg: Word-Dokument herunterladen
+und auf dem Bürorechner als PDF speichern. Der erste PDF-Aufruf nach dem
+Aufwachen des Dienstes dauert einige Sekunden länger, weil LibreOffice sein
+Benutzerprofil anlegt.
 
 ---
 

@@ -6,8 +6,14 @@
 #   - Node 22 wird als Binärdatei aus dem offiziellen Node-Image übernommen
 #     (COPY --from). Das ist robuster als ein Netz-Installskript zur Build-Zeit
 #     und pinnt die Version. Beide Images sind bookworm-basiert (glibc passt).
-#   - LibreOffice wird NICHT installiert: Der Code nutzt es nirgends (reine
-#     python-docx-Erzeugung) — das spart ~400 MB und beschleunigt den Build.
+#   - LibreOffice wird NUR beim vollen Umfang installiert (siehe ARG
+#     APP_UMFANG weiter unten). Die Dokumente entstehen zwar mit python-docx,
+#     also ohne Textprogramm — fuer die Umwandlung nach PDF braucht es aber
+#     einen Umbruch-Algorithmus. Auf dem Buerorechner macht das Word; im
+#     Linux-Container gibt es kein Word, dort springt LibreOffice ein (siehe
+#     backend/app/services/word_pdf.py). Die Baufoto-Website kennt keine
+#     PDF-Funktion und bleibt deshalb ohne LibreOffice: ~400 MB kleiner und
+#     deutlich schneller gebaut.
 #
 # Laufzeit: start.sh startet uvicorn intern auf 127.0.0.1:8000 und next start
 # nach außen auf $PORT. next.config.ts proxyt /api/* an BACKEND_URL (=8000),
@@ -27,6 +33,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
  && curl -LsSf https://astral.sh/uv/install.sh | sh \
  && ln -s /root/.local/bin/uv /usr/local/bin/uv
 
+# --- Umfang der Weboberfläche (Bauzeit-Schalter) ---
+#
+# "fotos"  = Baustellen-Website: Dashboard, Baufotos, Stammdaten · Projekte.
+# "voll"   = Büro-Website und Windows-Paket: alle Bereiche.
+#
+# Steht hier oben, weil schon der naechste Schritt davon abhaengt. Render
+# reicht die Umgebungsvariablen eines Dienstes automatisch als Build-Argument
+# durch — der Buero-Dienst setzt in render.yaml also einfach APP_UMFANG=voll,
+# ohne dass diese Datei angefasst werden muss. Ohne Angabe gilt "fotos": die
+# Website hat damit nie versehentlich den vollen Umfang.
+ARG APP_UMFANG=fotos
+
+# --- LibreOffice: nur beim vollen Umfang (PDF-Ausgabe) ---
+#
+# "-nogui" spart die Oberflaechen-Abhaengigkeiten; existiert das Paket in der
+# Distribution nicht, wird auf das normale libreoffice-writer zurueckgefallen.
+# fonts-liberation ist kein Beiwerk: Die Vorlagen sind in Arial gesetzt, und
+# Liberation Sans ist der masshaltige Ersatz dafuer — ohne dieses Paket
+# verschieben sich Umbrueche und Seitenzahlen gegenueber dem Word-PDF.
+#
+# Der Prueflauf am Ende ist Absicht und bewusst eine echte Umwandlung, nicht
+# nur ein "--version": Er beweist, dass Programmdatei, Suchpfad, Schriften und
+# Benutzerprofil zusammenspielen. Scheitert das, soll der BUILD scheitern —
+# nicht erst der erste PDF-Versuch eines Kollegen Wochen spaeter.
+RUN if [ "$APP_UMFANG" = "voll" ]; then \
+      apt-get update \
+   && ( apt-get install -y --no-install-recommends libreoffice-writer-nogui fonts-liberation \
+     || apt-get install -y --no-install-recommends libreoffice-writer      fonts-liberation ) \
+   && rm -rf /var/lib/apt/lists/* \
+   && ( command -v soffice >/dev/null 2>&1 \
+     || ln -s /usr/lib/libreoffice/program/soffice /usr/bin/soffice ) \
+   && printf 'Probeumwandlung\n' > /tmp/probe.txt \
+   && soffice --headless --norestore --convert-to pdf --outdir /tmp /tmp/probe.txt \
+   && test -s /tmp/probe.pdf \
+   && head -c 5 /tmp/probe.pdf | grep -q '%PDF-' \
+   && rm -f /tmp/probe.txt /tmp/probe.pdf \
+   && echo "LibreOffice einsatzbereit: $(soffice --headless --version | head -1)" ; \
+    else \
+      echo "APP_UMFANG=$APP_UMFANG - kein PDF-Export noetig, LibreOffice uebersprungen." ; \
+    fi
+
 WORKDIR /app
 
 # --- Backend-Abhängigkeiten zuerst (Docker-Layer-Cache) ---
@@ -43,20 +90,12 @@ RUN cd frontend && npm ci
 COPY backend ./backend
 COPY frontend ./frontend
 
-# --- Umfang der Weboberfläche ---
+# --- Umfang ins Frontend durchreichen ---
 #
-# Die Website zeigt nur, was auf der Baustelle gebraucht wird: Baufotos und
-# die Projekt-Stammdaten (siehe frontend/src/lib/umfang.ts). Mängelberichte,
-# Bautagesberichte, Protokolle und Schreiben entstehen im Büro im
-# Windows-Paket — dort baut erstellen.ps1 ohne diese Variable und bekommt
-# damit den vollen Umfang.
-#
-# Der Wert wird beim Bauen ins JavaScript-Bündel eingesetzt und MUSS deshalb
-# vor "npm run build" stehen; eine Umgebungsvariable zur Laufzeit käme zu
-# spät. Als ARG, damit man den Umfang auch ohne Änderung dieser Datei drehen
-# kann: "docker build --build-arg APP_UMFANG=voll". Ohne Angabe gilt "fotos" —
-# die Website hat damit nie versehentlich den vollen Umfang.
-ARG APP_UMFANG=fotos
+# Der Wert wird beim Bauen ins JavaScript-Buendel eingesetzt (siehe
+# frontend/src/lib/umfang.ts) und MUSS deshalb vor "npm run build" stehen;
+# eine Umgebungsvariable am laufenden Dienst kaeme zu spaet. Die Begruendung
+# und die moeglichen Werte stehen oben beim ARG.
 ENV APP_UMFANG=${APP_UMFANG}
 
 # --- Frontend bauen, danach Dev-Abhängigkeiten entfernen (kleineres Image) ---

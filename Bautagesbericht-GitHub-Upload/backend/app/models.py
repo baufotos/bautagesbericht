@@ -890,3 +890,209 @@ class Projektbeteiligter(Base):
     erstellt_am = Column(DateTime, default=func.now())
 
     projekt = relationship("Projekt", back_populates="projektbeteiligte")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# McDonald's — automatisierte Projektanlage + Beauftragung
+#
+# Der Ablauf, den diese Tabellen abbilden (interner Name des Büros:
+# "McDonald's", weil er für dieses Kundenkonto entstanden ist):
+#
+#   1. Der Kunde beauftragt per Mail eine Leistungsphase. Der Bauleiter
+#      exportiert die Mail als ``.eml`` und lädt sie hoch — oder trägt die
+#      Angaben von Hand ein, wenn telefonisch beauftragt wurde.
+#   2. Die App liest Standort, Auftraggeber und Leistungsphase heraus
+#      (app.services.mcdonalds_email_analyse).
+#   3. Im Hintergrund entsteht der Projektordner ``<UNLOCODE>_<Standortname>``
+#      im Netzlaufwerk und auf SharePoint (app.services.mcdonalds_ordner).
+#   4. Der Bauleiter erstellt daraus ein Angebot für einen Fachplaner und
+#      bekommt einen fertigen Outlook-Entwurf mit dem Dokument im Anhang.
+#
+# WARUM DER FALL EINE EIGENE TABELLE IST UND KEIN ``Projekt``
+# ==========================================================
+# Ein ``Projekt`` in dieser App ist eine laufende Baustelle mit Gewerken,
+# Mängeln, Fotos und Berichten. Der McDonald's-Fall ist das, was *davor*
+# passiert: eine eingegangene Beauftragung, aus der erst noch eine Ablage und
+# ein Angebot werden. Die meisten Fälle werden nie ein Projekt in diesem Sinne
+# — sie enden mit dem versendeten Angebot. Ein ``Projekt`` mit zwölf leeren
+# Beziehungen dafür anzulegen, würde die Projektliste des Büros unbrauchbar
+# machen.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+#: Zustände der Ordneranlage. "ausstehend" ist der Normalfall direkt nach dem
+#: Hochladen — die Anlage läuft als Hintergrundaufgabe, der Bauleiter wartet
+#: nicht darauf.
+MCDONALDS_ORDNER_STATUS = ("ausstehend", "angelegt", "fehler")
+
+#: Woher die Angaben eines Falls stammen. "telefon" ist kein Sonderfall,
+#: sondern der zweite reguläre Weg (siehe Konzeptblatt: "bei telefonischer
+#: Beauftragung Eingabe der Daten in die App").
+MCDONALDS_QUELLEN = ("eml", "telefon")
+
+
+class McdonaldsFall(Base):
+    """Eine eingegangene Beauftragung — hochgeladene Mail oder Telefonnotiz."""
+
+    __tablename__ = "mcdonalds_faelle"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: "eml" oder "telefon", siehe MCDONALDS_QUELLEN.
+    quelle = Column(String, nullable=False, default="eml")
+    #: Name der hochgeladenen Datei — bei telefonischer Beauftragung leer.
+    eml_dateiname = Column(String, nullable=False, default="")
+    #: Der Klartext der Mail, wie er analysiert wurde. Bleibt erhalten, damit
+    #: sich jede herausgelesene Angabe später gegenlesen lässt: Ein falsch
+    #: erkannter Standort sieht in der Ablage genauso aus wie ein richtiger.
+    roh_text = Column(Text, nullable=False, default="")
+    #: Namen der Mailanhänge — nur als Hinweis. Die Dateien selbst werden
+    #: nicht übernommen; sie gehören in den Projektordner.
+    anhaenge = Column(JSON, default=list)
+    #: Wann die KI-Analyse gelaufen ist. ``None`` heißt: nicht analysiert —
+    #: entweder fehlt der Anthropic-Schlüssel oder der Fall wurde von Hand
+    #: erfasst. Die Oberfläche zeigt das an, damit niemand geprüfte Angaben
+    #: vermutet, wo keine sind.
+    analysiert_am = Column(DateTime, nullable=True)
+
+    # ── Die herausgelesenen Eckdaten ──
+    auftraggeber = Column(String, nullable=False, default="")
+    standort_name = Column(String, nullable=False, default="")
+    standort_adresse = Column(String, nullable=False, default="")
+    #: Nur der Ort aus der Adresse — die Grundlage des UNLOCODE-Abgleichs.
+    #: Eigenes Feld, weil "Große Bergstraße 160, 22767 Hamburg" für die Ablage
+    #: richtig ist, für die Suche in der Referenztabelle aber "Hamburg"
+    #: gebraucht wird.
+    standort_ort = Column(String, nullable=False, default="")
+    #: 1–9 nach HOAI; im McDonald's-Ablauf vor allem 6–9. ``None``, solange
+    #: nichts Verlässliches erkannt wurde — geraten wird nicht.
+    leistungsphase = Column(Integer, nullable=True)
+    #: Sonstige Eckdaten als {Bezeichnung: Wert}, z. B. Termine, Ansprech-
+    #: partner, Projektnummer des Kunden. Bewusst offen: Was in diesen Mails
+    #: steht, ist nicht in ein festes Feldschema zu pressen, und ein Feld pro
+    #: Möglichkeit wäre eine Tabelle mit dreißig leeren Spalten.
+    #: TODO McDonald's: Sobald der endgültige Feldkatalog vorliegt, die dann
+    #: sicher feststehenden Angaben als echte Spalten herausziehen.
+    eckdaten = Column(JSON, default=dict)
+
+    # ── Ablage (app.services.mcdonalds_ordner) ──
+    #: 3-stelliger UN/LOCODE des Ortes. ``None``, solange kein Treffer in der
+    #: Referenztabelle gefunden wurde (oder sie noch nicht hochgeladen ist).
+    unlocode = Column(String, nullable=True)
+    #: Der gebildete Ordnername ``<UNLOCODE>_<Standortname>``. Steht mit in
+    #: der Datenbank und wird nicht jedes Mal neu berechnet: Wird der Standort
+    #: später korrigiert, bleibt so nachvollziehbar, wie der schon angelegte
+    #: Ordner heißt.
+    ordner_name = Column(String, nullable=False, default="")
+    ordner_status = Column(String, nullable=False, default="ausstehend")
+    ordner_pfad_h = Column(String, nullable=True)
+    ordner_pfad_sharepoint = Column(String, nullable=True)
+    #: Was fehlt oder schiefging — Klartext für die Oberfläche, kein Code.
+    fehlermeldung = Column(String, nullable=True)
+
+    erstellt_am = Column(DateTime, default=func.now())
+    aktualisiert_am = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    angebote = relationship(
+        "McdonaldsAngebot",
+        back_populates="fall",
+        cascade="all, delete-orphan",
+    )
+
+
+class Fachplaner(Base):
+    """Stammdaten der Unternehmen, die beauftragt werden.
+
+    Aufbau wie ``Empfaenger``: eine flache, projektunabhängige Liste, die sich
+    in der Oberfläche pflegen lässt. Bewusst nicht ``Gewerk`` — dort stehen
+    die ausführenden Nachunternehmer einer Baustelle mit Vergabeeinheit; hier
+    stehen Planungsbüros, die über alle Standorte hinweg dieselben bleiben.
+
+    TODO McDonald's: Laut Konzeptblatt sollen je Leistungsphase nur die
+    passenden Unternehmen erscheinen ("Auswahl von der jeweiligen Phase →
+    passende Unternehmen werden angezeigt"). Dafür kommt später eine Zuordnung
+    Phase → Fachplaner dazu; heute zeigt die Auswahl alle.
+    """
+
+    __tablename__ = "mcdonalds_fachplaner"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    ansprechpartner = Column(String, nullable=False, default="")
+    #: Empfänger des Outlook-Entwurfs (app.services.mcdonalds_versand).
+    email = Column(String, nullable=False)
+    adresse = Column(String, nullable=False, default="")
+    erstellt_am = Column(DateTime, default=func.now())
+
+    angebote = relationship("McdonaldsAngebot", back_populates="fachplaner")
+
+
+class McdonaldsAngebot(Base):
+    """Ein Angebot zur Beauftragung eines Fachplaners in einem Fall."""
+
+    __tablename__ = "mcdonalds_angebote"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fall_id = Column(Integer, ForeignKey("mcdonalds_faelle.id"), nullable=False)
+    fachplaner_id = Column(
+        Integer, ForeignKey("mcdonalds_fachplaner.id"), nullable=False
+    )
+
+    #: Betreff des Angebots und der Mail — steht im Dokumentkopf.
+    betreff = Column(String, nullable=False, default="")
+    #: Beauftragte Leistungsphase. Vorbelegt aus dem Fall, aber überschreibbar:
+    #: Ein Standort kann in mehreren Phasen beauftragt werden.
+    leistungsphase = Column(Integer, nullable=True)
+    #: Die Kernangaben als {Bezeichnung: Wert}.
+    #: TODO McDonald's: Das genaue Feldschema des Angebots wird nachgereicht
+    #: (die Excel-Vorlage des Büros liegt noch nicht vor). Bis dahin bleibt es
+    #: offen, damit die Oberfläche schon Felder anbieten kann, ohne dass jede
+    #: Änderung eine Datenbankmigration nach sich zieht.
+    angaben = Column(JSON, default=dict)
+    #: Zusätzliche Leistungen, beliebig viele Zeilen:
+    #: ``[{"bezeichnung": "…", "betrag": 1234.0 | None}]``. Der Betrag darf
+    #: fehlen — im Gespräch steht oft erst die Leistung fest, nicht der Preis.
+    mehrleistungen = Column(JSON, default=list)
+
+    #: Pfad des erzeugten Word-Dokuments; ``None``, solange keines erzeugt ist.
+    dokument_pfad = Column(String, nullable=True)
+    #: Wie beim Fotoversand: Datum und Weg getrennt, weil "Entwurf erstellt"
+    #: und "versendet" ein echter Unterschied ist — abgeschickt hat den
+    #: Entwurf dann Outlook, nicht die App (siehe app.services.fotoversand).
+    mail_versendet_am = Column(Date, nullable=True)
+    mail_weg = Column(String, nullable=False, default="")
+    erstellt_am = Column(DateTime, default=func.now())
+
+    fall = relationship("McdonaldsFall", back_populates="angebote")
+    fachplaner = relationship("Fachplaner", back_populates="angebote")
+
+
+class UnlocodeEintrag(Base):
+    """Eine Zeile der UN/LOCODE-Referenztabelle (Anlage 5.1 des Handbuchs).
+
+    Wird per Excel-Upload gefüllt und ersetzt dabei den ganzen Bestand
+    (app.services.mcdonalds_unlocode). Deshalb ohne eigene Beziehungen: Die
+    Tabelle ist ein Nachschlagewerk, kein Stammdatensatz, an dem etwas hängt —
+    der ermittelte Code steht am Fall.
+
+    ``ort`` und ``ort_normal`` stehen beide da: Der erste ist die Schreibweise
+    der Tabelle für die Anzeige, der zweite die vereinfachte Fassung für den
+    Abgleich ("Müllheim" → "muellheim"). Ohne die zweite Spalte müsste jeder
+    Vergleich die ganze Tabelle durchrechnen.
+    """
+
+    __tablename__ = "mcdonalds_unlocode"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: 3-stellig, z. B. "AAH" für Aachen.
+    code = Column(String, nullable=False, index=True)
+    ort = Column(String, nullable=False)
+    #: Kleingeschrieben und ohne Umlaute/Sonderzeichen — siehe Klassentext.
+    ort_normal = Column(String, nullable=False, index=True)
+    #: Bundesland aus der Tabelle. Entscheidet bei mehrdeutigen Ortsnamen —
+    #: "Aach" gibt es in Baden-Württemberg und in Rheinland-Pfalz.
+    bundesland = Column(String, nullable=False, default="")
+    #: Ländercode der Tabelle, hier immer "DE" — die Anlage ist die deutsche
+    #: Liste. Steht als Spalte da, damit eine zweite Liste die erste nicht
+    #: verdrängen muss.
+    land = Column(String, nullable=False, default="DE")
+    erstellt_am = Column(DateTime, default=func.now())

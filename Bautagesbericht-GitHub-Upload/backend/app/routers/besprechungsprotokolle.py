@@ -1299,7 +1299,8 @@ def _erzeuge_dokument(db: Session, protokoll: Besprechungsprotokoll) -> list[str
     protokoll.dokument_pfad = str(pfad)
     protokoll.erzeugt_am = datetime.now()
 
-    # PDF nur, wenn Word erreichbar ist (Bürorechner ja, Server nein).
+    # PDF nur, wenn ein Textprogramm erreichbar ist: auf dem Bürorechner
+    # Word, im Container LibreOffice (siehe app.services.word_pdf).
     protokoll.pdf_pfad = None
     try:
         pdf = word_pdf.nach_pdf(pfad.read_bytes())

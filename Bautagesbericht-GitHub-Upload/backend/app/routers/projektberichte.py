@@ -441,7 +441,7 @@ def vorschau(bericht_id: int, db: Session = Depends(get_db)):
         ],
         entfallen=entfallen,
         anzahl_fotos=len(bericht.fotos),
-        pdf_moeglich=word_pdf.word_vorhanden(),
+        pdf_moeglich=word_pdf.pdf_moeglich(),
     )
 
 

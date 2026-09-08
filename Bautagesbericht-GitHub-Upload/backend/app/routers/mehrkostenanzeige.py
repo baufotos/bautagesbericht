@@ -270,7 +270,7 @@ def vorbelegung(
         "gewerke": [],
         "haltungen": erzeugung.HALTUNGEN,
         "arten": [name for _, name in leser.ARTEN],
-        "word_vorhanden": word_pdf.word_vorhanden(),
+        "pdf_moeglich": word_pdf.pdf_moeglich(),
         "formulieren_verfuegbar": formulierung.ist_verfuegbar(),
         "formulieren_hinweis": (
             "" if formulierung.ist_verfuegbar() else formulierung.warum_nicht()
@@ -532,8 +532,9 @@ def dokument(
     """Das Antwortschreiben.
 
     Word ist die verbindliche Ausgabe — das Schreiben wird im Büro noch
-    gelesen und unterschrieben. Das PDF gibt es zusätzlich, aber nur dort, wo
-    Word installiert ist (siehe ``app.services.word_pdf``).
+    gelesen und unterschrieben. Das PDF gibt es zusätzlich, sobald ein
+    Textprogramm da ist: auf dem Bürorechner Word, auf der Website
+    LibreOffice (siehe ``app.services.word_pdf``).
     """
     if format not in ("docx", "pdf"):
         raise HTTPException(400, "Erlaubt sind „docx“ und „pdf“.")

@@ -49,6 +49,10 @@ import { BerichtEinreichen } from "@/components/bautagesberichte/BerichtEinreich
 import { BerichteUebersicht } from "@/components/bautagesberichte/BerichteUebersicht";
 import { ProjekteVerwaltung } from "@/components/stammdaten/ProjekteVerwaltung";
 import { EmpfaengerVerwaltung } from "@/components/stammdaten/EmpfaengerVerwaltung";
+import { FachplanerVerwaltung } from "@/components/stammdaten/FachplanerVerwaltung";
+import { McdonaldsUebersicht } from "@/components/mcdonalds/McdonaldsUebersicht";
+import { McdonaldsFallUpload } from "@/components/mcdonalds/McdonaldsFallUpload";
+import { McdonaldsFallDetail } from "@/components/mcdonalds/McdonaldsFallDetail";
 import { MangelUebersicht } from "@/components/maengel/MangelUebersicht";
 import { MangelErfassung } from "@/components/maengel/MangelErfassung";
 import { MaengelanzeigeErstellen } from "@/components/maengel/MaengelanzeigeErstellen";
@@ -94,6 +98,11 @@ export default function Home() {
   // Suchbegriff aus der Kopfzeile für die Fotosatz-Galerie. Nur im Umfang
   // "fotos" belegt — sonst sucht die Kopfzeile in den Mängeln.
   const [fotoSuche, setFotoSuche] = useState("");
+  /* McDonald's: welche Beauftragung ist offen, und wird gerade eine erfasst?
+     Beides gehört in den Router und nicht in die Übersicht — der Detailfall
+     ersetzt die Liste, genau wie beim Mangel-Detail. */
+  const [offenerFall, setOffenerFall] = useState<number | null>(null);
+  const [fallErfassen, setFallErfassen] = useState(false);
 
   /* ───────── Startansicht: Link, dann Gedächtnis ───────── */
 
@@ -126,6 +135,12 @@ export default function Home() {
     // Der Suchbegriff aus der Kopfzeile gehört zur Galerie. Wer sie verlässt,
     // soll sie beim nächsten Öffnen nicht gefiltert vorfinden.
     if (ziel !== "baufotos-galerie") setFotoSuche("");
+    // Dasselbe für McDonald's: Wer den Bereich verlässt, soll ihn nicht mit
+    // einer halb ausgefüllten Erfassung wiederfinden.
+    if (ziel !== "mcdonalds") {
+      setOffenerFall(null);
+      setFallErfassen(false);
+    }
     window.localStorage.setItem(ANSICHT_SPEICHER, ziel);
   }, []);
 
@@ -265,6 +280,10 @@ export default function Home() {
             onAnsicht={wechsle}
             onMangel={oeffneMangel}
             onMangelHinweis={setDetailHinweis}
+            offenerFall={offenerFall}
+            onFall={setOffenerFall}
+            fallErfassen={fallErfassen}
+            onFallErfassen={setFallErfassen}
           />
         </>
       )}
@@ -281,6 +300,10 @@ function Inhalt({
   onAnsicht,
   onMangel,
   onMangelHinweis,
+  offenerFall,
+  onFall,
+  fallErfassen,
+  onFallErfassen,
 }: {
   ansicht: Ansicht;
   daten: ReturnType<typeof useAppDaten>;
@@ -289,6 +312,12 @@ function Inhalt({
   onAnsicht: (ansicht: Ansicht) => void;
   onMangel: (id: number) => void;
   onMangelHinweis: (hinweis?: string) => void;
+  /** McDonald's: geöffnete Beauftragung, sonst null. */
+  offenerFall: number | null;
+  onFall: (id: number | null) => void;
+  /** McDonald's: Erfassungsformular statt Liste zeigen. */
+  fallErfassen: boolean;
+  onFallErfassen: (offen: boolean) => void;
 }) {
   const { projekt } = daten;
 
@@ -426,6 +455,62 @@ function Inhalt({
     case "stamm-besprechung":
       return mitProjekt((p) => <BesprechungStammdaten projekt={p} />);
 
+    /* ── McDonald's ──
+       Drei Zustände in einer Ansicht: Liste, Erfassung, Detail. Bewusst kein
+       eigener Navigationseintrag je Zustand — man kommt aus der Liste in die
+       beiden anderen und wieder zurück, und eine Seitenleiste mit drei
+       McDonald's-Einträgen wäre eine Wegbeschreibung für einen Weg, den man
+       ohnehin geht. */
+    case "mcdonalds": {
+      const fall =
+        offenerFall === null
+          ? null
+          : daten.mcdonaldsFaelle.find((f) => f.id === offenerFall) ?? null;
+
+      if (fall) {
+        return (
+          <McdonaldsFallDetail
+            fall={fall}
+            fachplaner={daten.fachplaner}
+            faehigkeiten={daten.mcdonaldsFaehigkeiten}
+            onZurueck={() => onFall(null)}
+            onAktualisiert={daten.ladeMcdonalds}
+            onGeloescht={() => {
+              onFall(null);
+              daten.ladeMcdonalds();
+            }}
+            onFachplanerAendern={daten.ladeMcdonalds}
+          />
+        );
+      }
+
+      if (fallErfassen) {
+        return (
+          <McdonaldsFallUpload
+            faehigkeiten={daten.mcdonaldsFaehigkeiten}
+            onAngelegt={(neu) => {
+              // Direkt in die Detailansicht: Dort stehen die Hinweise der
+              // Analyse und der Status der Ordneranlage.
+              onFallErfassen(false);
+              daten.ladeMcdonalds();
+              onFall(neu.id);
+            }}
+          />
+        );
+      }
+
+      return (
+        <McdonaldsUebersicht
+          faelle={daten.mcdonaldsFaelle}
+          faehigkeiten={daten.mcdonaldsFaehigkeiten}
+          laedt={daten.laedtMcdonalds}
+          onOeffnen={onFall}
+          onNeu={() => onFallErfassen(true)}
+          onAktualisieren={daten.ladeMcdonalds}
+        />
+      );
+    }
+
     case "btb-einreichen":
       return (
         <BerichtEinreichen
@@ -475,6 +560,14 @@ function Inhalt({
         <EmpfaengerVerwaltung
           empfaenger={daten.empfaenger}
           onAendern={daten.ladeGlobal}
+        />
+      );
+
+    case "stamm-fachplaner":
+      return (
+        <FachplanerVerwaltung
+          fachplaner={daten.fachplaner}
+          onAendern={daten.ladeMcdonalds}
         />
       );
 

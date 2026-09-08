@@ -69,3 +69,23 @@ smtp_tls=
 smtp_absender=
 smtp_benutzer=
 smtp_kennwort=
+
+# ── McDonald's: wohin die Projektordner angelegt werden ────────────────────
+# Beim Hochladen einer Auftragsmail legt die App im Hintergrund einen Ordner
+# "<3-stelliger Ortscode>_<Standortname>" an — einmal im Netzlaufwerk, einmal
+# auf SharePoint.
+#
+# OHNE diese Zeilen funktioniert der Bereich trotzdem: Mail auswerten, Angebot
+# erstellen und Outlook-Entwurf gehen wie gewohnt. Nur die Ablage entsteht
+# nicht; an der Beauftragung steht dann "Ordner offen" mit dem Grund.
+#
+#   mcdonalds_ordner_h            Ordner, UNTER dem die Standortordner
+#                                 entstehen, z. B. H:\McDonalds\Projekte
+#   mcdonalds_ordner_sharepoint   Zielbibliothek auf SharePoint. Die
+#                                 automatische Anbindung ist vorbereitet, aber
+#                                 noch nicht in Betrieb — bis dahin ist der
+#                                 Eintrag nur eine Notiz in der Meldung, damit
+#                                 klar ist, wohin von Hand angelegt wird.
+
+mcdonalds_ordner_h=
+mcdonalds_ordner_sharepoint=

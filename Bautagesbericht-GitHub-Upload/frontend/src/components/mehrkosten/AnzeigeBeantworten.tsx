@@ -1301,7 +1301,7 @@ Bauzeit ablehnen                    → weist die Bauzeitverlängerung zurück`}
                 >
                   {laeuft === "docx" ? "Wird erzeugt…" : "Word herunterladen"}
                 </Button>
-                {vorbelegung?.word_vorhanden && (
+                {vorbelegung?.pdf_moeglich && (
                   <Button
                     variante="sekundaer"
                     icon={FileSignature}

@@ -35,14 +35,23 @@ losschicken zu lassen, die beim Empfänger abprallt.
 
 from __future__ import annotations
 
-import smtplib
 from datetime import date
 from email.message import EmailMessage
-from email.utils import formataddr
 
 from app.config import settings
 from app.models import Fotosatz
 from app.services.baufotos import zip_dateiname
+
+# Der Postweg selbst steckt in app.services.mailversand — er ist derselbe fuer
+# Baufotos und fuer das McDonald's-Angebot. Die drei Funktionen werden hier
+# weiterhin herausgegeben, damit Aufrufer und Tests, die sie unter diesem
+# Namen kennen, unveraendert weiterlaufen.
+from app.services.mailversand import (  # noqa: F401
+    absender_adresse,
+    sende_per_smtp,
+    smtp_bereit,
+)
+from app.services import mailversand
 
 #: Grenze für das ZIP selbst. Base64 macht daraus etwa 20 MB Mail — die Grenze,
 #: die Exchange und die meisten Provider noch durchlassen.
@@ -151,56 +160,11 @@ def baue_nachricht(
     )
 
     if als_entwurf:
-        # Der Kopf, an dem Outlook eine noch nicht gesendete Nachricht erkennt.
-        nachricht["X-Unsent"] = "1"
+        mailversand.als_entwurf_kennzeichnen(nachricht)
     elif absender:
         nachricht["From"] = absender
 
     return nachricht
-
-
-def smtp_bereit() -> bool:
-    """Ist ein Postausgangsserver hinterlegt?"""
-    return bool((settings.smtp_host or "").strip())
-
-
-def absender_adresse() -> str:
-    """Adresse, unter der der Server verschickt (leer, wenn nichts hinterlegt)."""
-    adresse = (settings.smtp_absender or settings.smtp_user or "").strip()
-    if not adresse:
-        return ""
-    name = (settings.smtp_absender_name or "").strip()
-    return formataddr((name, adresse)) if name else adresse
-
-
-def sende_per_smtp(nachricht: EmailMessage) -> None:
-    """Verschickt die Nachricht. Wirft bei Fehlern — der Aufrufer meldet sie.
-
-    Bewusst synchron: Der Vorgang dauert Sekunden, und der Kollege soll im
-    Dialog erfahren, ob die Mail wirklich raus ist. Ein Versand im Hintergrund
-    würde Erfolg melden, wo keiner ist.
-    """
-    host = settings.smtp_host.strip()
-    port = settings.smtp_port
-    absender = (settings.smtp_absender or settings.smtp_user or "").strip()
-
-    empfaenger = []
-    for feld in ("To", "Cc"):
-        wert = nachricht.get(feld, "")
-        empfaenger += [teil.strip() for teil in wert.split(",") if teil.strip()]
-
-    if port == 465:
-        verbindung = smtplib.SMTP_SSL(host, port, timeout=60)
-    else:
-        verbindung = smtplib.SMTP(host, port, timeout=60)
-
-    with verbindung as server:
-        if port != 465 and settings.smtp_tls:
-            server.starttls()
-        if settings.smtp_user:
-            server.login(settings.smtp_user, settings.smtp_passwort)
-        server.send_message(nachricht, from_addr=absender or None,
-                            to_addrs=empfaenger)
 
 
 def notiere_versand(fotosatz: Fotosatz, empfaenger: list[str], weg: str) -> None:
