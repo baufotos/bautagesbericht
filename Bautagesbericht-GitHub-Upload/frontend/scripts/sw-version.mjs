@@ -129,6 +129,13 @@ const VERKNUEPFUNGEN = {
   ],
 };
 
+/** Grundfarbe je Auslieferung — dieselben Werte wie LEISTENFARBE in
+ *  lib/thema.ts fuer die jeweilige Standardfassung. */
+const FASSUNGSFARBE = {
+  voll: "#FFFFFF",   // HPP-Fassung
+  fotos: "#0D0E10",  // dunkle Fassung
+};
+
 const manifestRoh = readFileSync(MANIFEST, "utf8");
 // Zeilenenden der vorhandenen Datei behalten: Der Quellordner ist durchgängig
 // CRLF, und eine mit LF zurückgeschriebene Datei erzeugt beim Spiegeln ins
@@ -147,11 +154,19 @@ try {
 manifest.description = BESCHREIBUNG[UMFANG];
 manifest.shortcuts = VERKNUEPFUNGEN[UMFANG];
 
+// Startfarbe der installierten App. MUSS zur Standardfassung passen (siehe
+// lib/thema.ts): Die Baumanagement-App startet im weissen HPP-Design, die
+// Baufotos-App dunkel. Stuende hier fuer beide derselbe Wert, blitzte die
+// weisse App beim Start schwarz auf und behielte am Handy eine schwarze
+// Systemleiste — der eine Fehler, den man bei jedem Start wiedersieht.
+manifest.theme_color = FASSUNGSFARBE[UMFANG];
+manifest.background_color = FASSUNGSFARBE[UMFANG];
+
 writeFileSync(
   MANIFEST,
   JSON.stringify(manifest, null, 2).replace(/\n/g, zeilenende) + zeilenende
 );
 console.log(
   `sw-version: Manifest auf Umfang "${UMFANG}" gestempelt ` +
-    `(${manifest.shortcuts.length} Verknüpfungen).`
+    `(${manifest.shortcuts.length} Verknüpfungen, Farbe ${manifest.theme_color}).`
 );
