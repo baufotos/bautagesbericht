@@ -54,9 +54,25 @@ gesetzt ist, braucht der Abholweg deshalb ein GESETZTES und passendes
 ``BTB_ABHOL_TOKEN``; fehlt es, gibt es 401. Das fällt sofort im Protokoll
 der Abholung auf — die stille Alternative wäre, die Fotos offen ins Netz
 zu stellen.
+
+
+Kein Passwort gesetzt
+---------------------
+
+Ein leeres ``BTB_SEITEN_PASSWORT`` bedeutet je nach Ort das Gegenteil:
+
+  - **Bürorechner** (Windows-Paket): Normalfall. Die App hört nur auf
+    localhost, eine Anmeldung vor dem eigenen Schreibtisch wäre lästig.
+  - **Server**: offenes Tor. Erkannt an der Umgebungsvariablen ``RENDER``;
+    in diesem Fall verweigert der Dienst jede Antwort außer ``/api/health*``
+    (siehe ``_laeuft_im_netz``).
+
+Diese Unterscheidung ist nicht theoretisch — sie ist die Lehre aus dem
+08.09.2026, siehe die Begründung an der Funktion.
 """
 
 import hashlib
+import os
 import re
 import secrets
 
@@ -74,6 +90,37 @@ COOKIE_NAME = "hpp_zugang"
 # Ein halbes Jahr. Lang genug, dass niemand auf der Baustelle ständig neu
 # tippt; das Cookie wird ohnehin ungültig, sobald das Passwort wechselt.
 COOKIE_MAX_ALTER = 180 * 24 * 60 * 60
+
+#: Antwort, wenn ein Dienst im Netz OHNE Seiten-Passwort läuft.
+EINRICHTUNG_UNVOLLSTAENDIG = (
+    "Dieser Dienst ist noch nicht fertig eingerichtet: Es ist kein "
+    "Seiten-Passwort hinterlegt (BTB_SEITEN_PASSWORT). Solange das so ist, "
+    "antwortet er absichtlich nicht — sonst könnte jeder mit dem Link "
+    "mitlesen und Fotos hochladen. Der Wert wird bei Render unter "
+    "Environment eingetragen."
+)
+
+
+def _laeuft_im_netz() -> bool:
+    """Ist dieser Prozess aus dem Internet erreichbar?
+
+    Warum das überhaupt unterschieden wird: Ein leeres Seiten-Passwort ist
+    auf dem Bürorechner der Normalfall — das Windows-Paket hört nur auf
+    localhost, und eine Anmeldung vor dem eigenen Schreibtisch wäre nur
+    lästig. Auf einem Server ist dasselbe leere Feld dagegen ein offenes
+    Tor.
+
+    Erkannt wird das an ``RENDER``, das Render in jedem Dienst setzt. Genau
+    dieser Fall ist am 08.09.2026 eingetreten: Der Blueprint-Abgleich legte
+    den zweiten Dienst an, ließ aber alle Felder mit ``sync: false`` leer.
+    Der Dienst startete daraufhin mit einer leeren Ersatzdatenbank und ohne
+    Passwort — erreichbar für jeden, der die Adresse kannte. Seitdem
+    verweigert er in diesem Zustand die Arbeit, statt still offen zu stehen.
+
+    ``/api/health*`` bleibt bewusst erreichbar: Render braucht es, und der
+    Einrichtende soll sehen können, dass der Dienst grundsätzlich läuft.
+    """
+    return bool(os.environ.get("RENDER"))
 
 
 def _fingerabdruck(passwort: str) -> str:
@@ -128,13 +175,15 @@ def pruefe_seitenpasswort(
     x_seiten_passwort: str = Header(""),
     x_abhol_token: str = Header(""),
 ) -> None:
-    erwartet = (settings.seiten_passwort or "").strip()
-    if not erwartet:
-        return  # kein Passwort gesetzt -> offen wie bisher
-
     pfad = request.url.path
     if pfad.startswith(_OFFENE_PFADE_PRAEFIXE):
         return
+
+    erwartet = (settings.seiten_passwort or "").strip()
+    if not erwartet:
+        if _laeuft_im_netz():
+            raise HTTPException(503, EINRICHTUNG_UNVOLLSTAENDIG)
+        return  # Bürorechner: offen wie bisher
 
     # Weg 1: Kopfzeile (fetch aus der Oberfläche, Skripte)
     if secrets.compare_digest((x_seiten_passwort or "").strip(), erwartet):
