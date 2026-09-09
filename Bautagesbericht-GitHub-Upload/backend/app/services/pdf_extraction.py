@@ -802,19 +802,13 @@ def handschrift_verfuegbar() -> bool:
 
 
 def _wo_der_schluessel_hingehoert() -> str:
-    """Wo der Anthropic-Schlüssel einzutragen ist — je nach Betriebsart.
+    """Wo der Schlüssel einzutragen ist — siehe services/schnittstelle.
 
-    Dieselbe App läuft auf dem Bürorechner aus einem Ordner und im Web in
-    einem Container. Ein Hinweis auf "einstellungen.txt neben dem Programm"
-    ist online schlicht falsch: Dort gibt es keine solche Datei, sondern eine
-    Umgebungsvariable im Render-Dashboard.
+    Stand hier früher ein zweites Mal. Zwei Fassungen desselben Satzes an
+    zwei Stellen laufen irgendwann auseinander; eine davon ist dann falsch,
+    und man merkt es erst, wenn jemand danach sucht.
     """
-    import sys
-
-    if sys.platform.startswith("win"):
-        return "einstellungen.txt neben dem Programm, Zeile anthropic_key="
-    return ("Umgebungsvariable BTB_ANTHROPIC_API_KEY — bei Render unter "
-            "Environment einzutragen")
+    return schnittstelle.wo_der_schluessel_hingehoert()
 
 
 def erkennung_beschreibung() -> tuple[bool, str]:

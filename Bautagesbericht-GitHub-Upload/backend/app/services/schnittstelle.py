@@ -39,10 +39,30 @@ WARTEN_SEKUNDEN = 2.0
 
 #: Wortfetzen, an denen sich der Grund eines Fehlschlags erkennen lässt, und
 #: was der Anwender stattdessen lesen soll.
+def wo_der_schluessel_hingehoert() -> str:
+    """Wo der Anthropic-Schlüssel einzutragen ist — je nach Betriebsart.
+
+    Dieselbe App läuft auf dem Bürorechner aus einem Ordner und im Netz in
+    einem Container. Ein Hinweis auf "einstellungen.txt neben dem Programm"
+    ist online schlicht falsch: Dort gibt es keine solche Datei, sondern
+    eine Umgebungsvariable im Render-Dashboard. Wer den Satz dort liest,
+    sucht eine Datei, die es nie gab.
+
+    Steht hier und nicht in pdf_extraction, weil beide Module ihn brauchen
+    und dieses das untere von beiden ist.
+    """
+    import sys
+
+    if sys.platform.startswith("win"):
+        return "einstellungen.txt neben dem Programm, Zeile anthropic_key="
+    return ("Umgebungsvariable BTB_ANTHROPIC_API_KEY — bei Render unter "
+            "Environment einzutragen")
+
+
 _FEHLERDEUTUNG = (
     (("authentication", "401", "invalid x-api-key", "invalid api key"),
-     "Der Anthropic-Schlüssel wird nicht angenommen. Bitte den Wert hinter "
-     "„anthropic_key=“ prüfen — er beginnt mit „sk-ant-“ und darf keine "
+     "Der Anthropic-Schlüssel wird nicht angenommen. Bitte den Wert "
+     "prüfen ({wo}) — er beginnt mit „sk-ant-“ und darf keine "
      "Leerzeichen oder Anführungszeichen enthalten."),
     (("permission", "403"),
      "Der Anthropic-Schlüssel darf dieses Modell nicht benutzen."),
@@ -80,7 +100,9 @@ def fehlertext(fehler: Exception) -> str:
     roh = _roh(fehler)
     for stichworte, klartext in _FEHLERDEUTUNG:
         if any(wort in roh for wort in stichworte):
-            return klartext
+            # {wo} erst hier einsetzen: Der Text steht als Konstante oben,
+            # die richtige Stelle hängt aber am Rechner.
+            return klartext.replace("{wo}", wo_der_schluessel_hingehoert())
     return f"Die Texterkennung meldete: {fehler}"
 
 

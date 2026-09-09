@@ -11,9 +11,24 @@
  *   1. Anzeige hochladen        PDF oder Word. Der Server liest sie aus.
  *   2. Angaben prüfen           Alles, was er gelesen hat — Feld für Feld
  *                               änderbar. Nichts geht ungesehen in den Brief.
- *   3. Stellungnahme schreiben  Das Infofeld. Wort für Wort so, wie es im
- *                               Schreiben stehen wird.
+ *   3. Stellungnahme            Zwei Felder: oben die Eingabe (Stichworte,
+ *                               Zahlen, Haltung), darunter der daraus
+ *                               erzeugte Brieftext — Wort für Wort so, wie
+ *                               es im Schreiben stehen wird.
  *   4. Erzeugen und verschicken Word herunterladen, dann Outlook-Entwurf.
+ *
+ * WARUM SCHRITT 3 ZWEI FELDER HAT
+ * ===============================
+ * Bis 09.09.2026 war es eines: Man schrieb Stichworte hinein, und
+ * „Ausformulieren“ überschrieb sie mit dem fertigen Text. Damit war die
+ * Eingabe genau dann weg, wenn man sie gebraucht hätte — zum Nachbessern und
+ * noch einmal Erzeugen. Jetzt bleibt sie stehen.
+ *
+ * Der erzeugte Text landet weiterhin im Feld und NICHT im Dokument. Das ist
+ * die Sicherung der ganzen Funktion (siehe services/anzeige_formulierung):
+ * Dazwischen liest ein Mensch und verantwortet, was das Büro schreibt. Wer
+ * diesen Zwischenschritt entfernt, schafft einen Weg, auf dem ein Modell
+ * ungelesen ein rechtserhebliches Schreiben verfasst.
  *
  * NICHT NUR MEHRKOSTENANZEIGEN
  * ============================
@@ -171,6 +186,15 @@ export function AnzeigeBeantworten({
   const [vergabeeinheit, setVergabeeinheit] = useState("");
   const [betreff, setBetreff] = useState("");
   const [briefdatum, setBriefdatum] = useState(heuteIso());
+  // Zwei Felder, zwei Rollen. Oben steht, WAS gesagt werden soll
+  // (Stichworte, Zahlen, Tatsachen) — unten der daraus erzeugte
+  // Brieftext, der Wort für Wort ins Dokument geht.
+  //
+  // Frueher war das EIN Feld: Man schrieb Stichworte hinein, und der
+  // Knopf überschrieb sie mit dem Brieftext. Damit war die Eingabe
+  // genau dann weg, wenn man sie gebraucht hätte — zum Nachbessern
+  // und noch einmal Erzeugen.
+  const [eingabe, setEingabe] = useState("");
   const [stellungnahme, setStellungnahme] = useState("");
   // Die Stichpunkte, aus denen formuliert wurde — fuer die Ruecknahme.
   // Ohne sie waere ein Klick auf "Text formulieren" unumkehrbar, und wer
@@ -309,10 +333,10 @@ export function AnzeigeBeantworten({
       setVerteiler((alt) => alt || s.empfaenger.firma);
     }
     if (s.punkte.length > 0) {
-      // Das Gerüst für die Stellungnahme: Zu jedem Punkt der Firma eine
-      // Zeile, die noch zu füllen ist. So beantwortet das Büro sie in den
-      // Referenzschreiben auch — Punkt für Punkt.
-      setStellungnahme((alt) =>
+      // Das Gerüst kommt in die EINGABE, nicht in den Brieftext: Zu jedem
+      // Punkt der Firma eine Zeile, die noch zu füllen ist. So beantwortet
+      // das Büro sie in den Referenzschreiben auch — Punkt für Punkt.
+      setEingabe((alt) =>
         alt ||
         s.punkte.map((p) => `${p.nummer}) ${p.titel} — `).join("\n")
       );
@@ -461,7 +485,7 @@ export function AnzeigeBeantworten({
     const vorher = stellungnahme;
     try {
       const ergebnis = await api.anzeigen.formulieren({
-        stichpunkte: stellungnahme,
+        stichpunkte: eingabe,
         anzeige,
         // Die Punkte und der Volltext der Anzeige sind die Tatsachengrundlage.
         // Ohne sie muesste das Modell raten, worauf sich die Stichpunkte
@@ -982,13 +1006,80 @@ export function AnzeigeBeantworten({
       <Karte>
         <KarteKopf
           titel="3 · Stellungnahme"
-          unterzeile="Der Text kommt Wort für Wort in den Brief — nichts wird umformuliert."
+          unterzeile="Oben eingeben, was gesagt werden soll — daraus entsteht der Brieftext. Der geht Wort für Wort in den Brief."
         />
         <KarteInhalt className="space-y-4">
-          {/* ── Stichpunkte ausformulieren ──
-              Der Knopf schreibt in dasselbe Feld: Erst stehen dort die
-              Stichworte, danach der Brieftext. Beides ist derselbe Weg ins
-              Dokument, und dazwischen liest ein Mensch. */}
+          {/* ── Die Eingabe: WAS gesagt werden soll ──────────────────────
+              Ein eigenes Feld, nicht dasselbe wie der Brieftext darunter.
+              Vorher stand beides in einem Feld, und der Knopf überschrieb die
+              Stichworte mit dem fertigen Text — die Eingabe war also genau
+              dann verloren, wenn man sie gebraucht hätte: zum Nachbessern und
+              noch einmal Erzeugen.
+
+              Der erzeugte Text landet weiter im Infofeld darunter und NICHT
+              im Dokument. Das ist Absicht (siehe services/anzeige_formulierung):
+              Dazwischen liest ein Mensch und verantwortet, was das Büro
+              schreibt. Ein Weg, auf dem ein Modell ungelesen ein
+              rechtserhebliches Schreiben verfasst, soll es nicht geben. */}
+          {vorbelegung?.formulieren_verfuegbar ? (
+            <div className="space-y-2.5 rounded-ui border border-ui-line bg-ui-surface-muted p-3.5">
+              <Field
+                label="Was soll in das Schreiben?"
+                hinweis={
+                  "Stichworte genügen — Tatsachen, Zahlen, Fristen, worauf sich " +
+                  "die Antwort bezieht. Die Anzeige selbst kennt der Server " +
+                  "bereits; hier steht nur, was HPP dazu sagt. Diese Eingabe " +
+                  "bleibt stehen — nachbessern und neu erzeugen ist jederzeit " +
+                  "möglich."
+                }
+              >
+                <Textarea
+                  value={eingabe}
+                  onChange={(e) => setEingabe(e.target.value)}
+                  rows={7}
+                  className="min-h-[150px] text-[13px]"
+                  placeholder={
+                    "1) Mehrkosten Schalung — nicht anerkannt, Leistung ist in " +
+                    "LV-Pos. 3.2.10 enthalten\n" +
+                    "2) Bauzeitverlängerung — abgelehnt, Behinderung nicht " +
+                    "angezeigt\n" +
+                    "3) Stundenlohnarbeiten — dem Grunde nach in Prüfung, " +
+                    "Nachweise fehlen"
+                  }
+                />
+              </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  icon={laeuft === "formulieren" ? RefreshCw : Wand2}
+                  onClick={() => void formuliereText()}
+                  disabled={laeuft !== "" || !eingabe.trim()}
+                >
+                  {laeuft === "formulieren"
+                    ? "Wird geschrieben…"
+                    : "Brieftext erzeugen"}
+                </Button>
+                <span className="text-[12.5px] text-ui-text-muted">
+                  Daraus entsteht unten der Brieftext im Stil des Büros.
+                </span>
+              </div>
+            </div>
+          ) : (
+            <Meldung art="hinweis">
+              <span className="flex items-start gap-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  <strong>Kein Brieftext aus Stichworten möglich.</strong>{" "}
+                  {vorbelegung?.formulieren_hinweis ||
+                    "Der Anthropic-Schlüssel fehlt derzeit."}{" "}
+                  Textbausteine und Glätten gehen ohne Schlüssel; den Brieftext
+                  bitte solange von Hand ins Infofeld schreiben.
+                </span>
+              </span>
+            </Meldung>
+          )}
+
+          {/* Bausteine und Glätten arbeiten am Brieftext darunter, nicht an
+              der Eingabe — sie sind Werkzeuge des fertigen Texts. */}
           <div className="flex flex-wrap items-center gap-2">
             {gruppen.length > 0 && (
               <Button
@@ -1011,31 +1102,6 @@ export function AnzeigeBeantworten({
               <Button variante="still" icon={Undo2} onClick={nimmZurueck}>
                 Zurück zur vorigen Fassung
               </Button>
-            )}
-            {vorbelegung?.formulieren_verfuegbar ? (
-              <>
-                <Button
-                  variante="sekundaer"
-                  icon={laeuft === "formulieren" ? RefreshCw : Wand2}
-                  onClick={() => void formuliereText()}
-                  disabled={laeuft !== "" || !stellungnahme.trim()}
-                >
-                  {laeuft === "formulieren"
-                    ? "Wird formuliert…"
-                    : "Stichpunkte ausformulieren"}
-                </Button>
-                <span className="text-[12.5px] text-ui-text-muted">
-                  Hinschreiben, was hinein soll — Stichworte genügen. Daraus
-                  wird der Brieftext im Stil des Büros.
-                </span>
-              </>
-            ) : (
-              <span className="text-[12.5px] text-ui-text-muted">
-                Bausteine und Glätten brauchen keinen Schlüssel. Freies
-                Ausformulieren aus Notizen schon —{" "}
-                {vorbelegung?.formulieren_hinweis ||
-                  "der Schlüssel fehlt derzeit."}
-              </span>
             )}
           </div>
 
@@ -1088,10 +1154,15 @@ export function AnzeigeBeantworten({
           <Field
             label={
               rohfassung === null
-                ? "Infofeld: was HPP zu der Anzeige sagt"
-                : "Infofeld: der formulierte Brieftext — bitte gegenlesen"
+                ? "Brieftext — was so im Schreiben stehen wird"
+                : "Brieftext — erzeugt, bitte gegenlesen"
             }
             hinweis={
+              (rohfassung === null
+                ? "Dieser Text kommt Wort für Wort in den Brief. Oben erzeugen " +
+                  "lassen oder hier selbst schreiben. "
+                : "Erzeugt aus deiner Eingabe oben. Änderungen hier wirken " +
+                  "sofort, die Eingabe bleibt davon unberührt. ") +
               "Leerzeile = neuer Absatz. „1) …“ bleibt eine eigene Zeile. " +
               "Eine Zeile „Auszug LV:“ rückt alles Folgende ein, bis zur nächsten Leerzeile."
             }
