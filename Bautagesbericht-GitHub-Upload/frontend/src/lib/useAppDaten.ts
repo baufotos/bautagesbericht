@@ -67,6 +67,8 @@ export interface AppDaten {
   mcdFaehigkeiten: McdFaehigkeiten | null;
   laedtMcdonalds: boolean;
   ladeMcdonalds: () => Promise<void>;
+  /** Einen gerade angelegten Standort sofort in die Liste stellen. */
+  uebernehmeStandort: (standort: McdStandort) => void;
 
   projektId: number | null;
   projekt: Projekt | null;
@@ -178,20 +180,51 @@ export function useAppDaten(): AppDaten {
   const ladeMcdonalds = useCallback(async () => {
     if (NUR_FOTOS) return;
     setLaedtMcdonalds(true);
-    try {
-      const [standorte, planer, faehig] = await Promise.all([
-        api.mcdonalds.standorte(),
-        api.subplaner.list(),
-        api.mcdonalds.faehigkeiten(),
-      ]);
-      setMcdStandorte(standorte);
-      setSubplaner(planer);
-      setMcdFaehigkeiten(faehig);
-    } catch {
-      /* Der globale Fehlerhinweis steht schon; hier nicht überschreiben. */
-    } finally {
-      setLaedtMcdonalds(false);
+    /* allSettled statt all — und zwar mit Absicht: Bei ``Promise.all`` reißt
+       ein einziger fehlgeschlagener Aufruf alle drei mit. Dann blieben auch
+       die Standorte leer, obwohl mit ihnen alles in Ordnung war, und der
+       Bereich sah aus, als wäre nichts gespeichert. Jetzt kommt an, was
+       ankommen kann. */
+    const [standorte, planer, faehig] = await Promise.allSettled([
+      api.mcdonalds.standorte(),
+      api.subplaner.list(),
+      api.mcdonalds.faehigkeiten(),
+    ]);
+    if (standorte.status === "fulfilled") setMcdStandorte(standorte.value);
+    if (planer.status === "fulfilled") setSubplaner(planer.value);
+    if (faehig.status === "fulfilled") setMcdFaehigkeiten(faehig.value);
+    setLaedtMcdonalds(false);
+
+    /* Die Standortliste ist der einzige der drei Aufrufe, ohne den der
+       Bereich nicht benutzbar ist. Bleibt er aus, muss man das sehen: Vorher
+       wurde der Fehler stillschweigend verschluckt — die Liste blieb einfach
+       leer, und niemand konnte wissen, ob der Standort nicht angekommen oder
+       nur nicht abrufbar war. */
+    if (standorte.status === "rejected") {
+      setFehler(
+        "Die McDonald's-Standorte konnten nicht geladen werden. Was hier " +
+          "steht, kann veraltet sein — hochgeladene Standorte sind trotzdem " +
+          "gespeichert."
+      );
     }
+  }, []);
+
+  /**
+   * Einen gerade angelegten Standort sofort in die Liste stellen.
+   *
+   * Gerufen direkt nach dem Hochladen einer SLS-Anfrage, bevor
+   * ``ladeMcdonalds`` durch ist. Warum das nötig ist: Die Detailansicht sucht
+   * ihren Standort über die Nummer in genau dieser Liste (app/page.tsx). Ohne
+   * den Vorgriff war er dort für einen Augenblick nicht zu finden — und die
+   * Ansicht fiel auf die Übersicht zurück. Von außen sah das aus, als würde
+   * die App nach dem Hochladen auf die Startseite zurückwerfen.
+   *
+   * Die Reihenfolge (neueste zuerst) ist dieselbe wie im Backend
+   * (``routers.mcdonalds.list_standorte``: ``erstellt_am`` absteigend), damit
+   * der Eintrag beim nächsten Laden nicht springt.
+   */
+  const uebernehmeStandort = useCallback((neu: McdStandort) => {
+    setMcdStandorte((alt) => [neu, ...alt.filter((s) => s.id !== neu.id)]);
   }, []);
 
   useEffect(() => {
@@ -346,6 +379,7 @@ export function useAppDaten(): AppDaten {
     mcdFaehigkeiten,
     laedtMcdonalds,
     ladeMcdonalds,
+    uebernehmeStandort,
 
     laedt,
     laedtMaengel,

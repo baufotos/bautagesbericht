@@ -1851,6 +1851,49 @@ class McdonaldsStandortResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OffenerMcdonaldsStandort(BaseModel):
+    """Ein Standort, dessen Ordner noch nicht auf dem Laufwerk steht.
+
+    Enthält alles, was das Abholskript (``desktop/abholung-mcdonalds``)
+    braucht, um den Standortordner lokal anzulegen — analog
+    ``OffenerFotosatz`` bei den Baufotos.
+    """
+
+    id: int
+    #: ``a_NIV_Nievern`` — Name des anzulegenden Ordners.
+    ordner_name: str = ""
+    standort_name: str = ""
+    ort: str = ""
+    quelle: str
+    #: "ausstehend" | "vorbereitet" | "fehler" — "angelegt" taucht hier nie
+    #: auf, siehe services.mcdonalds_ordner.offene_standorte.
+    ordner_status: str
+    erstellt_am: datetime
+
+
+class McdonaldsMusterstruktur(BaseModel):
+    """Die Unterordner-Liste, aus der das Abholskript die Struktur baut.
+
+    Kommt vom Server, damit das Skript keine eigene, möglicherweise
+    veraltete Kopie der 163 Ordnernamen pflegen muss.
+    """
+
+    musterordner_name: str
+    unterordner: list[str]
+
+
+class McdonaldsAbholMeldung(BaseModel):
+    """Rückmeldung eines Bürorechners: Standortordner liegt (oder eben nicht)."""
+
+    rechner: str = ""
+    #: "angelegt" | "fehler" — siehe services.mcdonalds_ordner.melde_abholung.
+    status: str
+    pfad: str = ""
+    pfad_sharepoint: str = ""
+    anzahl: int = 0
+    meldung: str = ""
+
+
 class BeauftragungVorschau(BaseModel):
     """Was ein Einzelabruf enthalten würde — vor dem Erzeugen.
 

@@ -377,6 +377,70 @@ def erzeuge_projektordner_im_hintergrund(standort_id: int) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Abholung durch die Bürorechner
+#
+# Genau wie bei den Baufotos (app.services.abholung) kann der Server nicht
+# selbst auf das Standorte-Laufwerk schreiben — er steht im Internet. Diese
+# beiden Funktionen bedienen die neuen Abholrouten in ``routers.mcdonalds``,
+# die vom Skript ``desktop/abholung-mcdonalds/Mcdonalds-Ordner-Abholen.ps1``
+# angesprochen werden.
+#
+# ANDERS ALS BEI DEN FOTOS: KEIN BEANSPRUCHEN-SCHRITT
+# ====================================================
+# Einen Fotosatz zweimal abzuholen würde ihn doppelt in den Projektordner
+# kopieren. Einen Standortordner zweimal "anzulegen" tut dagegen nichts: Jede
+# Anlage arbeitet mit ``mkdir(exist_ok=True)`` bzw. überschreibt keine
+# vorhandene Datei (siehe ``_aus_musterordner`` weiter oben). Zwei Rechner,
+# die denselben Standort gleichzeitig abholen, holen sich höchstens doppelt
+# Arbeit, aber keinen doppelten Ordner. Der einfachere Ablauf ohne Anspruch
+# ist deshalb bewusst gewählt.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def offene_standorte(db: Session) -> list[McdonaldsStandort]:
+    """Alle Standorte, deren Ordner noch nicht auf dem Laufwerk steht.
+
+    "angelegt" ist der einzige erledigte Zustand. "ausstehend" (Hintergrund-
+    aufgabe ist noch nicht gelaufen), "vorbereitet" (Server hat keinen
+    Laufwerkzugriff — der Normalfall auf der Website) und "fehler" sollen es
+    vom Bürorechner aus erneut versuchen.
+    """
+    return (
+        db.query(McdonaldsStandort)
+        .filter(McdonaldsStandort.ordner_status != "angelegt")
+        .order_by(McdonaldsStandort.erstellt_am)
+        .all()
+    )
+
+
+def melde_abholung(
+    db: Session,
+    standort: McdonaldsStandort,
+    *,
+    status: str,
+    pfad: str = "",
+    pfad_sharepoint: str = "",
+    anzahl: int = 0,
+    meldung: str = "",
+) -> None:
+    """Trägt das Ergebnis eines Bürorechners am Standort ein.
+
+    ``status`` ist "angelegt" oder "fehler" — nie "vorbereitet": Das Skript
+    lief ja gerade auf einem Rechner mit Laufwerkzugriff, "vorbereitet" (kein
+    Zugriff) kann von dort aus nicht gemeldet werden.
+    """
+    if status not in ("angelegt", "fehler"):
+        raise ValueError(f"Unbekannter Abhol-Status: {status!r}")
+    standort.ordner_status = status
+    standort.ordner_pfad = pfad.strip() or None
+    if pfad_sharepoint.strip():
+        standort.ordner_pfad_sharepoint = pfad_sharepoint.strip()
+    standort.ordner_anzahl = anzahl
+    standort.fehlermeldung = meldung.strip() or None
+    db.commit()
+
+
 def lege_datei_ab(
     standort: McdonaldsStandort, unterpfad: str, dateiname: str, daten: bytes
 ) -> tuple[str | None, str]:

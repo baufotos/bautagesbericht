@@ -753,6 +753,116 @@ with TestClient(app) as c:
         "datei": ("gross.eml", b"x" * (26 * 1024 * 1024), "message/rfc822")})
     pruefe(zu_gross.status_code == 413, f"zu gross: {zu_gross.status_code}")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Abholung durch die Bürorechner
+#
+# Der erste Block ist der wichtigste der ganzen Suite, weil er einen Fehler
+# prueft, den man an der Oberflaeche nicht sieht: Eine Abholroute, deren Pfad
+# nicht ``/abholung/`` enthaelt, wird von ``security._ist_abholweg`` nicht als
+# Abholweg erkannt. Sie ist dann NICHT vom Seiten-Passwort ausgenommen — und
+# das Skript, das nur den Abhol-Token kennt und keine Anmeldung, bekommt 401.
+# Lokal fiele das nie auf: Ohne gesetztes BTB_SEITEN_PASSWORT ist alles offen.
+# Erst auf Render, wo das Passwort steht, bricht die Abholung ab.
+#
+# Genau so ist die Musterstruktur zuerst als ``/mcdonalds/musterstruktur``
+# entstanden. Diese Pruefung ist der Grund, warum das nicht wieder passieren
+# kann.
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("== Abholung ==")
+
+from app.security import _ist_abholweg  # noqa: E402
+
+with TestClient(app) as c:
+    # ── Jede Abholroute der ganzen App muss am Seiten-Passwort vorbeikommen ──
+    #
+    # Bewusst nicht nur die drei neuen: Die Regel gilt fuer jeden Pfad, den
+    # ein Abholskript aufruft — auch fuer die vier der Baufotos. Steht hier
+    # eine Route, die nicht erkannt wird, ist das Skript dazu auf Render tot.
+    alle_pfade = list(c.get("/openapi.json").json()["paths"])
+    abholpfade = [p for p in alle_pfade if "abholung" in p]
+    for pfad in abholpfade:
+        pruefe(_ist_abholweg(pfad),
+               f"{pfad} wird nicht als Abholweg erkannt — das Skript bekaeme "
+               "auf Render 401 (siehe security._ist_abholweg)")
+
+    # Die drei neuen namentlich, damit ein versehentliches Umbenennen auffaellt.
+    for pfad in ("/api/mcdonalds/abholung/musterstruktur",
+                 "/api/mcdonalds/standorte/abholung/offen",
+                 "/api/mcdonalds/standorte/{standort_id}/abholung/melden"):
+        pruefe(pfad in alle_pfade, f"Abholroute fehlt: {pfad}")
+        pruefe(_ist_abholweg(pfad), f"kein Abholweg: {pfad}")
+
+    # Und der Gegenbeweis: So hiess die Musterstruktur zuerst, und so waere
+    # sie auf Render nicht erreichbar gewesen.
+    pruefe(not _ist_abholweg("/api/mcdonalds/musterstruktur"),
+           "die Pruefung selbst ist stumpf — sie erkennt jeden Pfad als Abholweg")
+
+    # ── Der Token schuetzt sie, sobald er gesetzt ist ──
+    vorher = settings.abhol_token
+    settings.abhol_token = "abhol-testwort"
+    try:
+        pruefe(c.get("/api/mcdonalds/abholung/musterstruktur").status_code == 401,
+               "ohne Token muesste die Musterstruktur 401 sein")
+        pruefe(c.get("/api/mcdonalds/abholung/musterstruktur",
+                     headers={"X-Abhol-Token": "falsch"}).status_code == 401,
+               "falscher Token muesste 401 sein")
+        mit = c.get("/api/mcdonalds/abholung/musterstruktur",
+                    headers={"X-Abhol-Token": "abhol-testwort"})
+        pruefe(mit.status_code == 200, f"mit Token: {mit.status_code}")
+        pruefe(mit.json()["musterordner_name"] == MUSTERORDNER_NAME,
+               "Musterordnername aus der Antwort")
+        pruefe(mit.json()["unterordner"] == UNTERORDNER,
+               "die Unterordner-Liste kommt vollstaendig mit")
+    finally:
+        settings.abhol_token = vorher
+
+    # ── Der Ablauf: hochladen, in "offen" finden, melden ──
+    neu = c.post("/api/mcdonalds/standorte", files={
+        "datei": ("sls.eml", ROHDATEN, "message/rfc822")}).json()
+    pruefe(neu["ordner_status"] != "angelegt",
+           f"frischer Standort ist noch nicht angelegt: {neu['ordner_status']!r}")
+
+    offen = c.get("/api/mcdonalds/standorte/abholung/offen").json()
+    mein = [s for s in offen if s["id"] == neu["id"]]
+    pruefe(len(mein) == 1, f"der neue Standort muesste offen sein: {offen}")
+    pruefe(mein and mein[0]["ordner_name"] == "a_NIV_Nievern",
+           f"Ordnername fuer das Skript: {mein[0]['ordner_name']!r}" if mein else "kein Standort")
+
+    gemeldet = c.post(f"/api/mcdonalds/standorte/{neu['id']}/abholung/melden",
+                      json={"rechner": "PRUEFRECHNER", "status": "angelegt",
+                            "pfad": r"M:\HAM-226010\STANDORTE\a_NIV_Nievern",
+                            "anzahl": 163})
+    pruefe(gemeldet.status_code == 200, f"melden: {gemeldet.status_code} {gemeldet.text[:200]}")
+    pruefe(gemeldet.json()["ordner_status"] == "angelegt",
+           f"Status nach der Meldung: {gemeldet.json()['ordner_status']!r}")
+    pruefe(gemeldet.json()["ordner_anzahl"] == 163,
+           f"Anzahl nach der Meldung: {gemeldet.json()['ordner_anzahl']!r}")
+
+    danach = c.get("/api/mcdonalds/standorte/abholung/offen").json()
+    pruefe(all(s["id"] != neu["id"] for s in danach),
+           "ein gemeldeter Standort darf nicht noch einmal abgeholt werden")
+
+    # ── "vorbereitet" darf ein Bürorechner nicht melden ──
+    # Er hat ja gerade Laufwerkzugriff gehabt; "vorbereitet" heisst das
+    # Gegenteil. Ein Tippfehler im Skript soll den Standort nicht in einen
+    # Zustand bringen, aus dem er nie wieder abgeholt wird.
+    quatsch = c.post(f"/api/mcdonalds/standorte/{neu['id']}/abholung/melden",
+                     json={"status": "vorbereitet"})
+    pruefe(quatsch.status_code == 400,
+           f"unbekannter Status muesste 400 sein: {quatsch.status_code}")
+
+    # ── Fehler melden: der Standort bleibt abholbar ──
+    c.post(f"/api/mcdonalds/standorte/{neu['id']}/abholung/melden",
+           json={"status": "fehler", "meldung": "Laufwerk M: war weg"})
+    wieder = c.get("/api/mcdonalds/standorte/abholung/offen").json()
+    pruefe(any(s["id"] == neu["id"] for s in wieder),
+           "nach einem Fehler muss der Standort wieder in der Liste stehen")
+
+    pruefe(c.post("/api/mcdonalds/standorte/99999/abholung/melden",
+                  json={"status": "angelegt"}).status_code == 404,
+           "unbekannter Standort muesste 404 sein")
+
 print(f"\n{ok} Pruefungen ok, {len(fehler)} Fehler")
 for f in fehler:
     print("  FEHLER:", f)

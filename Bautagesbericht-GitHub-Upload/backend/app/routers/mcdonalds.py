@@ -36,6 +36,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Header,
     HTTPException,
     Response,
     UploadFile,
@@ -53,11 +54,14 @@ from app.models import (
 from app.schemas import (
     BeauftragungAnfrage,
     BeauftragungVorschau,
+    McdonaldsAbholMeldung,
     McdonaldsBeauftragungResponse,
     McdonaldsFaehigkeiten,
+    McdonaldsMusterstruktur,
     McdonaldsStandortManuell,
     McdonaldsStandortResponse,
     McdonaldsStandortUpdate,
+    OffenerMcdonaldsStandort,
     TextvarianteInfo,
     UnlocodeLadeErgebnis,
     UnlocodeTreffer,
@@ -68,6 +72,7 @@ from app.services import mcdonalds_ordner as ordner_dienst
 from app.services import mcdonalds_sls as sls
 from app.services import mcdonalds_unlocode as unlocode
 from app.services import mcdonalds_versand as versand
+from app.services.mcdonalds_musterstruktur import MUSTERORDNER_NAME, UNTERORDNER
 
 router = APIRouter(prefix="/mcdonalds", tags=["mcdonalds"])
 
@@ -372,6 +377,101 @@ def delete_standort(standort_id: int, db: Session = Depends(get_db)):
     """
     db.delete(_hole(db, standort_id))
     db.commit()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Abholung durch die Bürorechner
+#
+# Diese drei Routen bedienen kein Menschen-Frontend, sondern das Skript
+# ``desktop/abholung-mcdonalds/Mcdonalds-Ordner-Abholen.ps1`` in der Windows-
+# Aufgabenplanung — dasselbe Prinzip wie bei den Baufotos
+# (``routers.baufotos``, ``services.abholung``): Der Server auf Render kann
+# nicht selbst auf das Standorte-Laufwerk schreiben, also holt das Büro ab.
+#
+# Anders als dort gibt es hier keinen Beanspruchen-Schritt — siehe
+# ``services.mcdonalds_ordner`` (Modultext über ``offene_standorte``), warum
+# das für Ordner unnötig ist.
+#
+# Eigene Prüffunktion statt Import aus ``routers.baufotos``: Beide Bereiche
+# bleiben dadurch unabhängig voneinander änderbar. Das Losungswort
+# (``BTB_ABHOL_TOKEN``) ist bewusst dasselbe wie bei den Baufotos — ein
+# Bürorechner braucht dadurch nur einen Wert in seiner Konfiguration, für
+# beide Abholskripte.
+#
+# JEDER PFAD HIER MUSS ``/abholung/`` ENTHALTEN
+# ==============================================
+# Das ist keine Namenskonvention, sondern die Bedingung dafür, dass die
+# Abholung überhaupt funktioniert: ``security._ist_abholweg`` erkennt den
+# Abholweg an genau dieser Zeichenfolge und nimmt ihn vom Seiten-Passwort
+# aus. Das Skript kennt keine Anmeldung — es hat nur den Abhol-Token. Ein
+# Pfad ohne ``/abholung/`` bekommt deshalb 401, egal wie richtig der Token
+# ist.
+#
+# Deswegen heißt die Musterstruktur ``/abholung/musterstruktur`` und nicht
+# ``/musterstruktur``, obwohl Letzteres kürzer wäre. Genau dieselbe Falle ist
+# bei den Baufotos schon einmal zugeschnappt — dort musste der ZIP-Pfad
+# nachträglich als Sonderfall in ``security.py`` eingetragen werden, weil er
+# „nicht nach Abholung aussieht". Ein zweiter Sonderfall soll nicht dazu
+# kommen; der Pfad sagt jetzt selbst, wozu er gehört. Die Regel ist in
+# ``tests/test_mcdonalds.py`` festgenagelt.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def pruefe_abholrecht(x_abhol_token: str = Header("")) -> None:
+    """Schützt die Abholrouten, wenn BTB_ABHOL_TOKEN gesetzt ist."""
+    erwartet = (settings.abhol_token or "").strip()
+    if erwartet and (x_abhol_token or "").strip() != erwartet:
+        raise HTTPException(401, "Abhol-Token fehlt oder stimmt nicht")
+
+
+@router.get("/standorte/abholung/offen", response_model=list[OffenerMcdonaldsStandort],
+            dependencies=[Depends(pruefe_abholrecht)])
+def standorte_abholung_offen(db: Session = Depends(get_db)):
+    """Standorte, deren Ordner noch nicht auf dem Laufwerk steht."""
+    return [
+        OffenerMcdonaldsStandort(
+            id=s.id,
+            ordner_name=s.ordner_name or "",
+            standort_name=s.standort_name or s.ort or "",
+            ort=s.ort or "",
+            quelle=s.quelle,
+            ordner_status=s.ordner_status,
+            erstellt_am=s.erstellt_am,
+        )
+        for s in ordner_dienst.offene_standorte(db)
+    ]
+
+
+@router.get("/abholung/musterstruktur", response_model=McdonaldsMusterstruktur,
+            dependencies=[Depends(pruefe_abholrecht)])
+def musterstruktur():
+    """Die Unterordner-Liste — damit das Abholskript keine eigene Kopie pflegt."""
+    return McdonaldsMusterstruktur(
+        musterordner_name=MUSTERORDNER_NAME, unterordner=UNTERORDNER
+    )
+
+
+@router.post("/standorte/{standort_id}/abholung/melden",
+             response_model=McdonaldsStandortResponse,
+             dependencies=[Depends(pruefe_abholrecht)])
+def standort_abholung_melden(
+    standort_id: int, meldung: McdonaldsAbholMeldung, db: Session = Depends(get_db)
+):
+    """Meldet: Der Standortordner wurde (oder wurde nicht) angelegt."""
+    standort = _hole(db, standort_id)
+    try:
+        ordner_dienst.melde_abholung(
+            db, standort,
+            status=meldung.status,
+            pfad=meldung.pfad,
+            pfad_sharepoint=meldung.pfad_sharepoint,
+            anzahl=meldung.anzahl,
+            meldung=meldung.meldung,
+        )
+    except ValueError as fehler:
+        raise HTTPException(400, str(fehler)) from fehler
+    db.refresh(standort)
+    return _antwort(standort, mit_text=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,91 @@
+MCDONALDS-ORDNER-ABHOLUNG
+==========================
+
+Was das hier macht
+-------------------
+In der App (Buero-Website, Bereich "McDonald's"):
+
+    SLS-Mail hochladen oder Standort von Hand erfassen -> Ortscode und
+    Ordnername stehen sofort fest.
+
+Der Server kann den Standortordner aber nicht selbst anlegen: Er laeuft
+bei Render im Internet, M:\HAM-226010\STANDORTE ist ein Laufwerk im
+Bueronetz. Genau wie bei den Baufotos (siehe Foto-Abholung nebenan) holt
+deshalb das Buero ab. Dieses Skript laeuft im Hintergrund auf dem
+Buerorechner und legt jeden neuen Standortordner samt der 163-Ordner-
+Struktur an:
+
+    M:\HAM-226010\STANDORTE\a_NIV_Nievern\
+        18-GP\...
+        PHASE 0\...
+        ...
+
+Ein Standort, dessen Ordner noch fehlt, zeigt in der App den Status
+"vorbereitet" - das ist KEIN Fehler, sondern der Normalzustand auf der
+Website, bis dieses Skript einmal gelaufen ist.
+
+
+Woher die Ordnerstruktur kommt
+-------------------------------
+Zwei Quellen, in dieser Reihenfolge:
+
+  1. Der echte Musterordner "x_CODE_NAME (Muster) [leer]" in STANDORTE,
+     wenn erreichbar. Aendert das Buero ihn, gilt die neue Struktur ab
+     dem naechsten Lauf von selbst.
+  2. Sonst die Unterordner-Liste, die das Skript vom Server abruft -
+     dieselbe Liste, die im Programmcode hinterlegt ist.
+
+
+Einrichten (einmal, dauert zwei Minuten)
+------------------------------------------
+1. Diesen Ordner nach C:\HPP-Mcdonalds-Abholung kopieren.
+
+2. einstellungen.txt oeffnen und pruefen:
+      server      = Adresse der Buero-Website (normalerweise unveraendert)
+      basisordner = M:\HAM-226010\STANDORTE
+      token       = dasselbe Wort wie in Foto-Abholung\einstellungen.txt
+
+3. Rechtsklick auf Aufgabe-Einrichten.ps1 -> "Mit PowerShell ausfuehren".
+   Danach laeuft die Abholung alle 15 Minuten und zusaetzlich bei jeder
+   Anmeldung.
+
+Fertig.
+
+Vorher einmal gefahrlos ausprobieren, ohne dass etwas geschrieben wird:
+
+    Rechtsklick auf Mcdonalds-Ordner-Abholen.ps1 -> "Mit PowerShell ausfuehren"
+    (oder in PowerShell:  .\Mcdonalds-Ordner-Abholen.ps1 -Testlauf)
+
+
+Nachsehen, ob es laeuft
+-------------------------
+* abholung.log in diesem Ordner - dort steht jeder Lauf.
+* In der App, am Standort: Status "angelegt" mit dem vollstaendigen Pfad.
+
+
+Wenn etwas nicht klappt
+-------------------------
+"Laufwerk M:\ nicht erreichbar" / "Ordner ... nicht erreichbar"
+    Netzlaufwerk ist nicht verbunden, oder STANDORTE liegt bei dir unter
+    einem anderen Buchstaben. Einmal im Explorer oeffnen bzw.
+    basisordner in einstellungen.txt anpassen, dann laeuft der naechste
+    Durchgang wieder.
+
+"Server antwortet nicht" / "Musterstruktur nicht erreicht"
+    Die Website schlaeft nach 15 Minuten ohne Zugriff ein und braucht bis
+    zu einer Minute zum Aufwachen. Das Skript versucht es von selbst ein
+    zweites Mal.
+
+"... ohne Ordnername - uebersprungen"
+    Die App hat den Standort gerade erst angelegt und den Ordnernamen
+    noch nicht ermittelt (das passiert im Hintergrund, meist innerhalb
+    weniger Sekunden). Der naechste Lauf holt ihn dann ab - kein Grund
+    zur Sorge.
+
+
+Erstmal nur fuer diesen Rechner
+---------------------------------
+Bislang laeuft das nur bei Ben. Wie bei den Baufotos duerfte es
+grundsaetzlich jeder im Team bekommen (die Ordneranlage ist mehrfach
+gefahrlos - zwei Rechner, die denselben Standort abholen, richten keinen
+doppelten Ordner an), aber das ist ein spaeterer Schritt.

@@ -1,0 +1,23 @@
+# Einstellungen fuer die Mcdonalds-Ordner-Abholung
+# =================================================
+# Eine Zeile je Wert:  schluessel = wert
+# Zeilen mit # sind Kommentare.
+
+# Adresse der Buero-Website (nicht die Baustellen-Seite - dort gibt es
+# McDonald's nicht). Normalfall unveraendert lassen.
+server = https://hpp-baumanagement-buero.onrender.com
+
+# Der STANDORTE-Ordner im Projektlaufwerk, in dem die Standortordner
+# entstehen. Bitte pruefen, ob das bei dir wirklich M:\ ist (aus dem
+# Musterordner-Pfad vom 10.09.2026 uebernommen:
+# M:\HAM-226010\STANDORTE\x_CODE_NAME (Muster) [leer]).
+basisordner = M:\HAM-226010\STANDORTE
+
+# Dasselbe Losungswort wie in Foto-Abholung\einstellungen.txt (Feld
+# "token") - beide Abholskripte teilen sich BTB_ABHOL_TOKEN auf dem
+# Server. Nur aendern, wenn das Wort auf Render neu vergeben wird.
+token = abhol-lXBwgMCQVrn0jYTv2sPsey1lwOLm
+
+# Wohin das Protokoll geschrieben wird. Leer lassen = abholung.log neben
+# diesem Skript.
+# protokoll = C:\HPP-Mcdonalds-Abholung\abholung.log

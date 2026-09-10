@@ -39,7 +39,7 @@ import {
 } from "@/components/AppShell";
 import { InstallierenHinweis, VerbindungsHinweis } from "@/components/AppSchale";
 import { Karte, KarteInhalt, LeerHinweis, SeitenKopf } from "@/components/dashboard";
-import { Meldung } from "@/components/ui";
+import { Button, Meldung } from "@/components/ui";
 import { NUR_FOTOS } from "@/lib/umfang";
 import { Dashboard } from "@/components/dashboards/Dashboard";
 import { FotoDashboard } from "@/components/dashboards/FotoDashboard";
@@ -483,16 +483,43 @@ function Inhalt({
         );
       }
 
+      /* Ein Standort ist geöffnet, steht aber (noch) nicht in der Liste.
+         Dann wird gewartet, statt zur Übersicht zurückzufallen: Ein
+         Rücksprung ohne Erklärung ist das, was nach dem Hochladen wie ein
+         Fehler aussah. Der Knopf ist die Notausfahrt, damit dieser Zustand
+         niemals eine Falle wird. */
+      if (offenerStandort !== null) {
+        return (
+          <LeerHinweis>
+            <p>Der Standort wird geladen …</p>
+            <div className="mt-3 flex justify-center">
+              <Button variante="sekundaer" onClick={() => onStandort(null)}>
+                Zurück zur Liste
+              </Button>
+            </div>
+          </LeerHinweis>
+        );
+      }
+
       if (standortErfassen) {
         return (
           <McdonaldsStandortUpload
             faehigkeiten={daten.mcdFaehigkeiten}
             onAngelegt={(neu) => {
-              // Direkt in die Detailansicht: Dort stehen die Hinweise der
-              // Auswertung und der Status der Ordneranlage.
+              /* Direkt in die Detailansicht: Dort stehen die Hinweise der
+                 Auswertung und der Status der Ordneranlage.
+
+                 Die Reihenfolge ist der Kern der Sache: Erst muss die Liste
+                 den neuen Standort kennen (``uebernehmeStandort``), dann darf
+                 das Detail geöffnet werden. Vorher wurde ``ladeMcdonalds``
+                 nur angestoßen und nicht abgewartet — in der Zwischenzeit
+                 fand das Detail seinen Standort nicht und die Ansicht fiel
+                 auf die Übersicht zurück. Genau das war der gemeldete
+                 "Rücksprung auf die Startseite". */
+              daten.uebernehmeStandort(neu);
               onStandortErfassen(false);
-              daten.ladeMcdonalds();
               onStandort(neu.id);
+              daten.ladeMcdonalds();
             }}
           />
         );
