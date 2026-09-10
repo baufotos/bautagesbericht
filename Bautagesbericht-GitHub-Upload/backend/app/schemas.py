@@ -1680,11 +1680,14 @@ class SubplanerCreate(BaseModel):
     ansprechpartner: str = ""
     anrede: str = ""
     emails: list[EmailStr] = []
+    #: Feste Adressen in Kopie. Die HPP-Adresse mcd-<code>@hpp.com kommt je
+    #: Standort automatisch dazu und gehört nicht hierher.
+    kopie_emails: list[EmailStr] = []
     angebot_datum: date | None = None
     textvariante: str = "rka"
     sortierung: int = 0
 
-    @field_validator("emails", mode="before")
+    @field_validator("emails", "kopie_emails", mode="before")
     @classmethod
     def _leere_weg(cls, wert):
         """Leere Zeilen aus dem Formular verwerfen, statt sie zu bemängeln."""
@@ -1703,11 +1706,12 @@ class SubplanerUpdate(BaseModel):
     ansprechpartner: str | None = None
     anrede: str | None = None
     emails: list[EmailStr] | None = None
+    kopie_emails: list[EmailStr] | None = None
     angebot_datum: date | None = None
     textvariante: str | None = None
     sortierung: int | None = None
 
-    @field_validator("emails", mode="before")
+    @field_validator("emails", "kopie_emails", mode="before")
     @classmethod
     def _leere_weg(cls, wert):
         if isinstance(wert, list):
@@ -1724,6 +1728,7 @@ class SubplanerResponse(BaseModel):
     ansprechpartner: str = ""
     anrede: str = ""
     emails: list[str] = []
+    kopie_emails: list[str] = []
     angebot_datum: date | None = None
     textvariante: str = "rka"
     sortierung: int = 0
@@ -1756,6 +1761,7 @@ class McdonaldsBeauftragungResponse(BaseModel):
     klaerung: date | None = None
     abgabe: date | None = None
     empfaenger: list[str] = []
+    kopie: list[str] = []
     #: Wohin die ``.eml`` gelegt wurde; ``None`` = Ablage steht noch aus.
     eml_pfad: str | None = None
     mail_versendet_am: date | None = None
@@ -1857,6 +1863,8 @@ class BeauftragungVorschau(BaseModel):
     subplaner_name: str
     subplaner_kuerzel: str = ""
     empfaenger: list[str] = []
+    #: Sammelpostfach der Firma plus mcd-<code>@hpp.com.
+    kopie: list[str] = []
     betreff: str
     text: str
     #: Der Ordner, in dem die ``.eml`` landet (relativ zum Standortordner).

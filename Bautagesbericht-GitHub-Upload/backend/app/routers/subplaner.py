@@ -52,6 +52,7 @@ def create_subplaner(daten: SubplanerCreate, db: Session = Depends(get_db)):
         ansprechpartner=daten.ansprechpartner.strip(),
         anrede=daten.anrede.strip(),
         emails=[str(a).strip() for a in daten.emails],
+        kopie_emails=[str(a).strip() for a in daten.kopie_emails],
         angebot_datum=daten.angebot_datum,
         textvariante=daten.textvariante.strip().lower(),
         sortierung=daten.sortierung,
@@ -83,6 +84,8 @@ def update_subplaner(
         planer.textvariante = werte["textvariante"].strip().lower()
     if werte.get("emails") is not None:
         planer.emails = [str(a).strip() for a in werte["emails"]]
+    if werte.get("kopie_emails") is not None:
+        planer.kopie_emails = [str(a).strip() for a in werte["kopie_emails"]]
     for feld in ("phase", "angebot_datum", "sortierung"):
         if feld in werte and werte[feld] is not None:
             setattr(planer, feld, werte[feld])

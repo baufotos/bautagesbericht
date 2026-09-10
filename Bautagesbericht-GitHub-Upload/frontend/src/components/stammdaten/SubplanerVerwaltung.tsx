@@ -243,6 +243,16 @@ function SubplanerKarte({
           ))
         )}
 
+        {eintrag.kopie_emails.map((adresse) => (
+          <div
+            key={adresse}
+            className="inline-flex items-center gap-1.5 text-[12px] text-app-text-still"
+          >
+            <Mail size={13} className="shrink-0 text-app-text-leise" />
+            <span className="truncate">Kopie: {adresse}</span>
+          </div>
+        ))}
+
         {eintrag.anrede && (
           <div className="inline-flex items-start gap-1.5 text-[12px] text-app-text-still">
             <User size={13} className="mt-0.5 shrink-0" />
@@ -316,6 +326,7 @@ function SubplanerFormular({
   );
   const [anrede, setAnrede] = useState(start?.anrede ?? "");
   const [adressen, setAdressen] = useState((start?.emails ?? []).join(", "));
+  const [kopie, setKopie] = useState((start?.kopie_emails ?? []).join(", "));
   const [angebot, setAngebot] = useState(start?.angebot_datum ?? "");
   const [variante, setVariante] = useState(start?.textvariante ?? "rka");
   const [phaseWert, setPhaseWert] = useState(String(start?.phase ?? phase));
@@ -324,8 +335,9 @@ function SubplanerFormular({
 
   const bereit = name.trim() !== "";
 
-  function adressliste(): string[] {
-    return adressen
+  /** "a@x.de, b@x.de" -> ["a@x.de", "b@x.de"] — auch mit Semikolon. */
+  function zerlegen(wert: string): string[] {
+    return wert
       .split(/[,;\n]/)
       .map((a) => a.trim())
       .filter(Boolean);
@@ -343,7 +355,8 @@ function SubplanerFormular({
         ordner: ordner.trim(),
         ansprechpartner: ansprechpartner.trim(),
         anrede: anrede.trim(),
-        emails: adressliste(),
+        emails: zerlegen(adressen),
+        kopie_emails: zerlegen(kopie),
         angebot_datum: angebot || null,
         textvariante: variante,
       });
@@ -388,6 +401,16 @@ function SubplanerFormular({
               value={adressen}
               onChange={(e) => setAdressen(e.target.value)}
               placeholder="name@firma.de, sekretariat@firma.de"
+            />
+          </Field>
+          <Field
+            label="Kopie (CC)"
+            hinweis="Festes Sammelpostfach der Firma. mcd-<Code>@hpp.com kommt je Standort automatisch dazu."
+          >
+            <Input
+              value={kopie}
+              onChange={(e) => setKopie(e.target.value)}
+              placeholder="mcd@firma.de"
             />
           </Field>
           <Field label="Ansprechpartner">

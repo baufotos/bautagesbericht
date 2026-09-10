@@ -303,15 +303,25 @@ if ECHTER_MUSTER.is_dir():
 else:
     print("   (Musterordner nicht auf diesem Rechner — Abgleich uebersprungen)")
 
-pruefe(ordner_dienst.ordnername("NIV", "Nievern") == "NIV_Nievern", "Ordnername")
-pruefe(ordner_dienst.ordnername(None, "Nievern") == "XXX_Nievern",
+pruefe(ordner_dienst.ordnername("NIV", "Nievern") == "a_NIV_Nievern", "Ordnername")
+pruefe(ordner_dienst.ordnername(None, "Nievern") == "a_XXX_Nievern",
        "Ordnername ohne Code")
-pruefe(ordner_dienst.ordnername("niv", "Nievern") == "NIV_Nievern",
+pruefe(ordner_dienst.ordnername("niv", "Nievern") == "a_NIV_Nievern",
        "Code wird gross geschrieben")
 pruefe(ordner_dienst.ordnername("HAM", 'Köln Ring / Nord: "neu"')
-       == "HAM_Köln Ring Nord neu", "verbotene Zeichen")
+       == "a_HAM_Köln Ring Nord neu", "verbotene Zeichen")
 pruefe(ordner_dienst.saubere_bezeichnung("Nievern.") == "Nievern",
        "Punkt am Ende (Windows verschluckt ihn sonst)")
+pruefe(ordner_dienst.ORDNER_PRAEFIX == "a_", "Praefix a_")
+pruefe(ordner_dienst.ordnername("NIV", "").startswith("a_"),
+       "auch ohne Namen mit Praefix")
+
+# Die HPP-Adresse in Kopie wird aus dem Ortscode gebildet.
+pruefe(brief.hpp_kopie("NIV") == "mcd-niv@hpp.com",
+       f"hpp_kopie: {brief.hpp_kopie('NIV')!r}")
+pruefe(brief.hpp_kopie("niv") == "mcd-niv@hpp.com", "kleingeschrieben")
+pruefe(brief.hpp_kopie("") == "", "ohne Code keine erfundene Adresse")
+pruefe(brief.hpp_kopie("XX") == "", "zweistellig ist kein Code")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -327,6 +337,21 @@ pruefe(unlocode.ort_aus_adresse("Auf d. Lay, 56132 Nievern") == "Nievern",
 
 db = SessionLocal()
 try:
+    # Die Anlage 5.1 liegt im Programm und wird von init_db eingelesen —
+    # niemand muss sie hochladen. Das ist der Kern: Ohne Liste hiesse jeder
+    # Ordner "XXX_Nievern".
+    mitgeliefert = db.query(UnlocodeEintrag).count()
+    pruefe(mitgeliefert > 9000,
+           f"mitgelieferte Liste nicht eingelesen: {mitgeliefert} Orte")
+    aus_liste = unlocode.ermittle(db, "Nievern")
+    pruefe(aus_liste is not None and aus_liste.code == "NIV",
+           f"Nievern aus der mitgelieferten Liste: {aus_liste!r}")
+    # Auch der Weg, den die Oberflaeche geht: aus der Adresse den Ort ziehen.
+    aus_adresse = unlocode.ermittle(
+        db, unlocode.ort_aus_adresse("Auf d. Lay, 56132 Nievern"))
+    pruefe(aus_adresse is not None and aus_adresse.code == "NIV",
+           f"NIV aus der Adresse: {aus_adresse!r}")
+
     db.query(UnlocodeEintrag).delete()
     db.commit()
     pruefe(unlocode.ermittle(db, "Nievern") is None,
@@ -387,6 +412,10 @@ with TestClient(app) as c:
            f"KOCKS-Ordner: {nach_kuerzel['KOCKS']['ordner']!r}")
     pruefe(nach_kuerzel["RKA"]["ordner"] == "010_OPG_ARC_RKA",
            f"RKA-Ordner: {nach_kuerzel['RKA']['ordner']!r}")
+    pruefe(nach_kuerzel["KOCKS"]["kopie_emails"] == ["mcd@kocks-ing.de"],
+           f"KOCKS-Kopie: {nach_kuerzel['KOCKS']['kopie_emails']!r}")
+    pruefe(nach_kuerzel["RKA"]["kopie_emails"] == [],
+           f"RKA hat kein eigenes Sammelpostfach: {nach_kuerzel['RKA']['kopie_emails']!r}")
     pruefe(nach_kuerzel["KOCKS"]["angebot_datum"] == "2026-02-27",
            f"KOCKS-Angebot: {nach_kuerzel['KOCKS']['angebot_datum']!r}")
     pruefe(nach_kuerzel["RKA"]["angebot_datum"] == "2026-03-12",
@@ -418,7 +447,7 @@ with TestClient(app) as c:
     geladen = c.get(f"/api/mcdonalds/standorte/{sid}").json()
     pruefe(geladen["ordner_status"] == "vorbereitet",
            f"Status ohne Laufwerk: {geladen['ordner_status']!r}")
-    pruefe(geladen["ordner_name"] == "NIV_Nievern",
+    pruefe(geladen["ordner_name"] == "a_NIV_Nievern",
            f"Ordnername: {geladen['ordner_name']!r}")
     pruefe(geladen["unlocode"] == "NIV", f"Code: {geladen['unlocode']!r}")
     pruefe(geladen["ordner_pfad"] is None, "kein Pfad ohne Laufwerk")
@@ -467,6 +496,12 @@ with TestClient(app) as c:
     pruefe(nach_name["RKA"]["betreff"]
            == "260825_NSO_NIV_Beauftragung Phase 1 RKA",
            f"Betreff RKA: {nach_name['RKA']['betreff']!r}")
+    # Kopie: Sammelpostfach der Firma plus HPP-Adresse des Standorts.
+    pruefe(nach_name["KOCKS"]["kopie"]
+           == ["mcd@kocks-ing.de", "mcd-niv@hpp.com"],
+           f"KOCKS-Kopie: {nach_name['KOCKS']['kopie']!r}")
+    pruefe(nach_name["RKA"]["kopie"] == ["mcd-niv@hpp.com"],
+           f"RKA-Kopie: {nach_name['RKA']['kopie']!r}")
     pruefe(nach_name["KOCKS"]["ablage"].endswith("090_VAA_Kocks/02_Vertrag"),
            f"Ablage KOCKS: {nach_name['KOCKS']['ablage']!r}")
     pruefe(nach_name["RKA"]["ablage"].endswith("010_OPG_ARC_RKA/02_Vertrag"),
@@ -500,12 +535,32 @@ with TestClient(app) as c:
         pruefe(namen == ["260825_NSO_NIV_Beauftragung Phase 1 KOCKS.eml",
                          "260825_NSO_NIV_Beauftragung Phase 1 RKA.eml"],
                f"ZIP-Inhalt: {namen}")
-        mail = message_from_bytes(archiv.read(namen[0]), policy=policy.default)
+        archiv_rohdaten = archiv.read(namen[0])
+        mail = message_from_bytes(archiv_rohdaten, policy=policy.default)
     pruefe(mail.get("X-Unsent") == "1",
            "X-Unsent fehlt — Outlook zeigte die Datei sonst als empfangene Mail")
     pruefe(mail.get("From") is None, "ein Entwurf darf keinen Absender tragen")
     pruefe(mail.get("To") == "hoemmerich@kocks-consult.de, buero@kocks-consult.de",
            f"To: {mail.get('To')!r}")
+    pruefe(mail.get("Cc") == "mcd@kocks-ing.de, mcd-niv@hpp.com",
+           f"Cc: {mail.get('Cc')!r}")
+
+    # Der Wortlaut darf NICHT durch weiche Umbrueche zerrissen sein: Genau
+    # diese vier Stellen zeigten "angegeb=nen", "Einga=g", "=er E-Mail",
+    # "Einzel=uftrag", weil quoted-printable bei 76 Zeichen umbricht.
+    inhalt_mail = mail.get_content()
+    pruefe(mail.get("Content-Transfer-Encoding") == "8bit",
+           f"Kodierung: {mail.get('Content-Transfer-Encoding')!r}")
+    for satz in ("am angegebenen Standort.",
+                 "mit Eingang dieser Beauftragung.",
+                 "dieses Einzelabrufs per E-Mail.",
+                 "einen Einzelauftrag für die Phase 1"):
+        pruefe(satz in inhalt_mail, f"zerrissener Satz: {satz!r}")
+    # Und im ROHEN Dateiinhalt darf kein weicher Umbruch stehen.
+    weicher_umbruch = bytes([61, 13, 10])   # '=' CR LF
+    pruefe(weicher_umbruch not in archiv_rohdaten
+           and bytes([61, 10]) not in archiv_rohdaten,
+           "weiche quoted-printable-Umbrueche in der .eml")
     pruefe(not list(mail.iter_attachments()),
            "der Einzelabruf ist der Mailtext und braucht keinen Anhang")
     pruefe("Sehr geehrter Herr Hömmerich," in mail.get_content(),
@@ -517,6 +572,8 @@ with TestClient(app) as c:
            f"Beauftragungen am Standort: {len(detail['beauftragungen'])}")
     pruefe(all(b["eml_pfad"] is None for b in detail["beauftragungen"]),
            "ohne Laufwerk kann nichts abgelegt sein")
+    pruefe(all("mcd-niv@hpp.com" in b["kopie"] for b in detail["beauftragungen"]),
+           f"Kopie gemerkt: {[b['kopie'] for b in detail['beauftragungen']]}")
     pruefe(all(b["mail_weg"] == "entwurf" for b in detail["beauftragungen"]),
            "mail_weg muesste 'entwurf' sein")
     pruefe(all(b["beauftragung_am"] == "2026-08-25"
@@ -546,7 +603,7 @@ with TestClient(app) as c:
                f"Status mit Laufwerk: {neu['ordner_status']!r} "
                f"({neu['fehlermeldung']!r})")
         wurzel = Path(neu["ordner_pfad"])
-        pruefe(wurzel.is_dir() and wurzel.name == "NIV_Nievern",
+        pruefe(wurzel.is_dir() and wurzel.name == "a_NIV_Nievern",
                f"Ordner: {neu['ordner_pfad']!r}")
         pruefe(neu["ordner_anzahl"] == 163,
                f"Unterordner angelegt: {neu['ordner_anzahl']}")
@@ -688,7 +745,7 @@ with TestClient(app) as c:
            "geloeschter Standort muesste 404 sein")
     pruefe(c.get("/api/mcdonalds/standorte/99999").status_code == 404,
            "unbekannter Standort muesste 404 sein")
-    pruefe((STORAGE / "STANDORTE" / "NIV_Nievern").is_dir(),
+    pruefe((STORAGE / "STANDORTE" / "a_NIV_Nievern").is_dir(),
            "der Ordner im Projektlaufwerk darf nicht mitgeloescht werden")
 
     # ── Zu grosse Datei ──

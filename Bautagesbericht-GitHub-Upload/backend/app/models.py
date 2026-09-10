@@ -1053,6 +1053,14 @@ class McdonaldsSubplaner(Base):
     #: Alle Empfängeradressen der Firma, ``["a@x.de", "b@x.de"]``. Mehrere,
     #: weil im Büro der Sachbearbeiter und das Sekretariat mitlesen.
     emails = Column(JSON, default=list)
+    #: Feste Adressen in Kopie, je Firma. Bei Kocks ist das
+    #: ``mcd@kocks-ing.de`` — das Sammelpostfach für dieses Kundenkonto.
+    #:
+    #: Die HPP-Adresse ``mcd-<code>@hpp.com`` steht NICHT hier, sondern wird
+    #: je Standort aus dem Ortscode gebildet (siehe
+    #: ``mcdonalds_beauftragung.hpp_kopie``) — sie wechselt mit dem Standort,
+    #: nicht mit der Firma.
+    kopie_emails = Column(JSON, default=list)
     #: "gemäß ihrem Angebot vom …" — je Firma fest, nicht je Standort.
     angebot_datum = Column(Date, nullable=True)
     #: Kennung der Textfassung, siehe ``mcdonalds_beauftragung.TEXTVARIANTEN``.
@@ -1100,6 +1108,8 @@ class McdonaldsBeauftragung(Base):
 
     #: An wen der Entwurf ging.
     empfaenger = Column(JSON, default=list)
+    #: Wer in Kopie stand.
+    kopie = Column(JSON, default=list)
     #: Wohin die ``.eml`` im Projektordner gelegt wurde; ``None``, wenn das
     #: Laufwerk nicht erreichbar war — der Entwurf ist dann trotzdem da.
     eml_pfad = Column(String, nullable=True)

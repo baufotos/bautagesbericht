@@ -106,6 +106,7 @@ def _beauftragung_antwort(
         klaerung=eintrag.klaerung,
         abgabe=eintrag.abgabe,
         empfaenger=eintrag.empfaenger or [],
+        kopie=eintrag.kopie or [],
         eml_pfad=eintrag.eml_pfad,
         mail_versendet_am=eintrag.mail_versendet_am,
         mail_weg=eintrag.mail_weg or "",
@@ -471,6 +472,15 @@ def _vorschau(
     beauftragung, beginn, planung, klaerung, abgabe = _termine(standort, angaben)
     empfaenger = [str(a) for a in (planer.emails or []) if str(a).strip()]
 
+    # Kopie: das Sammelpostfach der Firma (bei Kocks mcd@kocks-ing.de) plus
+    # die HPP-Adresse dieses Standorts (mcd-niv@hpp.com). Reihenfolge so,
+    # weil die Firma zuerst genannt gehoert; Dubletten fallen weg, damit
+    # niemand zweimal in derselben Kopie steht.
+    kopie = [str(a) for a in (planer.kopie_emails or []) if str(a).strip()]
+    eigene = brief.hpp_kopie(standort.unlocode or "")
+    if eigene and eigene not in kopie:
+        kopie.append(eigene)
+
     hindernis = ""
     if not empfaenger:
         hindernis = (
@@ -485,6 +495,7 @@ def _vorschau(
         subplaner_name=planer.name,
         subplaner_kuerzel=planer.kuerzel or "",
         empfaenger=empfaenger,
+        kopie=kopie,
         betreff=brief.betreff(
             beauftragung=beauftragung,
             unlocode=standort.unlocode or "",
@@ -574,7 +585,7 @@ def beauftragungen_erzeugen(
     for planer_eintrag, vorschau in zip(planer, vorschauen):
         nachricht = versand.baue_nachricht(
             empfaenger=vorschau.empfaenger,
-            kopie=[],
+            kopie=vorschau.kopie,
             betreff=vorschau.betreff,
             text=vorschau.text,
             als_entwurf=True,
@@ -605,7 +616,9 @@ def beauftragungen_erzeugen(
         if meldung and meldung not in meldungen:
             meldungen.append(meldung)
 
-        versand.notiere_versand(eintrag, vorschau.empfaenger, "entwurf")
+        versand.notiere_versand(
+            eintrag, vorschau.empfaenger, "entwurf", kopie=vorschau.kopie
+        )
         dateien.append((dateiname, rohdaten))
 
     db.commit()
@@ -653,7 +666,7 @@ def entwurf_erneut(beauftragung_id: int, db: Session = Depends(get_db)):
 
     nachricht = versand.baue_nachricht(
         empfaenger=eintrag.empfaenger or [],
-        kopie=[],
+        kopie=eintrag.kopie or [],
         betreff=eintrag.betreff,
         text=eintrag.text,
         als_entwurf=True,

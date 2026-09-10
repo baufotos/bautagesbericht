@@ -298,6 +298,11 @@ export function BeauftragungErstellen({
                       <div className="text-[12px] text-app-text-still">
                         An: {v.empfaenger.join(", ") || "—"}
                       </div>
+                      {v.kopie.length > 0 && (
+                        <div className="text-[12px] text-app-text-still">
+                          Kopie: {v.kopie.join(", ")}
+                        </div>
+                      )}
                       <div className="font-mono text-[12px] break-all text-app-text">
                         {v.betreff}
                       </div>

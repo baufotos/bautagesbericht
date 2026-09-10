@@ -1018,6 +1018,12 @@ export interface Subplaner {
   anrede: string;
   /** Mehrere Empfängeradressen. Leer = es geht noch kein Entwurf. */
   emails: string[];
+  /**
+   * Feste Adressen in Kopie, je Firma (bei Kocks mcd@kocks-ing.de).
+   * Die HPP-Adresse mcd-<code>@hpp.com kommt je Standort automatisch dazu
+   * und gehört nicht hierher.
+   */
+  kopie_emails: string[];
   /** „gemäß ihrem Angebot vom …" */
   angebot_datum: string | null;
   /** Kennung der Textfassung des Einzelabrufs. */
@@ -1034,6 +1040,7 @@ export interface SubplanerEingabe {
   ansprechpartner?: string;
   anrede?: string;
   emails?: string[];
+  kopie_emails?: string[];
   angebot_datum?: string | null;
   textvariante?: string;
   sortierung?: number;
@@ -1062,6 +1069,7 @@ export interface McdBeauftragung {
   klaerung: string | null;
   abgabe: string | null;
   empfaenger: string[];
+  kopie: string[];
   /** Wohin die .eml gelegt wurde; null = Ablage steht noch aus. */
   eml_pfad: string | null;
   mail_versendet_am: string | null;
@@ -1157,6 +1165,8 @@ export interface BeauftragungVorschau {
   subplaner_name: string;
   subplaner_kuerzel: string;
   empfaenger: string[];
+  /** Sammelpostfach der Firma plus mcd-<code>@hpp.com. */
+  kopie: string[];
   betreff: string;
   text: string;
   /** Ordner, in dem die .eml landet (relativ zum Standortordner). */
@@ -1179,13 +1189,6 @@ export interface McdFaehigkeiten {
   ordner_sharepoint: boolean;
   unlocode_eintraege: number;
   textvarianten: TextvarianteInfo[];
-}
-
-export interface UnlocodeLadeErgebnis {
-  eingelesen: number;
-  uebersprungen: number;
-  blatt: string;
-  hinweise: string[];
 }
 
 export interface UnlocodeTreffer {

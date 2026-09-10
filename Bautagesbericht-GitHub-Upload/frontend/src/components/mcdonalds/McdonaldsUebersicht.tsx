@@ -136,14 +136,16 @@ export function McdonaldsUebersicht({
         </div>
       </div>
 
-      {/* Solange die Referenztabelle fehlt, heißt jeder Ordner „XXX_…". Das
-          ist behebbar, aber nur, wenn es jemand erfährt. */}
+      {/* Die Ortsliste ist mitgeliefert und wird beim Start selbst
+          eingelesen (siehe backend/app/database.py). Ist sie trotzdem leer,
+          stimmt etwas nicht — dann hiesse jeder Ordner "XXX_...", und das
+          soll nicht unbemerkt bleiben. */}
       {faehigkeiten && faehigkeiten.unlocode_eintraege === 0 && (
-        <Meldung art="hinweis">
-          Die UN/LOCODE-Tabelle ist noch nicht hochgeladen. Ordner heißen
-          deshalb „XXX_…“ statt mit dem amtlichen Ortscode (Nievern → NIV). Die
-          Tabelle — Anlage 5.1 des Projekthandbuchs — lädt man in einem
-          geöffneten Standort hoch.
+        <Meldung art="fehler">
+          Die Ortsliste (UN/LOCODE) ist leer, obwohl sie mitgeliefert wird.
+          Ordner heissen deshalb &bdquo;XXX_&hellip;&ldquo; statt mit dem
+          amtlichen Ortscode (Nievern &rarr; NIV). Das ist ein Fehler, keine
+          fehlende Einstellung.
         </Meldung>
       )}
 

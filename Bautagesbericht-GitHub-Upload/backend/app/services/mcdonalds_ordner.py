@@ -2,8 +2,8 @@
 
 DER ORDNERNAME
 ==============
-``<3-stelliger UNLOCODE>_<Standortname>`` — für die SLS-Anfrage
-"56132 Nievern, Auf d. Lay" also ``NIV_Nievern``. Der Code kommt aus der
+``a_<3-stelliger UNLOCODE>_<Standortname>`` — für die SLS-Anfrage
+"56132 Nievern, Auf d. Lay" also ``a_NIV_Nievern``. Der Code kommt aus der
 Referenztabelle (``mcdonalds_unlocode``), der Name aus der Anfrage. Ist kein
 Code zu ermitteln, steht ``XXX`` davor: Ein Ordner mit sichtbarer Lücke ist
 besser als einer, dessen falscher Code später niemandem auffällt.
@@ -72,6 +72,14 @@ from app.services.mcdonalds_musterstruktur import (
 #: Platzhalter, wenn kein Ortscode ermittelt werden konnte.
 CODE_UNBEKANNT = "XXX"
 
+#: Vorsatz jedes Standortordners: ``a_NIV_Nievern``.
+#:
+#: Der Buchstabe sortiert die Standorte im Explorer vor die uebrigen
+#: Ordner der Ablage — so macht es das Buero, und der Musterordner heisst
+#: aus demselben Grund ``x_CODE_NAME (Muster) [leer]``: x sortiert nach
+#: hinten, a nach vorn.
+ORDNER_PRAEFIX = "a_"
+
 #: Zeichen, die Windows in Ordnernamen nicht zulässt. Ein Standortname wie
 #: "Köln Ring / Nord" käme sonst als Fehler zurück, den niemand einem
 #: Schrägstrich zuordnet.
@@ -108,10 +116,11 @@ def saubere_bezeichnung(text: str) -> str:
 
 
 def ordnername(code: str | None, standort_name: str) -> str:
-    """``NIV_Nievern`` — siehe Modultext."""
+    """``a_NIV_Nievern`` — siehe Modultext und ORDNER_PRAEFIX."""
     kennung = (code or CODE_UNBEKANNT).strip().upper() or CODE_UNBEKANNT
     name = saubere_bezeichnung(standort_name)
-    return f"{kennung}_{name}" if name else kennung
+    kern = f"{kennung}_{name}" if name else kennung
+    return f"{ORDNER_PRAEFIX}{kern}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

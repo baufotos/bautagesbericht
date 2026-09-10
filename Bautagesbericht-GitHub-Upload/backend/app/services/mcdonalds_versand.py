@@ -65,7 +65,21 @@ def baue_nachricht(
     if kopie:
         nachricht["Cc"] = ", ".join(kopie)
     nachricht["Subject"] = betreff
-    nachricht.set_content(text.rstrip() + "\n")
+
+    # ``cte="8bit"`` und NICHT die Vorgabe (quoted-printable): Python bricht
+    # sonst jede Zeile ueber 76 Zeichen mit einem weichen Umbruch ``=`` um,
+    # und ein Mailprogramm, das den nicht auflöst, zeigt mitten im Wort ein
+    # Gleichheitszeichen — "am angegeb=nen Standort", "mit Einga=g dieser
+    # Beauftragung", "dieses Einzelabrufs =er E-Mail". Genau die vier langen
+    # Zeilen des Einzelabrufs traf es. In einem Vertragsschreiben ist das
+    # nicht hinnehmbar, und den Wortlaut umzubrechen wäre die falsche
+    # Antwort: Der Text ist so abgestimmt, wie er ist.
+    #
+    # 8bit heisst: gar keine Umkodierung, die Umlaute stehen als UTF-8 drin.
+    # Für eine ``.eml``, die Outlook örtlich öffnet, ist das der klarste Weg.
+    # Ein Versand über SMTP findet hier nicht statt (nur Entwürfe), also
+    # braucht es die 7-Bit-Verträglichkeit von quoted-printable nicht.
+    nachricht.set_content(text.rstrip() + "\n", charset="utf-8", cte="8bit")
 
     if als_entwurf:
         mailversand.als_entwurf_kennzeichnen(nachricht)
@@ -76,7 +90,10 @@ def baue_nachricht(
 
 
 def notiere_versand(
-    beauftragung: McdonaldsBeauftragung, empfaenger: list[str], weg: str
+    beauftragung: McdonaldsBeauftragung,
+    empfaenger: list[str],
+    weg: str,
+    kopie: list[str] | None = None,
 ) -> None:
     """Hält an der Beauftragung fest, wann, an wen und wie sie herausging.
 
@@ -86,4 +103,5 @@ def notiere_versand(
     """
     beauftragung.mail_versendet_am = date.today()
     beauftragung.empfaenger = empfaenger
+    beauftragung.kopie = kopie or []
     beauftragung.mail_weg = weg

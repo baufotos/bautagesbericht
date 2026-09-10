@@ -79,6 +79,24 @@ ANSPRECHPARTNER_HPP = "Herr Ricardo da Costa"
 #: ("New Store Opening", das McDonald's-Rahmenprojekt des Büros.)
 PROJEKT_KUERZEL = "NSO"
 
+#: Muster der HPP-Adresse, die bei jedem Einzelabruf in Kopie steht:
+#: ``mcd-niv@hpp.com`` für Nievern. Sie wechselt mit dem Standort, nicht mit
+#: der Firma — deshalb wird sie hier gebildet und nicht in den Stammdaten
+#: gepflegt. Kleingeschrieben, weil Postfachnamen so vergeben werden.
+HPP_KOPIE_MUSTER = "mcd-{code}@hpp.com"
+
+
+def hpp_kopie(unlocode: str) -> str:
+    """``mcd-niv@hpp.com`` — leer, solange kein Ortscode feststeht.
+
+    Ohne Code keine Adresse: ``mcd-xxx@hpp.com`` wäre ein Postfach, das es
+    nicht gibt, und eine Mail an eine erfundene Adresse fällt erst auf, wenn
+    jemand die Unzustellbarkeit liest.
+    """
+    code = (unlocode or "").strip().lower()
+    return HPP_KOPIE_MUSTER.format(code=code) if len(code) == 3 else ""
+
+
 #: Frist für „Klären der Aufgabenstellung/Bauordnungsrecht", gerechnet ab dem
 #: Beauftragungsdatum.
 #:

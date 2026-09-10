@@ -66,7 +66,6 @@ import type {
   ProtokollListItem,
   StandortSucheAntwort,
   ThemaUpdate,
-  UnlocodeLadeErgebnis,
   UnlocodeTreffer,
   WochenAnalyse,
   WochenErgebnis,
@@ -990,15 +989,13 @@ export const api = {
     standortLoeschen: (id: number) =>
       fetchAPI<void>(`/mcdonalds/standorte/${id}`, { method: "DELETE" }),
 
-    /** UN/LOCODE-Referenztabelle (Anlage 5.1) — ersetzt den Bestand. */
-    unlocodeTabelle: (datei: File) => {
-      const formular = new FormData();
-      formular.append("datei", datei);
-      return fetchAPI<UnlocodeLadeErgebnis>("/mcdonalds/unlocode-tabelle", {
-        method: "POST",
-        body: formular,
-      });
-    },
+    /**
+     * Ortscode nachschlagen. Die Liste selbst ist mitgeliefert und wird beim
+     * Start eingelesen — hochladen muss sie niemand (siehe
+     * backend/app/database.py). Den Upload-Endpunkt gibt es weiter, fuer eine
+     * neue Fassung der Anlage ohne Deploy; in der Oberflaeche bewusst ohne
+     * Knopf.
+     */
     unlocodeSuche: (ort: string, bundesland = "") =>
       fetchAPI<UnlocodeTreffer>(
         `/mcdonalds/unlocode${query({ ort, bundesland })}`

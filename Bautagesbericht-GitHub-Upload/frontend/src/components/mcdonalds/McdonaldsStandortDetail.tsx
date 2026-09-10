@@ -25,12 +25,10 @@ import {
   RefreshCw,
   Search,
   Send,
-  Table,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { api } from "@/lib/api";
 import { dateiSpeichern } from "@/lib/dateien";
@@ -363,13 +361,6 @@ export function McdonaldsStandortDetail({
         </KarteInhalt>
       </Karte>
 
-      {/* ── Referenztabelle ── */}
-      <UnlocodeKarte
-        faehigkeiten={faehigkeiten}
-        onGeladen={onAktualisiert}
-        onFehler={setFehler}
-        onMeldung={setMeldung}
-      />
     </div>
   );
 }
@@ -563,87 +554,5 @@ function BeauftragungZeile({
         </Button>
       }
     />
-  );
-}
-
-/**
- * Die UN/LOCODE-Referenztabelle hochladen.
- *
- * Steht hier und nicht in den Stammdaten: Man merkt, dass sie fehlt, wenn ein
- * Ordner „XXX_…“ heißt — und dann ist man in dieser Ansicht.
- */
-function UnlocodeKarte({
-  faehigkeiten,
-  onGeladen,
-  onFehler,
-  onMeldung,
-}: {
-  faehigkeiten: McdFaehigkeiten | null;
-  onGeladen: () => void;
-  onFehler: (text: string | null) => void;
-  onMeldung: (text: string | null) => void;
-}) {
-  const [laeuft, setLaeuft] = useState(false);
-  const dateiwahl = useRef<HTMLInputElement>(null);
-  const anzahl = faehigkeiten?.unlocode_eintraege ?? 0;
-
-  async function hochladen(dateien: FileList | null) {
-    const datei = dateien?.[0];
-    if (!datei) return;
-    setLaeuft(true);
-    onFehler(null);
-    onMeldung(null);
-    try {
-      const ergebnis = await api.mcdonalds.unlocodeTabelle(datei);
-      onMeldung(
-        `${ergebnis.eingelesen} Orte aus Blatt „${ergebnis.blatt}“ übernommen.` +
-          (ergebnis.uebersprungen
-            ? ` ${ergebnis.uebersprungen} Zeile(n) übersprungen.`
-            : "")
-      );
-      onGeladen();
-    } catch (err) {
-      onFehler(err instanceof Error ? err.message : "Upload fehlgeschlagen.");
-    } finally {
-      setLaeuft(false);
-      if (dateiwahl.current) dateiwahl.current.value = "";
-    }
-  }
-
-  return (
-    <Karte>
-      <KarteKopf
-        titel="UN/LOCODE-Tabelle"
-        icon={Table}
-        unterzeile="Anlage 5.1 des Projekthandbuchs — Grundlage des Ortscodes im Ordnernamen."
-        aktion={
-          <Plakette art={anzahl > 0 ? "ok" : "warn"}>
-            {anzahl > 0 ? `${anzahl} Orte` : "nicht geladen"}
-          </Plakette>
-        }
-      />
-      <KarteInhalt className="flex flex-wrap items-center gap-2">
-        <input
-          ref={dateiwahl}
-          type="file"
-          accept=".xlsx"
-          onChange={(e) => void hochladen(e.target.files)}
-          className="hidden"
-        />
-        <Button
-          variante="sekundaer"
-          icon={laeuft ? Loader2 : Upload}
-          onClick={() => dateiwahl.current?.click()}
-          disabled={laeuft}
-        >
-          {laeuft ? "Wird gelesen…" : "Excel-Tabelle hochladen"}
-        </Button>
-        <span className="text-[12px] text-app-text-still">
-          Ersetzt den bisherigen Bestand. Nur{" "}
-          <span className="font-mono">.xlsx</span> — eine alte{" "}
-          <span className="font-mono">.xls</span> vorher in Excel neu speichern.
-        </span>
-      </KarteInhalt>
-    </Karte>
   );
 }

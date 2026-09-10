@@ -9,7 +9,7 @@ from datetime import date
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from app.config import settings
+from app.config import BASE_DIR as BASIS_DIR, settings
 
 
 def _is_sqlite(url: str) -> bool:
@@ -61,6 +61,7 @@ def init_db():
     _ensure_columns()
     _seed_mangel_stammdaten()
     _seed_mcdonalds_subplaner()
+    _seed_unlocode()
 
 
 # Tabellen der ersten McDonald's-Fassung. Sie hießen anders und hatten ein
@@ -155,6 +156,16 @@ NACHTRAEGLICHE_SPALTEN: dict[str, dict[str, str]] = {
         "strasse": "VARCHAR NOT NULL DEFAULT ''",
         "plz": "VARCHAR NOT NULL DEFAULT ''",
         "ort": "VARCHAR NOT NULL DEFAULT ''",
+    },
+    # McDonald's: Adressen in Kopie, nachträglich ergänzt (10.09.2026).
+    # Die Tabellen stehen seit dem Deploy vom selben Tag auf der
+    # Neon-Datenbank, deshalb kommen die Spalten hier und nicht über
+    # create_all. JSON ohne Vorgabe: Der Code liest ``… or []``.
+    "mcdonalds_subplaner": {
+        "kopie_emails": "JSON",
+    },
+    "mcdonalds_beauftragungen": {
+        "kopie": "JSON",
     },
     "fotosaetze": {
         # Baufotos per E-Mail (app.services.fotoversand): Nachweis, wann ein
@@ -280,6 +291,8 @@ MCDONALDS_SUBPLANER_START = [
         "anrede": "Sehr geehrter Herr Hömmerich,",
         "angebot_datum": date(2026, 2, 27),
         "textvariante": "kocks",
+        # Sammelpostfach von Kocks für dieses Kundenkonto.
+        "kopie_emails": ["mcd@kocks-ing.de"],
         "sortierung": 1,
     },
     {
@@ -304,7 +317,66 @@ def _seed_mcdonalds_subplaner() -> None:
     try:
         if db.query(McdonaldsSubplaner).count() == 0:
             for angaben in MCDONALDS_SUBPLANER_START:
-                db.add(McdonaldsSubplaner(emails=[], **angaben))
+                db.add(McdonaldsSubplaner(
+                    emails=[],
+                    kopie_emails=angaben.pop("kopie_emails", []),
+                    **angaben,
+                ))
             db.commit()
+    finally:
+        db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Die UN/LOCODE-Referenztabelle, mitgeliefert
+#
+# WARUM SIE IM PROGRAMM STECKT UND NICHT HOCHGELADEN WIRD
+# =======================================================
+# Sie ist eine amtliche Liste (Anlage 5.1 des Projekthandbuchs, rund 10.000
+# deutsche Orte) und ändert sich höchstens einmal im Jahr. Sie ist kein
+# Stammdatensatz, den ein Büro pflegt, sondern ein Nachschlagewerk — und ein
+# Nachschlagewerk, das man erst hochladen muss, ist eines, das im
+# entscheidenden Moment fehlt. Genau das ist passiert: Ohne Tabelle hieß jeder
+# Standortordner "XXX_Nievern" statt "NIV_Nievern", und der Grund stand nur in
+# einem Hinweis, den man wegklicken kann.
+#
+# Deshalb liegt die Datei jetzt unter ``backend/data`` im Programm und wird
+# beim ersten Start selbst eingelesen. Der Ortscode wird damit einfach
+# gefunden, sobald eine Adresse dasteht — ohne dass jemand etwas dafür tut.
+#
+# Der Upload-Endpunkt bleibt (``POST /api/mcdonalds/unlocode-tabelle``): Kommt
+# eine neue Fassung der Anlage, lässt sie sich damit ohne neues Deploy
+# einspielen. In der Oberfläche gibt es dafür bewusst keinen Knopf mehr.
+#
+# NUR WENN DIE TABELLE LEER IST
+# =============================
+# Wer eine neuere Fassung eingespielt hat, bekommt beim nächsten Start nicht
+# die mitgelieferte zurück. Dieselbe Regel wie bei den Wertelisten oben.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Die mitgelieferte Anlage. Fehlt sie, wird nichts geladen und nichts
+#: gemeldet — die Ortscodes bleiben dann leer, und der Standort sagt das.
+UNLOCODE_DATEI = BASIS_DIR / "data" / "unlocode_de.xlsx"
+
+
+def _seed_unlocode() -> None:
+    """Liest die mitgelieferte UN/LOCODE-Liste ein, falls noch keine da ist."""
+    from app.models import UnlocodeEintrag
+    from app.services.mcdonalds_unlocode import lade_unlocode_tabelle
+
+    if not UNLOCODE_DATEI.is_file():
+        return
+
+    db = SessionLocal()
+    try:
+        if db.query(UnlocodeEintrag).count() > 0:
+            return
+        try:
+            lade_unlocode_tabelle(UNLOCODE_DATEI, db)
+        except Exception:  # noqa: BLE001
+            # Eine kaputte mitgelieferte Datei darf den Start nicht
+            # verhindern. Der Rest der App hat mit Ortscodes nichts zu tun,
+            # und am Standort steht dann, dass kein Code gefunden wurde.
+            db.rollback()
     finally:
         db.close()
