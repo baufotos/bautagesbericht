@@ -183,7 +183,15 @@ export function SubplanerVerwaltung({
                 phase={phase}
                 varianten={varianten}
                 onSpeichern={async (daten) => {
-                  await api.subplaner.create({ ...daten, phase } as SubplanerEingabe);
+                  /* Die Phase kommt aus dem Formular, nicht aus der Gruppe,
+                     in der der Knopf stand: Es gibt dort ein Auswahlfeld, und
+                     wer es umstellt, meint das auch. Vorher hat `{ ...daten,
+                     phase }` es stillschweigend überschrieben — das Unternehmen
+                     landete in der Gruppe, aus der man gekommen war. */
+                  await api.subplaner.create({
+                    phase,
+                    ...daten,
+                  } as SubplanerEingabe);
                   setNeuInPhase(null);
                   onAendern();
                 }}
@@ -335,10 +343,51 @@ function SubplanerFormular({
 
   const bereit = name.trim() !== "";
 
-  /** "a@x.de, b@x.de" -> ["a@x.de", "b@x.de"] — auch mit Semikolon. */
+  /**
+   * "a@x.de, b@x.de" -> ["a@x.de", "b@x.de"] — Komma, Semikolon, Leerzeichen.
+   *
+   * Getrennt wird nur AUSSERHALB von Anführungszeichen und spitzen Klammern.
+   * Der Grund steht bei ``adressen_zerlegen`` in backend/app/schemas.py: Wer
+   * aus Outlook einfügt, bringt `"Hömmerich, Peter" <p.h@kocks-ing.de>` mit,
+   * und ein Trennen an jedem Komma zerschneidet den Namen — die Eingabe wurde
+   * dann komplett abgelehnt und nichts gespeichert.
+   *
+   * Dieselbe Regel steht bewusst auf beiden Seiten: Der Server ist die
+   * Instanz, die entscheidet, hier soll aber schon nichts kaputtgehen, bevor
+   * er gefragt wird.
+   */
   function zerlegen(wert: string): string[] {
-    return wert
-      .split(/[,;\n]/)
+    const stuecke: string[] = [];
+    let laufend = "";
+    let inAnfuehrung = false;
+    let inKlammer = false;
+    for (const zeichen of wert) {
+      if (zeichen === '"') {
+        inAnfuehrung = !inAnfuehrung;
+        laufend += zeichen;
+      } else if (zeichen === "<") {
+        inKlammer = true;
+        laufend += zeichen;
+      } else if (zeichen === ">") {
+        inKlammer = false;
+        laufend += zeichen;
+      } else if (/[,;\n\r]/.test(zeichen) && !inAnfuehrung && !inKlammer) {
+        stuecke.push(laufend);
+        laufend = "";
+      } else {
+        laufend += zeichen;
+      }
+    }
+    stuecke.push(laufend);
+
+    /* Zweiter Schritt: Leerraum trennt nur dort, wo wirklich mehrere
+       Adressen stehen — mehr als ein @ und keine spitze Klammer. Sonst
+       zerfiele „Herr Hömmerich <h@kocks-ing.de>“ in drei Teile. */
+    return stuecke
+      .map((s) => s.trim())
+      .flatMap((s) =>
+        !s.includes("<") && (s.match(/@/g) ?? []).length > 1 ? s.split(/\s+/) : [s]
+      )
       .map((a) => a.trim())
       .filter(Boolean);
   }

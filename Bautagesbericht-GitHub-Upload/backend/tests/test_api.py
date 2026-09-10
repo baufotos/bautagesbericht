@@ -30,6 +30,7 @@ from app.main import app  # noqa: E402
 from datetime import date as _date, timedelta as _timedelta  # noqa: E402
 
 VOR_ZWEI_WOCHEN = (_date.today() - _timedelta(days=14)).isoformat()
+IN_EINER_WOCHE = (_date.today() + _timedelta(days=7)).isoformat()
 IN_ZWEI_WOCHEN = (_date.today() + _timedelta(days=14)).isoformat()
 
 ok = 0
@@ -176,14 +177,21 @@ with TestClient(app) as c:
     pruefe(dup3["nummer"] == "00001.3", f"dup3 (Dup vom Dup): {dup3['nummer']}")
 
     # ── Update: Nachfrist setzt Datum automatisch, Status wechselt ──
+    # Auch hier relativ zu heute — siehe den Hinweis oben bei VOR_ZWEI_WOCHEN.
+    # Hier stand einmal fest der 10.09.2026: Am 11.09.2026 war er vorbei, und
+    # damit galt dieser Mangel ploetzlich als ueberfaellig. Drei Pruefungen
+    # weiter unten sind daran gescheitert, ohne dass sich am Programm etwas
+    # geaendert haette. Die Nachfrist muss frueher liegen als die erste Frist
+    # (sonst zeigt sich nicht, dass sie zaehlt), aber in der Zukunft.
     upd = c.patch(f"/api/maengel/{m1['id']}", json={
-        "erste_nachfrist_bis": "2026-09-10", "status": "Nachfrist",
+        "erste_nachfrist_bis": IN_EINER_WOCHE, "status": "Nachfrist",
     })
     pruefe(upd.status_code == 200, f"update: {upd.status_code} {upd.text[:300]}")
     upd = upd.json()
     pruefe(upd["erste_nachfrist_gesetzt_am"] is not None,
            "Nachfrist-gesetzt-am nicht automatisch gefuellt")
-    pruefe(upd["aktuelle_frist"] == "2026-09-10", f"Nachfrist zaehlt: {upd['aktuelle_frist']}")
+    pruefe(upd["aktuelle_frist"] == IN_EINER_WOCHE,
+           f"Nachfrist zaehlt: {upd['aktuelle_frist']}")
 
     leeren = c.patch(f"/api/maengel/{m1['id']}", json={"raumnummer": None}).json()
     pruefe(leeren["raumnummer"] is None, f"raumnummer leeren: {leeren['raumnummer']}")

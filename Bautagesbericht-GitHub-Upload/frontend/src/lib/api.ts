@@ -152,6 +152,57 @@ function meldungOhneBackend(status: number, warJson: boolean): string | null {
   );
 }
 
+/**
+ * Die Meldung aus einer Pruefbeanstandung (HTTP 422) lesbar machen.
+ *
+ * FastAPI antwortet auf eine ungueltige Eingabe nicht mit einem Satz, sondern
+ * mit einer LISTE von Fehlerobjekten::
+ *
+ *     [{"type": "value_error", "loc": ["body", "emails", 0],
+ *       "msg": "Value error, „Hoemmerich“ ist keine gueltige E-Mail-Adresse …"}]
+ *
+ * Ohne diese Auswertung landete davon ``API 422: [{"type":"value_error"…`` im
+ * roten Balken. Das sah aus, als sei nichts passiert — und genau daran ist das
+ * Eintragen der Subplaner-Adressen gescheitert: Die Eingabe wurde abgelehnt,
+ * aber der Grund war nicht zu erkennen.
+ *
+ * ``Value error, `` davor ist ein Zusatz der Pruefbibliothek und wird
+ * abgeschnitten; die eigenen Meldungen in app/schemas.py sind schon ganze
+ * deutsche Saetze.
+ *
+ * Gibt ``null`` zurueck, wenn es keine solche Liste ist.
+ */
+function meldungAusPruefung(detail: unknown): string | null {
+  if (!Array.isArray(detail) || detail.length === 0) return null;
+  const saetze = detail
+    .map((eintrag) => {
+      if (typeof eintrag !== "object" || eintrag === null) return "";
+      const msg = (eintrag as { msg?: unknown }).msg;
+      return typeof msg === "string" ? msg.replace(/^Value error,\s*/, "") : "";
+    })
+    .filter(Boolean);
+  if (saetze.length === 0) return null;
+  // Doppelte zusammenfassen: Steht dieselbe Adresse in "emails" und
+  // "kopie_emails", kaeme der Satz sonst zweimal.
+  return [...new Set(saetze)].join(" ");
+}
+
+/**
+ * Die Meldung, die der Anwender zu einem Fehler zu sehen bekommt.
+ *
+ * Eine Stelle fuer beide Wege (``fetchAPI`` und ``fetchDatei``), damit ein
+ * Endpunkt nicht je nach Aufrufweg verschieden verstaendlich ist.
+ * Rangfolge: eigener Satz des Backends, schlichter Text, Pruefbeanstandung,
+ * zuletzt der technische Notnagel.
+ */
+function fehlerMeldung(detail: unknown, status: number, text: string): string {
+  if (typeof detail === "object" && detail !== null && "nachricht" in detail) {
+    return String((detail as { nachricht: unknown }).nachricht);
+  }
+  if (typeof detail === "string" && detail) return detail;
+  return meldungAusPruefung(detail) ?? `API ${status}: ${text}`;
+}
+
 /** Meldung, wenn die Anfrage den Server gar nicht erreicht hat. */
 function meldungOhneNetz(): string {
   return (
@@ -181,13 +232,11 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
     }
     const ausfall = meldungOhneBackend(res.status, warJson);
     if (ausfall) throw new ApiError(res.status, ausfall, ausfall);
-    const message =
-      typeof detail === "object" && detail !== null && "nachricht" in detail
-        ? String((detail as { nachricht: unknown }).nachricht)
-        : typeof detail === "string" && detail
-        ? detail
-        : `API ${res.status}: ${text}`;
-    throw new ApiError(res.status, detail, message);
+    throw new ApiError(
+      res.status,
+      detail,
+      fehlerMeldung(detail, res.status, text)
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -226,7 +275,7 @@ async function fetchDatei(
     throw new ApiError(
       res.status,
       detail,
-      typeof detail === "string" && detail ? detail : `API ${res.status}`
+      fehlerMeldung(detail, res.status, text)
     );
   }
   return {

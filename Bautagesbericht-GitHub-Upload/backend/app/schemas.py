@@ -1663,6 +1663,123 @@ class AnzeigeGlaettenErgebnis(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+#: Trennzeichen zwischen zwei Adressen. NUR gültig außerhalb von
+#: Anführungszeichen und spitzen Klammern, siehe ``adressen_zerlegen``.
+_TRENNER = ',;\n\r'
+
+
+def _einzeln_trennen(stueck: str) -> list[str]:
+    """Ein Stück nach dem Komma-Schritt noch an Leerraum auftrennen.
+
+    Nur dann, wenn dort wirklich mehrere Adressen stehen — erkennbar an mehr
+    als einem @ und keiner spitzen Klammer. ``a@x.de b@y.de`` ist das, was man
+    tippt, wenn man das Komma vergisst, und soll funktionieren.
+
+    ``Herr Hömmerich <h@kocks-ing.de>`` darf hier dagegen NICHT zerfallen:
+    Der Leerraum gehört zum Namen. Genau daran ist mein erster Versuch
+    gescheitert — er machte daraus „Herr“, „Hömmerich“ und die Adresse.
+    """
+    if '<' in stueck or stueck.count('@') < 2:
+        return [stueck]
+    return stueck.split()
+
+
+def adressen_zerlegen(wert) -> list[str]:
+    """Zerlegt eine Adresseingabe in einzelne Adressen.
+
+    WARUM DAS NICHT EIN ``split(",")`` IST
+    ======================================
+    Weil im Büro aus Outlook kopiert wird, und Outlook schreibt den Namen mit
+    davor::
+
+        "Hömmerich, Peter" <p.hoemmerich@kocks-ing.de>; Sekretariat <s@kocks-ing.de>
+
+    Ein Trennen an jedem Komma zerschneidet den Namen mitten entzwei. Übrig
+    bleibt ``"Hömmerich`` — keine Adresse. Und weil die Prüfung alles oder
+    nichts ist, wurde damit die GANZE Eingabe abgelehnt: Wer so einfügte,
+    bekam nichts gespeichert. Deshalb wird hier nur außerhalb von
+    Anführungszeichen und außerhalb von ``<...>`` getrennt.
+    """
+    if isinstance(wert, str):
+        rohteile = [wert]
+    elif isinstance(wert, list):
+        rohteile = list(wert)
+    else:
+        return wert
+
+    teile: list[str] = []
+    for roh in rohteile:
+        if not isinstance(roh, str):
+            teile.append(roh)
+            continue
+        laufend: list[str] = []
+        stuecke: list[str] = []
+        in_anfuehrung = False
+        in_klammer = False
+        for zeichen in roh:
+            if zeichen == '"':
+                in_anfuehrung = not in_anfuehrung
+                laufend.append(zeichen)
+            elif zeichen == '<':
+                in_klammer = True
+                laufend.append(zeichen)
+            elif zeichen == '>':
+                in_klammer = False
+                laufend.append(zeichen)
+            elif zeichen in _TRENNER and not in_anfuehrung and not in_klammer:
+                stuecke.append(''.join(laufend))
+                laufend = []
+            else:
+                laufend.append(zeichen)
+        stuecke.append(''.join(laufend))
+        for stueck in stuecke:
+            teile.extend(_einzeln_trennen(stueck.strip()))
+
+    return [t.strip() if isinstance(t, str) else t
+            for t in teile
+            if not isinstance(t, str) or t.strip()]
+
+
+def adresse_pruefen(eingabe: str) -> str:
+    """Eine einzelne Adresse prüfen und in ihre reine Form bringen.
+
+    Nimmt auch ``Name <adresse>`` an und behält nur die Adresse — der Name
+    steht im Einzelabruf ohnehin als Anredezeile und wird hier nicht
+    gebraucht.
+
+    Die Fehlermeldung ist bewusst deutsch und nennt die beanstandete Adresse.
+    Vorher kam die englische Meldung der Prüfbibliothek in einer Liste von
+    Fehlerobjekten an, und die Oberfläche zeigte davon ``API 422:
+    [{"type":"value_error"...`` — für den Anwender nicht zu deuten. Siehe
+    dazu auch die Auswertung in frontend/src/lib/api.ts.
+    """
+    from email_validator import EmailNotValidError, validate_email
+
+    text = eingabe.strip()
+    if '<' in text and '>' in text:
+        text = text[text.rfind('<') + 1:text.rfind('>')].strip()
+    text = text.strip('"').strip()
+
+    try:
+        return validate_email(text, check_deliverability=False).normalized
+    except EmailNotValidError as fehler:
+        raise ValueError(
+            f"„{eingabe.strip()}“ ist keine gültige E-Mail-Adresse "
+            f"({fehler}). Mehrere Adressen mit Komma, Semikolon oder "
+            "Leerzeichen trennen."
+        ) from fehler
+
+
+def adressen_lesen(wert):
+    """Der Prüfschritt für ``emails`` und ``kopie_emails``."""
+    if wert is None:
+        return None
+    zerlegt = adressen_zerlegen(wert)
+    if not isinstance(zerlegt, list):
+        return zerlegt
+    return [adresse_pruefen(t) if isinstance(t, str) else t for t in zerlegt]
+
+
 class SubplanerCreate(BaseModel):
     """Ein Subplaner in den Stammdaten — je Phase.
 
@@ -1689,11 +1806,9 @@ class SubplanerCreate(BaseModel):
 
     @field_validator("emails", "kopie_emails", mode="before")
     @classmethod
-    def _leere_weg(cls, wert):
-        """Leere Zeilen aus dem Formular verwerfen, statt sie zu bemängeln."""
-        if isinstance(wert, list):
-            return [e for e in wert if not isinstance(e, str) or e.strip()]
-        return wert
+    def _adressen(cls, wert):
+        """Adressen zerlegen, prüfen und normieren — siehe ``adressen_lesen``."""
+        return adressen_lesen(wert)
 
 
 class SubplanerUpdate(BaseModel):
@@ -1713,10 +1828,8 @@ class SubplanerUpdate(BaseModel):
 
     @field_validator("emails", "kopie_emails", mode="before")
     @classmethod
-    def _leere_weg(cls, wert):
-        if isinstance(wert, list):
-            return [e for e in wert if not isinstance(e, str) or e.strip()]
-        return wert
+    def _adressen(cls, wert):
+        return adressen_lesen(wert)
 
 
 class SubplanerResponse(BaseModel):

@@ -769,6 +769,68 @@ with TestClient(app) as c:
 # kann.
 # ─────────────────────────────────────────────────────────────────────────────
 
+print("== Adressen der Subplaner ==")
+
+from app.schemas import SubplanerCreate, SubplanerUpdate  # noqa: E402
+
+
+def _adressen(eingabe):
+    """Wie es aus dem Formular kommt: die zerlegten Teile als Liste."""
+    return SubplanerCreate(
+        phase=1, name="X", emails=eingabe if isinstance(eingabe, list) else [eingabe]
+    ).emails
+
+
+# Was angenommen werden MUSS. Der Fall mit dem Komma im Namen ist der Grund
+# fuer die ganze Uebung: So kopiert Outlook, und ein Trennen an jedem Komma
+# machte daraus Unsinn — die Eingabe wurde komplett abgelehnt und der
+# Subplaner blieb ohne Adresse. Siehe schemas.adressen_zerlegen.
+for eingabe, erwartet in [
+    ("hoemmerich@kocks-ing.de", ["hoemmerich@kocks-ing.de"]),
+    ("a@x.de, b@x.de", ["a@x.de", "b@x.de"]),
+    ("a@x.de; b@x.de", ["a@x.de", "b@x.de"]),
+    ("a@x.de b@x.de", ["a@x.de", "b@x.de"]),
+    ("a@x.de\nb@x.de", ["a@x.de", "b@x.de"]),
+    ("  a@x.de  ,  ", ["a@x.de"]),
+    ("Herr Hoemmerich <h@kocks-ing.de>", ["h@kocks-ing.de"]),
+    ('"Hoemmerich, Peter" <p.h@kocks-ing.de>', ["p.h@kocks-ing.de"]),
+    ('"Hoemmerich, Peter" <p.h@kocks-ing.de>; Sekretariat <s@kocks-ing.de>',
+     ["p.h@kocks-ing.de", "s@kocks-ing.de"]),
+    ("MCD@Kocks-Ing.DE", ["MCD@kocks-ing.de"]),
+    ("", []),
+    ("   ", []),
+]:
+    try:
+        ergebnis = _adressen(eingabe)
+    except Exception as ausnahme:  # noqa: BLE001 — die Meldung gehoert ins Protokoll
+        ergebnis = f"abgelehnt: {ausnahme}"
+    pruefe(ergebnis == erwartet, f"Adresse {eingabe!r} -> {ergebnis!r}, erwartet {erwartet!r}")
+
+# Was abgelehnt werden MUSS — und zwar mit einem deutschen Satz, der die
+# beanstandete Adresse nennt. Vorher kam die englische Meldung der
+# Pruefbibliothek in einer Liste von Fehlerobjekten an, und die Oberflaeche
+# zeigte davon "API 422: [{"type":"value_error"...". Das sah aus, als sei
+# nichts passiert. Siehe frontend/src/lib/api.ts (meldungAusPruefung).
+for eingabe, muss_vorkommen in [
+    ("info@kocks-ing", "info@kocks-ing"),
+    ("kein-at-zeichen", "kein-at-zeichen"),
+    (["a@x.de", "kaputt"], "kaputt"),
+]:
+    try:
+        _adressen(eingabe)
+        pruefe(False, f"{eingabe!r} haette abgelehnt werden muessen")
+    except Exception as ausnahme:  # noqa: BLE001
+        text = str(ausnahme)
+        pruefe("keine gültige E-Mail-Adresse" in text,
+               f"Meldung zu {eingabe!r} ist nicht der deutsche Satz: {text[:120]}")
+        pruefe(muss_vorkommen in text,
+               f"Meldung zu {eingabe!r} nennt die Adresse nicht: {text[:120]}")
+
+# Beim Aendern gilt dasselbe — und None bleibt None ("Feld nicht mitgeschickt").
+pruefe(SubplanerUpdate().emails is None, "nicht gesetzte Adressen bleiben None")
+pruefe(SubplanerUpdate(emails=['A <a@x.de>']).emails == ["a@x.de"],
+       "SubplanerUpdate liest Adressen nach derselben Regel")
+
 print("== Abholung ==")
 
 from app.security import _ist_abholweg  # noqa: E402
