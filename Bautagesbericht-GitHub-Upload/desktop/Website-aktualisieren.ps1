@@ -265,17 +265,34 @@ try {
   # PowerShell daraus einen Abbruch, und der Push bliebe liegen, obwohl gar
   # nichts kaputt ist. Deshalb hier auf "Continue" schalten und den Erfolg am
   # Rueckgabewert ablesen - der luegt nicht.
+  # ZWEITE PowerShell-Falle: die Nachricht ueber eine Datei, nicht ueber -m.
+  #
+  # Bei "git commit -m $Nachricht" zerlegt PowerShell den Text an jedem
+  # doppelten Anfuehrungszeichen darin und reicht die Bruchstuecke als
+  # zusaetzliche Argumente an git weiter. Das endet in
+  # "error: pathspec ... did not match any file(s) known to git", der Commit
+  # bleibt aus, und der Grund ist der Meldung nicht anzusehen. Genau das ist
+  # am 10. und 11.09.2026 je einmal passiert - beide Male, weil in der
+  # Beschreibung ein Zitat stand.
+  #
+  # Mit -F <Datei> liest git den Text als Ganzes und keine Zeichenkette wird
+  # mehr gedeutet. UTF-8 ohne BOM, sonst stehen im Verlauf Umlaut-Trümmer.
+  $nachrichtDatei = Join-Path ([System.IO.Path]::GetTempPath()) "hpp-commit.txt"
+  [System.IO.File]::WriteAllText($nachrichtDatei, $Nachricht,
+                                 (New-Object System.Text.UTF8Encoding($false)))
+
   $vorher = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
     & git add -A
     if ($LASTEXITCODE -ne 0) { throw "git add fehlgeschlagen." }
-    & git commit -m $Nachricht | Out-Null
+    & git commit -F $nachrichtDatei | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "git commit fehlgeschlagen." }
     & git push origin main
     if ($LASTEXITCODE -ne 0) { throw "git push fehlgeschlagen - Zugang pruefen." }
   } finally {
     $ErrorActionPreference = $vorher
+    Remove-Item -LiteralPath $nachrichtDatei -Force -ErrorAction SilentlyContinue
   }
 
   Write-Host ""

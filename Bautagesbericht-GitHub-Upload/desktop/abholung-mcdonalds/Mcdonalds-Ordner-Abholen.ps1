@@ -287,11 +287,34 @@ function Lege-Standortordner-An {
 
 Schreib-Log "--- Mcdonalds-Ordner-Abholung gestartet ($Rechner) ---"
 
+# Ist das ein abgelehnter Ausweis (401) und keine schlechte Verbindung?
+#
+# Der Unterschied ist wichtig genug fuer eine eigene Funktion: Bei 401 hilft
+# kein Warten. Der zweite Versuch nach 45 Sekunden waere verschenkte Zeit, und
+# "Server nicht erreichbar" im Protokoll schickt den Suchenden in die falsche
+# Richtung - der Server hat ja geantwortet, nur eben mit "nein".
+function Ist-Abgelehnt {
+    param($Ausnahme)
+    $antwort = $Ausnahme.Exception.Response
+    if ($antwort -and $antwort.StatusCode) {
+        return ([int]$antwort.StatusCode -eq 401)
+    }
+    return ($Ausnahme.Exception.Message -match '\(401\)')
+}
+
+function Melde-Abgelehnt {
+    Schreib-Log "Der Server lehnt das Losungswort ab (401)." "FEHL"
+    Schreib-Log "  In einstellungen.txt steht ein anderes Wort als bei Render." "FEHL"
+    Schreib-Log "  Dort unter Environment -> BTB_ABHOL_TOKEN nachsehen, und zwar" "FEHL"
+    Schreib-Log "  bei BEIDEN Diensten - sie muessen denselben Wert haben." "FEHL"
+}
+
 function Hole-Mit-Wiederholung {
     param([string]$Pfad, [string]$Beschreibung)
     try {
         return (Ruf-Server $Pfad)
     } catch {
+        if (Ist-Abgelehnt $_) { throw }
         # Render schlaeft nach 15 Minuten ein und braucht bis zu einer Minute
         # zum Aufwachen - der erste Versuch laeuft dabei in einen Zeitfehler.
         Schreib-Log "$Beschreibung nicht erreicht, zweiter Versuch in 45 Sekunden ..." "WARN"
@@ -303,14 +326,18 @@ function Hole-Mit-Wiederholung {
 try {
     $musterstruktur = Hole-Mit-Wiederholung "/mcdonalds/abholung/musterstruktur" "Musterstruktur"
 } catch {
-    Schreib-Log "Server nicht erreichbar: $($_.Exception.Message)" "FEHL"
+    if (Ist-Abgelehnt $_) { Melde-Abgelehnt } else {
+        Schreib-Log "Server nicht erreichbar: $($_.Exception.Message)" "FEHL"
+    }
     exit 1
 }
 
 try {
     $offen = @(Als-Liste (Hole-Mit-Wiederholung "/mcdonalds/standorte/abholung/offen" "Offene Standorte"))
 } catch {
-    Schreib-Log "Server nicht erreichbar: $($_.Exception.Message)" "FEHL"
+    if (Ist-Abgelehnt $_) { Melde-Abgelehnt } else {
+        Schreib-Log "Server nicht erreichbar: $($_.Exception.Message)" "FEHL"
+    }
     exit 1
 }
 
