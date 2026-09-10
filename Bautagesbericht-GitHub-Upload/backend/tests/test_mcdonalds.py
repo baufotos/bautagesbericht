@@ -1,33 +1,53 @@
-"""Rauchtest: McDonald's — Mail lesen, UNLOCODE, Ordner, Angebot, Fachplaner.
+"""Rauchtest: McDonald's — SLS lesen, UNLOCODE, Musterstruktur, Einzelabrufe.
 
 Aufbau wie die anderen Suiten dieses Ordners: ein Skript, das oben seine
 BTB_*-Umgebung setzt, auf Modulebene durchläuft und am Ende zählt. Kein
 pytest — siehe tests/test_fotomail.py.
 
-Die KI-Analyse wird NICHT gegen die Anthropic-Schnittstelle gefahren. Geprüft
-wird stattdessen das, was ohne Netz falsch sein kann und im Betrieb weh tut:
-das Zerlegen der ``.eml``, das Säubern der Modellantwort und der Weg des
-Uploads ohne hinterlegten Schlüssel — genau der Fall des Bürorechners.
+Die KI wird nicht gefahren. Sie ist in diesem Modul der Notausgang, nicht der
+Weg: Die SLS-Anfrage wird nach Regeln gelesen, und genau das ist hier geprüft
+— am Fixture ``beispiel_sls_nievern.eml``, das der echten Mail zum Standort
+Nievern nachgebaut ist.
 """
+import io
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import zipfile
+from datetime import date
+from email import message_from_bytes, policy
 from pathlib import Path
 
 # Eigene Ablage im Temp-Ordner — die echte storage/ bleibt unberuehrt.
 STORAGE = Path(tempfile.gettempdir()) / "hpp-mcdonaldstest"
+
+
+def _weg_damit(funktion, pfad, _fehler):
+    """Schreibgeschuetztes wegraeumen — der Musterordner ist es (Attribut R).
+
+    Ohne diesen Umweg scheitert der zweite Lauf der Suite beim Aufraeumen. Der
+    Dienst kopiert inzwischen ohne Attribute (siehe mcdonalds_ordner), aber
+    eine Ablage aus einer aelteren Fassung koennte noch schreibgeschuetzt sein.
+    """
+    os.chmod(pfad, stat.S_IWRITE)
+    funktion(pfad)
+
+
 if STORAGE.exists():
-    shutil.rmtree(STORAGE)
+    shutil.rmtree(STORAGE, onexc=_weg_damit)
 STORAGE.mkdir(parents=True)
+(STORAGE / "STANDORTE").mkdir()
 
 WIN = str(STORAGE).replace("\\", "/")
 os.environ["BTB_DATABASE_URL"] = f"sqlite:///{WIN}/test.db"
 os.environ["BTB_UPLOAD_DIR"] = f"{WIN}/uploads"
 os.environ["BTB_OUTPUT_DIR"] = f"{WIN}/output"
-# Ausdruecklich leer: Der Kern dieser Suite ist, dass die fehlende
-# Konfiguration einen sprechenden Zustand ergibt und keinen Absturz.
-os.environ["BTB_MCDONALDS_BASIS_H"] = ""
+# Ausdruecklich leer: Der erste Teil prueft, dass die fehlende Konfiguration
+# den Zustand "vorbereitet" ergibt und keinen Fehler.
+os.environ["BTB_MCDONALDS_BASIS_STANDORTE"] = ""
+os.environ["BTB_MCDONALDS_MUSTERORDNER"] = ""
 os.environ["BTB_MCDONALDS_BASIS_SHAREPOINT"] = ""
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -39,14 +59,18 @@ from app.config import settings  # noqa: E402
 from app.database import SessionLocal, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import UnlocodeEintrag  # noqa: E402
-from app.services import mcdonalds_angebot_generation as angebot_dienst  # noqa: E402
+from app.services import mcdonalds_beauftragung as brief  # noqa: E402
 from app.services import mcdonalds_email_analyse as analyse  # noqa: E402
 from app.services import mcdonalds_ordner as ordner_dienst  # noqa: E402
+from app.services import mcdonalds_sls as sls  # noqa: E402
 from app.services import mcdonalds_unlocode as unlocode  # noqa: E402
+from app.services.mcdonalds_musterstruktur import (  # noqa: E402
+    MUSTERDATEIEN,
+    MUSTERORDNER_NAME,
+    UNTERORDNER,
+)
 
 # Die Tabellen anlegen, bevor der erste Abschnitt eine eigene Sitzung oeffnet.
-# ``TestClient(app)`` tut das ueber den Lebenszyklus auch, aber erst weiter
-# unten — die Dienste werden vorher schon ohne API geprueft.
 init_db()
 
 ok = 0
@@ -61,214 +85,282 @@ def pruefe(bedingung, text):
         fehler.append(text)
 
 
-BEISPIEL_EML = Path(__file__).resolve().parent / "beispiel_beauftragung.eml"
+FIXTURE = Path(__file__).resolve().parent / "beispiel_sls_nievern.eml"
+ROHDATEN = FIXTURE.read_bytes()
+
+#: Der echte Musterordner, falls er auf diesem Rechner liegt. Nur dann laeuft
+#: der Abgleich in Abschnitt 3 — auf einem Server gibt es ihn nicht.
+ECHTER_MUSTER = Path.home() / "Desktop" / MUSTERORDNER_NAME
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Die .eml zerlegen (ohne Netz)
+# 1. Die SLS-Anfrage nach Regeln lesen
 # ─────────────────────────────────────────────────────────────────────────────
 
-print("== EML lesen ==")
+print("== SLS lesen ==")
 
-rohdaten = BEISPIEL_EML.read_bytes()
-inhalt = analyse.lies_eml(rohdaten, BEISPIEL_EML.name)
+inhalt = analyse.lies_eml(ROHDATEN, FIXTURE.name)
+angaben = sls.lies_sls(inhalt)
 
-pruefe("Beauftragung LPH 6" in inhalt.betreff, f"Betreff: {inhalt.betreff!r}")
-pruefe("firma@kunde.de" in inhalt.absender, f"Absender: {inhalt.absender!r}")
-pruefe(inhalt.gesendet_am is not None and inhalt.gesendet_am.year == 2026,
-       f"Sendedatum: {inhalt.gesendet_am!r}")
-pruefe(inhalt.anhaenge == ["Projekthandbuch_Anlage.pdf"],
-       f"Anhangnamen: {inhalt.anhaenge!r}")
-pruefe("Leistungsphase 6" in inhalt.text, "Mailtext fehlt der Klartextteil")
-pruefe("Europaplatz 1, 52068 Aachen" in inhalt.text,
-       "Anschrift fehlt im Mailtext")
-# Der Klartextteil wird bevorzugt: Die HTML-Fassung darf nicht mit hineinlaufen.
-pruefe("<b>" not in inhalt.text and "margin" not in inhalt.text,
-       "HTML ist in den Klartext geraten")
+pruefe(angaben.erkannt, "die Anfrage haette erkannt werden muessen")
+pruefe(angaben.phase == 1, f"Phase: {angaben.phase!r}")
+pruefe(angaben.plz == "56132", f"PLZ: {angaben.plz!r}")
+pruefe(angaben.ort == "Nievern", f"Ort: {angaben.ort!r}")
+pruefe(angaben.strasse == "Auf d. Lay", f"Strasse: {angaben.strasse!r}")
+pruefe(angaben.abgabetermin == date(2026, 9, 4),
+       f"Abgabetermin: {angaben.abgabetermin!r}")
+pruefe(angaben.sls_vorgang == "2535628", f"Vorgang: {angaben.sls_vorgang!r}")
+pruefe(angaben.adresse == "Auf d. Lay, 56132 Nievern",
+       f"Adresse: {angaben.adresse!r}")
+pruefe(not angaben.hinweise, f"unerwartete Hinweise: {angaben.hinweise}")
 
-# Eine kaputte Datei darf nicht durchgehen.
-try:
-    analyse.lies_eml(b"", "leer.eml")
-    pruefe(False, "leere Datei muesste AnalyseFehler werfen")
-except analyse.AnalyseFehler:
-    ok += 1
+# Der Kern: Leistungsbeginn ist das Datum der ORIGINALmail (21.08.), nicht das
+# der Weiterleitung (04.09.). Sonst steht in zwei Vertraegen ein falsches Datum.
+pruefe(angaben.leistungsbeginn == date(2026, 8, 21),
+       f"Leistungsbeginn muesste der 21.08.2026 sein: {angaben.leistungsbeginn!r}")
+pruefe(inhalt.gesendet_am.date() == date(2026, 9, 4),
+       "das Fixture sollte am 04.09. weitergeleitet worden sein")
 
-# Nur-HTML-Mail: Text wird gewonnen, aber mit Hinweis zum Gegenlesen.
-nur_html = (
-    b"From: a@b.de\r\nTo: c@d.de\r\nSubject: Test\r\n"
-    b"Content-Type: text/html; charset=utf-8\r\n\r\n"
-    b"<html><body><p>Beauftragung</p><p>LPH 8</p></body></html>\r\n"
+# Ohne weitergeleiteten Kopf: eigenes Sendedatum, aber mit Hinweis.
+ohne_kopf = (
+    b"From: no-reply@ext.mcdonalds.com\r\n"
+    b"Subject: SLS - Anfrage zur F2 Vorbereitung 20095 Hamburg, Ballindamm 1\r\n"
+    b"Date: Mon, 3 Aug 2026 08:00:00 +0000\r\n"
+    b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+    b"Wir bitten um Zusendung der vorgenannten Unterlagen bis zum : 31.08.2026\r\n"
 )
-html_inhalt = analyse.lies_eml(nur_html, "html.eml")
-pruefe("Beauftragung" in html_inhalt.text and "LPH 8" in html_inhalt.text,
-       f"HTML-Text nicht gewonnen: {html_inhalt.text!r}")
-pruefe(any("HTML" in h for h in html_inhalt.hinweise),
-       f"Hinweis auf HTML-Fassung fehlt: {html_inhalt.hinweise}")
+direkt = sls.lies_sls(analyse.lies_eml(ohne_kopf, "direkt.eml"))
+pruefe(direkt.erkannt and direkt.phase == 2, f"F2 direkt: {direkt!r}")
+pruefe(direkt.ort == "Hamburg" and direkt.strasse == "Ballindamm 1",
+       f"Hamburg/Ballindamm: {direkt.ort!r} / {direkt.strasse!r}")
+pruefe(direkt.leistungsbeginn == date(2026, 8, 3),
+       f"Beginn aus dem Date-Kopf: {direkt.leistungsbeginn!r}")
 
-# Mail ohne jeden Text: Hinweis statt stiller Leere.
-ohne_text = b"From: a@b.de\r\nSubject: Leer\r\n\r\n"
-leer_inhalt = analyse.lies_eml(ohne_text, "leer2.eml")
-pruefe(any("kein Text" in h for h in leer_inhalt.hinweise),
-       f"Hinweis auf fehlenden Text: {leer_inhalt.hinweise}")
+# Eine ganz andere Mail: nicht erkannt, mit sprechendem Hinweis.
+fremd = sls.lies_sls(analyse.lies_eml(
+    b"From: a@b.de\r\nSubject: Rechnung 4711\r\n"
+    b"Content-Type: text/plain; charset=utf-8\r\n\r\nAnbei die Rechnung.\r\n",
+    "fremd.eml",
+))
+pruefe(not fremd.erkannt, "eine Rechnung ist keine SLS-Anfrage")
+pruefe(any("SLS" in h for h in fremd.hinweise),
+       f"Hinweis auf das erwartete Format fehlt: {fremd.hinweise}")
 
+# Betreff ohne PLZ: die Phase wird gerettet, der Rest gemeldet.
+halb = sls.lies_sls(analyse.lies_eml(
+    b"From: a@b.de\r\nSubject: SLS - Anfrage zur F3 Vorbereitung\r\n"
+    b"Content-Type: text/plain; charset=utf-8\r\n\r\nText.\r\n",
+    "halb.eml",
+))
+pruefe(halb.phase == 3 and not halb.erkannt, f"nur Phase: {halb!r}")
+pruefe(any("Postleitzahl" in h for h in halb.hinweise),
+       f"Hinweis zur fehlenden PLZ: {halb.hinweise}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Die Modellantwort saeubern
-# ─────────────────────────────────────────────────────────────────────────────
-
-print("== Modellantwort saeubern ==")
-
-angaben = analyse.zu_angaben({
-    "auftraggeber": "  Muster Restaurantbetriebe GmbH ",
-    "standort_name": "Aachen Europaplatz",
-    "standort_adresse": "Europaplatz 1, 52068 Aachen",
-    "standort_ort": "Aachen",
-    "leistungsphase": 6,
-    "eckdaten": [
-        {"bezeichnung": "Bestellnummer", "wert": "4711-2026"},
-        {"bezeichnung": "", "wert": "wird verworfen"},
-        {"bezeichnung": "Baubeginn", "wert": "15.10.2026"},
-    ],
-    "hinweise": ["Der Baubeginn ist als 'vorgesehen' formuliert."],
-})
-pruefe(angaben.auftraggeber == "Muster Restaurantbetriebe GmbH",
-       f"Auftraggeber nicht getrimmt: {angaben.auftraggeber!r}")
-pruefe(angaben.leistungsphase == 6, f"Phase: {angaben.leistungsphase!r}")
-pruefe(angaben.eckdaten == {"Bestellnummer": "4711-2026",
-                            "Baubeginn": "15.10.2026"},
-       f"Eckdaten: {angaben.eckdaten!r}")
-pruefe(len(angaben.hinweise) == 1, f"Hinweise: {angaben.hinweise!r}")
-
-# Eine Phase, die es nicht gibt, wird verworfen und gemeldet — nicht gesetzt.
-kaputt = analyse.zu_angaben({"leistungsphase": 12, "standort_name": "X"})
-pruefe(kaputt.leistungsphase is None, "Phase 12 haette nicht gelten duerfen")
-pruefe(any("12" in h for h in kaputt.hinweise),
-       f"Hinweis zur ungueltigen Phase fehlt: {kaputt.hinweise}")
-
-keine_zahl = analyse.zu_angaben({"leistungsphase": "sechs"})
-pruefe(keine_zahl.leistungsphase is None, "'sechs' haette nicht gelten duerfen")
-
-# Fehlt der Ort, wird er aus der Adresse abgeleitet — mit Hinweis.
-abgeleitet = analyse.zu_angaben({
-    "standort_adresse": "Große Bergstraße 160, 22767 Hamburg",
-    "standort_ort": "",
-})
-pruefe(abgeleitet.standort_ort == "Hamburg",
-       f"Ort nicht abgeleitet: {abgeleitet.standort_ort!r}")
-pruefe(any("abgeleitet" in h for h in abgeleitet.hinweise),
-       f"Hinweis zur Ableitung fehlt: {abgeleitet.hinweise}")
+# Datumsschreibweisen
+pruefe(sls.lies_datum("04.09.2026") == date(2026, 9, 4), "Ziffern DE")
+pruefe(sls.lies_datum("4.9.26") == date(2026, 9, 4), "zweistelliges Jahr")
+pruefe(sls.lies_datum("21 August 2026") == date(2026, 8, 21), "Text EN")
+pruefe(sls.lies_datum("21. August 2026") == date(2026, 8, 21), "Text DE")
+pruefe(sls.lies_datum("Freitag, 21. Dezember 2026") == date(2026, 12, 21),
+       "Text DE mit Wochentag")
+pruefe(sls.lies_datum("31.02.2026") is None, "31. Februar gibt es nicht")
+pruefe(sls.lies_datum("") is None, "leer")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. UNLOCODE: Ortsnamen vergleichbar machen und nachschlagen
+# 2. Die beiden Textfassungen
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("== Einzelabruf-Texte ==")
+
+pruefe(
+    brief.betreff(beauftragung=date(2026, 8, 25), unlocode="NIV", phase=1,
+                  kuerzel="KOCKS")
+    == "260825_NSO_NIV_Beauftragung Phase 1 KOCKS",
+    "Betreff KOCKS",
+)
+pruefe(
+    brief.betreff(beauftragung=date(2026, 8, 25), unlocode="niv", phase=1,
+                  kuerzel="rka")
+    == "260825_NSO_NIV_Beauftragung Phase 1 RKA",
+    "Betreff kleingeschrieben wird gross",
+)
+pruefe(
+    "_XXX_" in brief.betreff(beauftragung=date(2026, 8, 25), unlocode="",
+                             phase=1, kuerzel="RKA"),
+    "fehlender Code muesste als XXX sichtbar sein",
+)
+
+termine = dict(phase=1, projekt="Nievern",
+               leistungsbeginn=date(2026, 8, 21),
+               projektplanung=date(2026, 9, 4),
+               klaerung=date(2026, 8, 31),
+               abgabe=date(2026, 9, 4))
+kocks = brief.aus_daten(variante="kocks", anrede="Sehr geehrter Herr Hömmerich,",
+                        firma="Kocks Consult",
+                        angebot_datum=date(2026, 2, 27), **termine)
+rka = brief.aus_daten(variante="rka", anrede="Sehr geehrte Frau Ammon,",
+                      firma="RKA Architekten Ammon & Kanthak PartGmbB",
+                      angebot_datum=date(2026, 3, 12), **termine)
+
+# Was in beiden gleich stehen muss
+for name, text in (("KOCKS", kocks), ("RKA", rka)):
+    pruefe("HPP Generalplanung GmbH" in text, f"{name}: Auftraggeber fehlt")
+    pruefe("Zollhof 26, 40221 Düsseldorf" in text, f"{name}: Anschrift fehlt")
+    pruefe("Herr Ricardo da Costa" in text, f"{name}: Ansprechpartner fehlt")
+    pruefe("Projekt: Nievern" in text, f"{name}: Projektzeile fehlt")
+    pruefe("Leistungsbeginn: 21.08.2026" in text, f"{name}: Leistungsbeginn")
+    pruefe("Abgabe Phase 1: 04.09.2026" in text, f"{name}: Abgabe")
+    pruefe("einen Einzelauftrag für die Phase 1" in text, f"{name}: Phasensatz")
+    pruefe("Bitte bestätigen Sie uns den Erhalt" in text, f"{name}: Schluss")
+    pruefe("Mit freundlichen Grüßen" in text, f"{name}: Grussformel")
+    pruefe("(" not in text.replace("(Phase", ""), f"{name}: Klammern im Text")
+
+# Die Unterschiede — das ist der eigentliche Zweck der zwei Fassungen
+pruefe("Kocks Consult" in kocks, "KOCKS: Firmenname")
+pruefe("gemäß ihrem Angebot vom 27.02.2026" in kocks, "KOCKS: Angebotsdatum")
+pruefe("Erstellung der Projektplanung: 04.09.2026" in kocks,
+       "KOCKS: Projektplanungszeile fehlt")
+pruefe("Bauordnungsrecht durch RKA: 31.08.2026" in kocks,
+       "KOCKS: Klaerung muesste 'durch RKA' nennen")
+
+pruefe("RKA Architekten Ammon & Kanthak PartGmbB" in rka, "RKA: Firmenname")
+pruefe("gemäß ihrem Angebot vom 12.03.2026" in rka, "RKA: Angebotsdatum")
+pruefe("Erstellung der Projektplanung" not in rka,
+       "RKA: darf KEINE Projektplanungszeile haben")
+pruefe("Bauordnungsrecht: 31.08.2026" in rka
+       and "durch RKA" not in rka,
+       "RKA: Klaerung ohne 'durch RKA'")
+
+# Fehlende Termine werden sichtbar, nicht weggelassen
+lueckenhaft = brief.aus_daten(
+    variante="kocks", anrede="Sehr geehrte Damen und Herren,", firma="X",
+    phase=1, angebot_datum=None, projekt="Y", leistungsbeginn=None,
+    projektplanung=None, klaerung=None, abgabe=None,
+)
+pruefe(lueckenhaft.count("___") >= 4,
+       "fehlende Termine muessten als ___ auffallen")
+
+# Unbekannte Fassung faellt auf die schlichtere zurueck, statt zu krachen
+pruefe("Erstellung der Projektplanung" not in brief.text(
+    "gibtsnicht", brief.Werte(
+        anrede="A", firma="B", phase=1, angebot_datum="1", projekt="C",
+        leistungsbeginn="2", projektplanung="3", klaerung="4", abgabe="5")),
+    "unbekannte Fassung muesste die RKA-Fassung nehmen")
+
+pruefe(brief.klaerungstermin(date(2026, 8, 25)) == date(2026, 8, 28),
+       f"Klaerung +3: {brief.klaerungstermin(date(2026, 8, 25))}")
+pruefe(brief.ablagepfad("090_VAA_Kocks")
+       == "18-GP/12_Verträge/02_Subplaner/090_VAA_Kocks/02_Vertrag",
+       "Ablagepfad KOCKS")
+pruefe(brief.dateiname("260825_NSO_NIV_Beauftragung Phase 1 KOCKS")
+       == "260825_NSO_NIV_Beauftragung Phase 1 KOCKS.eml", "Dateiname")
+pruefe("/" not in brief.dateiname("A/B:C"), "verbotene Zeichen im Dateinamen")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Die Musterstruktur
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("== Musterstruktur ==")
+
+pruefe(len(UNTERORDNER) == 163, f"Anzahl Unterordner: {len(UNTERORDNER)}")
+pruefe(len(set(UNTERORDNER)) == len(UNTERORDNER), "Dubletten in der Liste")
+pruefe(len(MUSTERDATEIEN) == 5, f"Anzahl Vorlagendateien: {len(MUSTERDATEIEN)}")
+
+# Die Ordner, an denen der ganze Ablauf haengt
+for pflicht in (
+    "18-GP/12_Verträge/02_Subplaner/090_VAA_Kocks/02_Vertrag",
+    "18-GP/12_Verträge/02_Subplaner/010_OPG_ARC_RKA/02_Vertrag",
+    "18-GP/12_Verträge/01_Generalplaner/02_Vertrag",
+    "PHASE 0", "PHASE 1", "PHASE 2", "PHASE 3", "PHASE 4 & 5",
+    "PHASE 1/02_Checkliste, Behörde/Kampfmittelfreiheit",
+    "PHASE 3/02_Behörden/01_Bauantrag/JJMMTT_Nachforderung/JJMMTT_Eingang",
+):
+    pruefe(pflicht in UNTERORDNER, f"fehlt in der Liste: {pflicht}")
+
+# Jeder Pfad muss einen Elternteil haben — sonst ist die Liste lueckenhaft
+for eintrag in UNTERORDNER:
+    if "/" in eintrag:
+        eltern = eintrag.rsplit("/", 1)[0]
+        pruefe(eltern in UNTERORDNER, f"Elternordner fehlt zu: {eintrag}")
+
+# Abgleich mit dem echten Ordner, wenn er hier liegt (siehe Modultext des
+# Dienstes: der Ordner ist die Wahrheit, die Liste nur die Notfassung).
+if ECHTER_MUSTER.is_dir():
+    echt = {p.relative_to(ECHTER_MUSTER).as_posix()
+            for p in ECHTER_MUSTER.rglob("*") if p.is_dir()}
+    liste = set(UNTERORDNER)
+    pruefe(echt == liste,
+           f"Liste weicht vom Musterordner ab: nur im Ordner "
+           f"{sorted(echt - liste)[:3]}, nur in der Liste "
+           f"{sorted(liste - echt)[:3]}")
+    echte_dateien = {p.relative_to(ECHTER_MUSTER).as_posix()
+                     for p in ECHTER_MUSTER.rglob("*") if p.is_file()}
+    pruefe(echte_dateien == set(MUSTERDATEIEN),
+           f"Dateiliste weicht ab: {sorted(echte_dateien ^ set(MUSTERDATEIEN))}")
+    print(f"   (gegen den echten Musterordner geprueft: {len(echt)} Ordner)")
+else:
+    print("   (Musterordner nicht auf diesem Rechner — Abgleich uebersprungen)")
+
+pruefe(ordner_dienst.ordnername("NIV", "Nievern") == "NIV_Nievern", "Ordnername")
+pruefe(ordner_dienst.ordnername(None, "Nievern") == "XXX_Nievern",
+       "Ordnername ohne Code")
+pruefe(ordner_dienst.ordnername("niv", "Nievern") == "NIV_Nievern",
+       "Code wird gross geschrieben")
+pruefe(ordner_dienst.ordnername("HAM", 'Köln Ring / Nord: "neu"')
+       == "HAM_Köln Ring Nord neu", "verbotene Zeichen")
+pruefe(ordner_dienst.saubere_bezeichnung("Nievern.") == "Nievern",
+       "Punkt am Ende (Windows verschluckt ihn sonst)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. UNLOCODE
 # ─────────────────────────────────────────────────────────────────────────────
 
 print("== UNLOCODE ==")
 
-pruefe(unlocode.normalisiere("München") == "muenchen",
-       f"normalisiere Muenchen: {unlocode.normalisiere('München')!r}")
-pruefe(unlocode.normalisiere("Frankfurt am Main") == "frankfurtammain",
-       "normalisiere Frankfurt")
-pruefe(unlocode.normalisiere("Baden-Baden") == "badenbaden",
-       "normalisiere Baden-Baden")
-pruefe(unlocode.normalisiere("  ") == "", "normalisiere Leerraum")
-
-pruefe(unlocode.ort_aus_adresse("Europaplatz 1, 52068 Aachen") == "Aachen",
-       "ort_aus_adresse mit PLZ")
-pruefe(unlocode.ort_aus_adresse("Musterweg 3\n20095 Hamburg\nDeutschland")
-       == "Hamburg", "ort_aus_adresse mit Land")
-pruefe(unlocode.ort_aus_adresse("Musterweg 3") == "",
-       "ort_aus_adresse ohne Ort muesste leer sein")
-pruefe(unlocode.ort_aus_adresse("") == "", "ort_aus_adresse leer")
+pruefe(unlocode.normalisiere("München") == "muenchen", "Umlaut-Umschrift")
+pruefe(unlocode.normalisiere("Baden-Baden") == "badenbaden", "Bindestrich")
+pruefe(unlocode.ort_aus_adresse("Auf d. Lay, 56132 Nievern") == "Nievern",
+       "ort_aus_adresse")
 
 db = SessionLocal()
 try:
-    # Ohne Tabelle darf nichts gefunden werden — und nichts krachen.
-    pruefe(unlocode.anzahl_eintraege(db) == 0, "Tabelle muesste leer starten")
-    pruefe(unlocode.ermittle(db, "Aachen") is None,
+    db.query(UnlocodeEintrag).delete()
+    db.commit()
+    pruefe(unlocode.ermittle(db, "Nievern") is None,
            "ohne Tabelle darf es keinen Treffer geben")
 
-    # Ein kleiner Bestand, gebaut wie der Upload ihn anlegt.
     db.bulk_insert_mappings(UnlocodeEintrag, [
-        {"code": "AAH", "ort": "Aachen", "ort_normal": unlocode.normalisiere("Aachen"),
-         "bundesland": "Nordrhein-Westfalen"},
-        {"code": "AAC", "ort": "Aach", "ort_normal": unlocode.normalisiere("Aach"),
-         "bundesland": "Baden-Württemberg"},
-        {"code": "A2H", "ort": "Aach", "ort_normal": unlocode.normalisiere("Aach"),
+        {"code": "NIV", "ort": "Nievern",
+         "ort_normal": unlocode.normalisiere("Nievern"),
          "bundesland": "Rheinland-Pfalz"},
-        {"code": "HAM", "ort": "Hamburg", "ort_normal": unlocode.normalisiere("Hamburg"),
-         "bundesland": "Hamburg"},
-        {"code": "MUC", "ort": "München", "ort_normal": unlocode.normalisiere("München"),
-         "bundesland": "Bayern"},
+        {"code": "HAM", "ort": "Hamburg",
+         "ort_normal": unlocode.normalisiere("Hamburg"), "bundesland": "Hamburg"},
+        {"code": "MUC", "ort": "München",
+         "ort_normal": unlocode.normalisiere("München"), "bundesland": "Bayern"},
+        {"code": "AAC", "ort": "Aach",
+         "ort_normal": unlocode.normalisiere("Aach"),
+         "bundesland": "Baden-Württemberg"},
+        {"code": "A2H", "ort": "Aach",
+         "ort_normal": unlocode.normalisiere("Aach"),
+         "bundesland": "Rheinland-Pfalz"},
     ])
     db.commit()
 
-    pruefe(unlocode.anzahl_eintraege(db) == 5,
-           f"Anzahl: {unlocode.anzahl_eintraege(db)}")
-
-    treffer = unlocode.ermittle(db, "Aachen")
-    pruefe(treffer is not None and treffer.code == "AAH" and treffer.art == "exakt",
-           f"exakter Treffer Aachen: {treffer!r}")
-
-    # Umlaut-Umschrift: So schreibt man es in Mails, so steht es nicht in der
-    # Tabelle — und muss trotzdem treffen.
-    treffer = unlocode.ermittle(db, "Muenchen")
-    pruefe(treffer is not None and treffer.code == "MUC",
-           f"Muenchen -> MUC: {treffer!r}")
-
-    # Mehrdeutiger Ortsname: Das Bundesland entscheidet.
-    treffer = unlocode.ermittle(db, "Aach", "Rheinland-Pfalz")
-    pruefe(treffer is not None and treffer.code == "A2H",
-           f"Aach mit Bundesland: {treffer!r}")
-    treffer = unlocode.ermittle(db, "Aach")
-    pruefe(treffer is not None and treffer.code in ("AAC", "A2H"),
-           f"Aach ohne Bundesland: {treffer!r}")
-
-    # Stadtteil: "Hamburg-Ottensen" steht so in keiner amtlichen Liste.
-    treffer = unlocode.ermittle(db, "Hamburg-Ottensen")
-    pruefe(treffer is not None and treffer.code == "HAM"
-           and treffer.art == "unscharf",
-           f"Hamburg-Ottensen: {treffer!r}")
-
-    # Tippfehler: unscharf, aber gefunden — und als unscharf gekennzeichnet.
-    treffer = unlocode.ermittle(db, "Aachne")
-    pruefe(treffer is not None and treffer.code == "AAH"
-           and treffer.art == "unscharf" and treffer.guete < 1.0,
-           f"Tippfehler Aachne: {treffer!r}")
-
-    # Was gar nicht passt, wird nicht erfunden.
-    pruefe(unlocode.ermittle(db, "Zzzzville") is None,
-           "Zzzzville darf keinen Treffer liefern")
-    pruefe(unlocode.ermittle(db, "") is None, "leerer Ort darf nichts liefern")
-
-    pruefe(unlocode.ermittle_unlocode(db, "Aachen") == "AAH",
-           "ermittle_unlocode Kurzform")
+    treffer = unlocode.ermittle(db, "Nievern")
+    pruefe(treffer is not None and treffer.code == "NIV"
+           and treffer.art == "exakt", f"Nievern -> NIV: {treffer!r}")
+    pruefe(unlocode.ermittle(db, "Muenchen").code == "MUC", "Muenchen -> MUC")
+    pruefe(unlocode.ermittle(db, "Aach", "Rheinland-Pfalz").code == "A2H",
+           "Bundesland entscheidet bei Gleichnamigen")
+    unscharf = unlocode.ermittle(db, "Nievren")
+    pruefe(unscharf is not None and unscharf.code == "NIV"
+           and unscharf.art == "unscharf", f"Tippfehler: {unscharf!r}")
+    pruefe(unlocode.ermittle(db, "Zzzzville") is None, "Zzzzville")
 finally:
     db.close()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Ordnername und Ordneranlage ohne Konfiguration
-# ─────────────────────────────────────────────────────────────────────────────
-
-print("== Ordner ==")
-
-pruefe(ordner_dienst.ordnername("AAH", "Aachen Europaplatz")
-       == "AAH_Aachen Europaplatz", "Ordnername")
-pruefe(ordner_dienst.ordnername(None, "Aachen Europaplatz")
-       == "XXX_Aachen Europaplatz", "Ordnername ohne Code")
-pruefe(ordner_dienst.ordnername("aah", "Aachen") == "AAH_Aachen",
-       "Code wird gross geschrieben")
-# Zeichen, die Windows nicht zulaesst, duerfen nicht in den Pfad geraten.
-pruefe(ordner_dienst.ordnername("HAM", 'Köln Ring / Nord: "neu"')
-       == "HAM_Köln Ring Nord neu", f"verbotene Zeichen: "
-       f"{ordner_dienst.ordnername('HAM', 'Köln Ring / Nord: \"neu\"')!r}")
-pruefe(ordner_dienst.saubere_bezeichnung("Aachen  ") == "Aachen",
-       "Leerraum am Ende")
-pruefe(ordner_dienst.saubere_bezeichnung("Aachen.") == "Aachen",
-       "Punkt am Ende (Windows verschluckt ihn sonst)")
-pruefe(ordner_dienst.UNTERORDNER == [],
-       "UNTERORDNER ist noch der Platzhalter (siehe TODO McDonald's)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -278,197 +370,287 @@ pruefe(ordner_dienst.UNTERORDNER == [],
 print("== API ==")
 
 with TestClient(app) as c:
-    # ── Faehigkeiten: nichts konfiguriert, also alles aus ──
-    faehig = c.get("/api/mcdonalds/faehigkeiten")
-    pruefe(faehig.status_code == 200, f"faehigkeiten: {faehig.status_code}")
-    faehig = faehig.json()
-    pruefe(faehig["analyse"] is False, f"analyse muesste aus sein: {faehig}")
-    pruefe(faehig["ordner_h"] is False, f"ordner_h muesste aus sein: {faehig}")
-    pruefe(faehig["smtp"] is False, f"smtp muesste aus sein: {faehig}")
+    # ── Faehigkeiten ohne Laufwerk ──
+    faehig = c.get("/api/mcdonalds/faehigkeiten").json()
+    pruefe(faehig["ordner_laufwerk"] is False,
+           f"ordner_laufwerk muesste aus sein: {faehig}")
+    pruefe(faehig["unterordner"] == 163, f"unterordner: {faehig}")
+    pruefe(len(faehig["textvarianten"]) == 2, f"textvarianten: {faehig}")
 
-    # ── Fachplaner-Stammdaten ──
-    leer = c.get("/api/fachplaner")
-    pruefe(leer.status_code == 200 and leer.json() == [],
-           f"Fachplanerliste startet leer: {leer.text[:120]}")
+    # ── Startwerte: Kocks und RKA da, aber ohne Adresse ──
+    planer = c.get("/api/subplaner").json()
+    pruefe(len(planer) == 2, f"zwei Subplaner erwartet: {len(planer)}")
+    nach_kuerzel = {p["kuerzel"]: p for p in planer}
+    pruefe(set(nach_kuerzel) == {"KOCKS", "RKA"}, f"Kuerzel: {list(nach_kuerzel)}")
+    pruefe(all(p["phase"] == 1 for p in planer), "beide in Phase 1")
+    pruefe(nach_kuerzel["KOCKS"]["ordner"] == "090_VAA_Kocks",
+           f"KOCKS-Ordner: {nach_kuerzel['KOCKS']['ordner']!r}")
+    pruefe(nach_kuerzel["RKA"]["ordner"] == "010_OPG_ARC_RKA",
+           f"RKA-Ordner: {nach_kuerzel['RKA']['ordner']!r}")
+    pruefe(nach_kuerzel["KOCKS"]["angebot_datum"] == "2026-02-27",
+           f"KOCKS-Angebot: {nach_kuerzel['KOCKS']['angebot_datum']!r}")
+    pruefe(nach_kuerzel["RKA"]["angebot_datum"] == "2026-03-12",
+           f"RKA-Angebot: {nach_kuerzel['RKA']['angebot_datum']!r}")
+    pruefe("Hömmerich" in nach_kuerzel["KOCKS"]["anrede"],
+           f"KOCKS-Anrede: {nach_kuerzel['KOCKS']['anrede']!r}")
+    pruefe(all(p["emails"] == [] for p in planer),
+           "die Adressen duerfen NICHT geraten sein")
+    pruefe([p["phase"] for p in c.get("/api/subplaner?phase=1").json()] == [1, 1],
+           "Filter nach Phase")
+    pruefe(c.get("/api/subplaner?phase=2").json() == [], "Phase 2 ist leer")
 
-    angelegt = c.post("/api/fachplaner", json={
-        "name": "Ingenieurbüro Müller GmbH",
-        "ansprechpartner": "Frau Stark",
-        "email": "planung@mueller-ing.de",
-        "adresse": "Musterweg 3, 20095 Hamburg",
-    })
-    pruefe(angelegt.status_code == 201, f"Fachplaner anlegen: {angelegt.text[:200]}")
-    planer = angelegt.json()
-    pruefe(planer["name"] == "Ingenieurbüro Müller GmbH", f"Name: {planer}")
+    # ── SLS-Anfrage hochladen ──
+    st = c.post("/api/mcdonalds/standorte",
+                files={"datei": (FIXTURE.name, ROHDATEN, "message/rfc822")})
+    pruefe(st.status_code == 201, f"Upload: {st.status_code} {st.text[:200]}")
+    st = st.json()
+    sid = st["id"]
+    pruefe(st["sls_erkannt"] is True, f"sls_erkannt: {st}")
+    pruefe(st["analysiert_am"] is None,
+           "ohne KI-Notausgang darf kein Analysezeitpunkt stehen")
+    pruefe(st["phase"] == 1 and st["ort"] == "Nievern", f"Angaben: {st}")
+    pruefe(st["abgabetermin"] == "2026-09-04", f"Abgabe: {st}")
+    pruefe(st["leistungsbeginn"] == "2026-08-21", f"Beginn: {st}")
+    pruefe(st["sls_vorgang"] == "2535628", f"Vorgang: {st}")
+    pruefe("bis zum" in st["roh_text"], "roh_text nicht gespeichert")
 
-    # Zweiter Eintrag, um die alphabetische Sortierung zu pruefen.
-    zweiter = c.post("/api/fachplaner", json={
-        "name": "Achtern & Partner", "email": "buero@achtern.de",
-    }).json()
-    namen = [p["name"] for p in c.get("/api/fachplaner").json()]
-    pruefe(namen == sorted(namen), f"Fachplaner nicht alphabetisch: {namen}")
+    # Ohne Laufwerk: "vorbereitet", KEIN Fehler.
+    geladen = c.get(f"/api/mcdonalds/standorte/{sid}").json()
+    pruefe(geladen["ordner_status"] == "vorbereitet",
+           f"Status ohne Laufwerk: {geladen['ordner_status']!r}")
+    pruefe(geladen["ordner_name"] == "NIV_Nievern",
+           f"Ordnername: {geladen['ordner_name']!r}")
+    pruefe(geladen["unlocode"] == "NIV", f"Code: {geladen['unlocode']!r}")
+    pruefe(geladen["ordner_pfad"] is None, "kein Pfad ohne Laufwerk")
+    pruefe("Büronetz" in (geladen["fehlermeldung"] or ""),
+           f"Meldung erklaert das nicht: {geladen['fehlermeldung']!r}")
 
-    # Eine unbrauchbare Adresse wird abgelehnt — sie ist der Empfaenger des
-    # Entwurfs, ein Tippfehler faellt sonst erst in Outlook auf.
-    pruefe(c.post("/api/fachplaner",
-                  json={"name": "X", "email": "keine-adresse"}).status_code == 422,
-           "kaputte Mailadresse muesste 422 sein")
+    # ── Beauftragung ohne Adresse: abgelehnt, mit Grund ──
+    vor = c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen/vorschau",
+                 json={"phase": 1, "beauftragung_am": "2026-08-25"})
+    pruefe(vor.status_code == 200, f"Vorschau: {vor.text[:200]}")
+    vor = vor.json()
+    pruefe(len(vor) == 2, f"zwei Vorschauen erwartet: {len(vor)}")
+    pruefe(all(not v["bereit"] for v in vor), "ohne Adresse nicht bereit")
+    pruefe(all("E-Mail-Adresse" in v["hindernis"] for v in vor),
+           f"Hindernis benennt die Adresse nicht: {[v['hindernis'] for v in vor]}")
 
-    # Loeschen ohne Angebote geht.
-    pruefe(c.delete(f"/api/fachplaner/{zweiter['id']}").status_code == 204,
-           "Fachplaner ohne Angebote loeschen")
-    pruefe(c.delete("/api/fachplaner/99999").status_code == 404,
-           "unbekannter Fachplaner muesste 404 sein")
+    verweigert = c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen",
+                        json={"phase": 1})
+    pruefe(verweigert.status_code == 400,
+           f"Erzeugen ohne Adresse: {verweigert.status_code}")
+    pruefe(c.get(f"/api/mcdonalds/standorte/{sid}").json()["beauftragungen"] == [],
+           "es darf NICHTS halb erzeugt worden sein")
 
-    # ── Upload der .eml ohne Anthropic-Schluessel ──
-    #
-    # Der Fall des Buerorechners: Die Mail muss trotzdem ankommen, ihr Text
-    # gespeichert werden und ein Hinweis erscheinen.
-    hochgeladen = c.post(
-        "/api/mcdonalds/faelle",
-        files={"datei": (BEISPIEL_EML.name, rohdaten, "message/rfc822")},
+    # ── Adressen nachtragen ──
+    for kuerzel, adressen in (
+        ("KOCKS", ["hoemmerich@kocks-consult.de", "buero@kocks-consult.de"]),
+        ("RKA", ["ammon@rka-architekten.de"]),
+    ):
+        r = c.patch(f"/api/subplaner/{nach_kuerzel[kuerzel]['id']}",
+                    json={"emails": adressen})
+        pruefe(r.status_code == 200, f"PATCH {kuerzel}: {r.text[:150]}")
+        pruefe(r.json()["emails"] == adressen, f"{kuerzel}-Adressen: {r.json()}")
+
+    pruefe(c.patch(f"/api/subplaner/{nach_kuerzel['RKA']['id']}",
+                   json={"emails": ["keine-adresse"]}).status_code == 422,
+           "kaputte Adresse muesste 422 sein")
+
+    # ── Vorschau jetzt bereit, Texte stimmen ──
+    vor = c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen/vorschau",
+                 json={"phase": 1, "beauftragung_am": "2026-08-25"}).json()
+    pruefe(all(v["bereit"] for v in vor), f"jetzt bereit: {vor}")
+    nach_name = {v["subplaner_kuerzel"]: v for v in vor}
+    pruefe(nach_name["KOCKS"]["betreff"]
+           == "260825_NSO_NIV_Beauftragung Phase 1 KOCKS",
+           f"Betreff KOCKS: {nach_name['KOCKS']['betreff']!r}")
+    pruefe(nach_name["RKA"]["betreff"]
+           == "260825_NSO_NIV_Beauftragung Phase 1 RKA",
+           f"Betreff RKA: {nach_name['RKA']['betreff']!r}")
+    pruefe(nach_name["KOCKS"]["ablage"].endswith("090_VAA_Kocks/02_Vertrag"),
+           f"Ablage KOCKS: {nach_name['KOCKS']['ablage']!r}")
+    pruefe(nach_name["RKA"]["ablage"].endswith("010_OPG_ARC_RKA/02_Vertrag"),
+           f"Ablage RKA: {nach_name['RKA']['ablage']!r}")
+    pruefe("Erstellung der Projektplanung" in nach_name["KOCKS"]["text"],
+           "KOCKS-Fassung nicht benutzt")
+    pruefe("Erstellung der Projektplanung" not in nach_name["RKA"]["text"],
+           "RKA bekommt die falsche Fassung")
+    pruefe("Leistungsbeginn: 21.08.2026" in nach_name["KOCKS"]["text"],
+           "Leistungsbeginn aus der Mail nicht eingesetzt")
+    pruefe("Abgabe Phase 1: 04.09.2026" in nach_name["KOCKS"]["text"],
+           "Abgabetermin aus der Mail nicht eingesetzt")
+    # Klaerung ohne eigene Angabe = Beauftragung + 3
+    pruefe("Bauordnungsrecht durch RKA: 28.08.2026" in nach_name["KOCKS"]["text"],
+           "Klaerungsregel nicht angewandt")
+    # Eigene Angabe gewinnt
+    eigen = c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen/vorschau",
+                   json={"phase": 1, "beauftragung_am": "2026-08-25",
+                         "klaerung": "2026-08-31"}).json()
+    pruefe(all("31.08.2026" in v["text"] for v in eigen),
+           "eigener Klaerungstermin wurde nicht uebernommen")
+
+    # ── Erzeugen: zwei Entwuerfe als ZIP ──
+    r = c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen",
+               json={"phase": 1, "beauftragung_am": "2026-08-25"})
+    pruefe(r.status_code == 200, f"Erzeugen: {r.status_code} {r.text[:200]}")
+    pruefe(r.headers["content-type"].startswith("application/zip"),
+           f"MIME: {r.headers['content-type']}")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archiv:
+        namen = sorted(archiv.namelist())
+        pruefe(namen == ["260825_NSO_NIV_Beauftragung Phase 1 KOCKS.eml",
+                         "260825_NSO_NIV_Beauftragung Phase 1 RKA.eml"],
+               f"ZIP-Inhalt: {namen}")
+        mail = message_from_bytes(archiv.read(namen[0]), policy=policy.default)
+    pruefe(mail.get("X-Unsent") == "1",
+           "X-Unsent fehlt — Outlook zeigte die Datei sonst als empfangene Mail")
+    pruefe(mail.get("From") is None, "ein Entwurf darf keinen Absender tragen")
+    pruefe(mail.get("To") == "hoemmerich@kocks-consult.de, buero@kocks-consult.de",
+           f"To: {mail.get('To')!r}")
+    pruefe(not list(mail.iter_attachments()),
+           "der Einzelabruf ist der Mailtext und braucht keinen Anhang")
+    pruefe("Sehr geehrter Herr Hömmerich," in mail.get_content(),
+           "Anrede aus den Stammdaten fehlt")
+
+    # Am Standort haengen jetzt zwei Beauftragungen, ohne Ablage (kein Laufwerk)
+    detail = c.get(f"/api/mcdonalds/standorte/{sid}").json()
+    pruefe(len(detail["beauftragungen"]) == 2,
+           f"Beauftragungen am Standort: {len(detail['beauftragungen'])}")
+    pruefe(all(b["eml_pfad"] is None for b in detail["beauftragungen"]),
+           "ohne Laufwerk kann nichts abgelegt sein")
+    pruefe(all(b["mail_weg"] == "entwurf" for b in detail["beauftragungen"]),
+           "mail_weg muesste 'entwurf' sein")
+    pruefe(all(b["beauftragung_am"] == "2026-08-25"
+               for b in detail["beauftragungen"]), "Beauftragungsdatum gemerkt")
+
+    # Entwurf erneut holen — aus dem gespeicherten Wortlaut
+    erneut = c.get(
+        f"/api/mcdonalds/beauftragungen/{detail['beauftragungen'][0]['id']}/entwurf"
     )
-    pruefe(hochgeladen.status_code == 201,
-           f"EML-Upload: {hochgeladen.status_code} {hochgeladen.text[:250]}")
-    fall = hochgeladen.json()
-    pruefe(fall["quelle"] == "eml", f"quelle: {fall['quelle']!r}")
-    pruefe(fall["eml_dateiname"] == BEISPIEL_EML.name, f"Dateiname: {fall}")
-    pruefe("Leistungsphase 6" in fall["roh_text"], "roh_text nicht gespeichert")
-    pruefe(fall["anhaenge"] == ["Projekthandbuch_Anlage.pdf"],
-           f"Anhangnamen am Fall: {fall['anhaenge']}")
-    pruefe(fall["analysiert_am"] is None,
-           "ohne Schluessel darf kein Analysezeitpunkt stehen")
-    pruefe(any("Anthropic" in h or "von Hand" in h for h in fall["hinweise"]),
-           f"Hinweis zur fehlenden Analyse: {fall['hinweise']}")
+    pruefe(erneut.status_code == 200, f"Entwurf erneut: {erneut.status_code}")
+    pruefe(b"X-Unsent" in erneut.content, "X-Unsent fehlt beim erneuten Abruf")
 
-    fall_id = fall["id"]
+    # ── Subplaner mit Beauftragung bleibt stehen ──
+    geschuetzt = c.delete(f"/api/subplaner/{nach_kuerzel['KOCKS']['id']}")
+    pruefe(geschuetzt.status_code == 409,
+           f"Subplaner mit Einzelabruf: {geschuetzt.status_code}")
+    pruefe("Einzelabruf" in geschuetzt.text,
+           f"Meldung nennt die Einzelabrufe nicht: {geschuetzt.text[:200]}")
 
-    # Die Hintergrundaufgabe ist beim Verlassen des Aufrufs gelaufen: Ohne
-    # konfigurierten Basispfad muss der Fall auf "fehler" stehen — mit einer
-    # Meldung, die sagt, was zu tun ist. Genau das ist der Punkt: kein
-    # Absturz, kein ewiges "wird angelegt".
-    geladen = c.get(f"/api/mcdonalds/faelle/{fall_id}").json()
-    pruefe(geladen["ordner_status"] == "fehler",
-           f"ordner_status ohne Konfiguration: {geladen['ordner_status']!r}")
-    pruefe(geladen["ordner_pfad_h"] is None, f"pfad_h: {geladen['ordner_pfad_h']!r}")
-    pruefe("Basispfad H:" in (geladen["fehlermeldung"] or ""),
-           f"Meldung nennt den Basispfad nicht: {geladen['fehlermeldung']!r}")
-    pruefe("mcdonalds_ordner_h" in (geladen["fehlermeldung"] or ""),
-           f"Meldung sagt nicht, wo es einzutragen ist: {geladen['fehlermeldung']!r}")
-
-    # ── Angaben von Hand nachtragen ──
-    korrigiert = c.patch(f"/api/mcdonalds/faelle/{fall_id}", json={
-        "standort_name": "Aachen Europaplatz",
-        "standort_adresse": "Europaplatz 1, 52068 Aachen",
-        "standort_ort": "Aachen",
-        "auftraggeber": "Muster Restaurantbetriebe GmbH",
-        "leistungsphase": 6,
-        "eckdaten": {"Bestellnummer": "4711-2026"},
-    })
-    pruefe(korrigiert.status_code == 200, f"PATCH: {korrigiert.text[:200]}")
-    korrigiert = korrigiert.json()
-    pruefe(korrigiert["standort_name"] == "Aachen Europaplatz",
-           f"Standort nach PATCH: {korrigiert}")
-    pruefe(korrigiert["leistungsphase"] == 6, f"Phase nach PATCH: {korrigiert}")
-    pruefe(c.patch(f"/api/mcdonalds/faelle/{fall_id}",
-                   json={"leistungsphase": 12}).status_code == 422,
-           "Phase 12 muesste 422 sein")
-
-    # ── Jetzt mit konfiguriertem Basispfad: der Ordner entsteht wirklich ──
-    zielbasis = STORAGE / "H-Laufwerk"
-    zielbasis.mkdir(parents=True, exist_ok=True)
-    alt = settings.mcdonalds_basis_h
-    settings.mcdonalds_basis_h = str(zielbasis)
+    # ── Jetzt MIT Laufwerk und echter Struktur ──
+    settings.mcdonalds_basis_standorte = str(STORAGE / "STANDORTE")
+    if ECHTER_MUSTER.is_dir():
+        settings.mcdonalds_musterordner = str(ECHTER_MUSTER)
     try:
-        erneut = c.post(f"/api/mcdonalds/faelle/{fall_id}/ordner")
-        pruefe(erneut.status_code == 200, f"Ordner erneut: {erneut.text[:200]}")
-        erneut = erneut.json()
-        pruefe(erneut["ordner_status"] == "angelegt",
-               f"Status mit Basispfad: {erneut['ordner_status']!r} "
-               f"({erneut['fehlermeldung']!r})")
-        # Kein UNLOCODE-Bestand in dieser Datenbank -> XXX, mit Hinweis.
-        pruefe(erneut["ordner_name"].endswith("_Aachen Europaplatz"),
-               f"Ordnername: {erneut['ordner_name']!r}")
-        pruefe(Path(erneut["ordner_pfad_h"]).is_dir(),
-               f"Ordner nicht auf der Platte: {erneut['ordner_pfad_h']!r}")
-        # SharePoint ist nicht angebunden — das darf den Vorgang nicht kippen,
-        # muss aber sichtbar bleiben.
-        pruefe(erneut["ordner_pfad_sharepoint"] is None,
-               f"SharePoint-Pfad: {erneut['ordner_pfad_sharepoint']!r}")
-        pruefe("SharePoint" in (erneut["fehlermeldung"] or ""),
-               f"Hinweis auf SharePoint fehlt: {erneut['fehlermeldung']!r}")
+        neu = c.post(f"/api/mcdonalds/standorte/{sid}/ordner").json()
+        pruefe(neu["ordner_status"] == "angelegt",
+               f"Status mit Laufwerk: {neu['ordner_status']!r} "
+               f"({neu['fehlermeldung']!r})")
+        wurzel = Path(neu["ordner_pfad"])
+        pruefe(wurzel.is_dir() and wurzel.name == "NIV_Nievern",
+               f"Ordner: {neu['ordner_pfad']!r}")
+        pruefe(neu["ordner_anzahl"] == 163,
+               f"Unterordner angelegt: {neu['ordner_anzahl']}")
+        for pflicht in (
+            "18-GP/12_Verträge/02_Subplaner/090_VAA_Kocks/02_Vertrag",
+            "18-GP/12_Verträge/02_Subplaner/010_OPG_ARC_RKA/02_Vertrag",
+            "PHASE 3/02_Behörden/01_Bauantrag/JJMMTT_Nachforderung/JJMMTT_Eingang",
+            "PHASE 4 & 5/09_Gewährleistung",
+        ):
+            pruefe((wurzel / pflicht).is_dir(), f"Ordner fehlt: {pflicht}")
 
-        # Ein zweiter Aufruf darf nicht scheitern (exist_ok).
-        pruefe(c.post(f"/api/mcdonalds/faelle/{fall_id}/ordner").status_code == 200,
+        # Zweiter Aufruf darf nicht scheitern (Struktur ergaenzen)
+        pruefe(c.post(f"/api/mcdonalds/standorte/{sid}/ordner").status_code == 200,
                "zweiter Ordner-Aufruf muesste durchgehen")
+
+        # Beauftragungen erneut: jetzt landen sie im Vertragsordner
+        c.post(f"/api/mcdonalds/standorte/{sid}/beauftragungen",
+               json={"phase": 1, "beauftragung_am": "2026-08-25"})
+        abgelegt = sorted(p.relative_to(wurzel).as_posix()
+                          for p in wurzel.rglob("*.eml"))
+        pruefe(len(abgelegt) == 2, f"abgelegte Entwuerfe: {abgelegt}")
+        pruefe(any("090_VAA_Kocks/02_Vertrag" in a for a in abgelegt),
+               f"KOCKS nicht im Vertragsordner: {abgelegt}")
+        pruefe(any("010_OPG_ARC_RKA/02_Vertrag" in a for a in abgelegt),
+               f"RKA nicht im Vertragsordner: {abgelegt}")
     finally:
-        settings.mcdonalds_basis_h = alt
+        settings.mcdonalds_basis_standorte = ""
+        settings.mcdonalds_musterordner = ""
 
-    # ── Telefonische Beauftragung ──
-    telefon = c.post("/api/mcdonalds/faelle/manuell", json={
-        "standort_name": "Hamburg Altona",
-        "standort_adresse": "Große Bergstraße 160, 22767 Hamburg",
-        "auftraggeber": "Muster Restaurantbetriebe GmbH",
-        "leistungsphase": 8,
-        "notiz": "Anruf Herr Weber, 04.09.2026",
+    # ── Korrigieren ──
+    korrigiert = c.patch(f"/api/mcdonalds/standorte/{sid}",
+                         json={"standort_name": "Nievern Auf d. Lay",
+                               "phase": 2})
+    pruefe(korrigiert.status_code == 200, f"PATCH: {korrigiert.text[:200]}")
+    pruefe(korrigiert.json()["standort_name"] == "Nievern Auf d. Lay",
+           f"Name nach PATCH: {korrigiert.json()['standort_name']!r}")
+    pruefe(c.patch(f"/api/mcdonalds/standorte/{sid}",
+                   json={"phase": 7}).status_code == 422,
+           "Phase 7 muesste 422 sein")
+
+    # ── Von Hand erfassen ──
+    hand = c.post("/api/mcdonalds/standorte/manuell", json={
+        "ort": "Hamburg", "plz": "20095", "strasse": "Ballindamm 1",
+        "phase": 1, "notiz": "Anruf Herr Weber, 10.09.2026",
     })
-    pruefe(telefon.status_code == 201, f"manuell: {telefon.text[:200]}")
-    telefon = telefon.json()
-    pruefe(telefon["quelle"] == "telefon", f"quelle: {telefon['quelle']!r}")
-    # Der Ort war nicht angegeben und wird aus der Adresse abgeleitet.
-    pruefe(telefon["standort_ort"] == "Hamburg",
-           f"Ort nicht abgeleitet: {telefon['standort_ort']!r}")
-    pruefe(telefon["roh_text"] == "Anruf Herr Weber, 04.09.2026",
-           f"Notiz nicht gespeichert: {telefon['roh_text']!r}")
-    pruefe(telefon["analysiert_am"] is None,
-           "Handeingabe ist keine Analyse")
+    pruefe(hand.status_code == 201, f"manuell: {hand.text[:200]}")
+    hand = hand.json()
+    pruefe(hand["quelle"] == "manuell" and hand["sls_erkannt"] is False,
+           f"Quelle: {hand}")
+    pruefe(hand["standort_name"] == "Hamburg", "Name aus dem Ort vorbelegt")
+    pruefe(c.post("/api/mcdonalds/standorte/manuell",
+                  json={"ort": ""}).status_code == 422,
+           "leerer Ort muesste 422 sein")
 
-    # Ohne Standort geht es nicht — der Ordner haette keinen Namen.
-    pruefe(c.post("/api/mcdonalds/faelle/manuell",
-                  json={"standort_name": ""}).status_code == 422,
-           "leerer Standort muesste 422 sein")
+    # ── Phase ohne Subplaner ──
+    leer = c.post(f"/api/mcdonalds/standorte/{hand['id']}/beauftragungen",
+                  json={"phase": 3})
+    pruefe(leer.status_code == 400, f"Phase 3 ohne Subplaner: {leer.status_code}")
+    pruefe("Stammdaten" in leer.text or "Subplaner" in leer.text,
+           f"Meldung nennt die Stammdaten nicht: {leer.text[:200]}")
 
-    # ── UNLOCODE-Tabelle hochladen ──
-    #
-    # Gebaut wie die Anlage des Buerohandbuchs: Titelzeilen ueber der Tabelle,
-    # Kopfzeile erst in Zeile 4. Genau das muss der Leser finden.
-    def baue_xlsx(zeilen: list[list[str]]) -> bytes:
+    # ── Einen Subplaner in Phase 2 anlegen ──
+    neuer = c.post("/api/subplaner", json={
+        "phase": 2, "name": "Imagine Structure GmbH", "kuerzel": "TWP",
+        "ordner": "030_TWP_Imagine Structure",
+        "ansprechpartner": "Herr Meyer",
+        "anrede": "Sehr geehrter Herr Meyer,",
+        "emails": ["meyer@imagine-structure.de"],
+        "angebot_datum": "2026-05-04", "textvariante": "rka", "sortierung": 1,
+    })
+    pruefe(neuer.status_code == 201, f"Phase-2-Subplaner: {neuer.text[:200]}")
+    pruefe(len(c.get("/api/subplaner?phase=2").json()) == 1, "jetzt einer in Phase 2")
+    pruefe(c.delete(f"/api/subplaner/{neuer.json()['id']}").status_code == 204,
+           "Subplaner ohne Einzelabruf loeschen")
+    pruefe(c.delete("/api/subplaner/99999").status_code == 404,
+           "unbekannter Subplaner muesste 404 sein")
+
+    # ── UNLOCODE-Upload ueber das API ──
+    def baue_xlsx(zeilen):
         """Eine minimale .xlsx mit Inline-Zeichenketten."""
-        import io
-        import zipfile
         from xml.sax.saxutils import escape
 
-        def spalte(nummer: int) -> str:
+        def spalte(nummer):
             name = ""
             while nummer >= 0:
                 name = chr(ord("A") + nummer % 26) + name
                 nummer = nummer // 26 - 1
             return name
 
-        xml_zeilen = []
+        xml = []
         for i, zeile in enumerate(zeilen, start=1):
             zellen = "".join(
                 f'<c r="{spalte(j)}{i}" t="inlineStr"><is><t>{escape(str(w))}'
                 f"</t></is></c>"
                 for j, w in enumerate(zeile) if str(w) != ""
             )
-            xml_zeilen.append(f'<row r="{i}">{zellen}</row>')
-
-        blatt = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            '<worksheet xmlns="http://schemas.openxmlformats.org/'
-            'spreadsheetml/2006/main"><sheetData>'
-            + "".join(xml_zeilen)
-            + "</sheetData></worksheet>"
-        )
-        mappe = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            '<workbook xmlns="http://schemas.openxmlformats.org/'
-            'spreadsheetml/2006/main"><sheets>'
-            '<sheet name="UNLOCODE_DE" sheetId="1" r:id="rId1" '
-            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/'
-            '2006/relationships"/></sheets></workbook>'
-        )
+            xml.append(f'<row r="{i}">{zellen}</row>')
+        ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        blatt = (f'<?xml version="1.0"?><worksheet xmlns="{ns}"><sheetData>'
+                 + "".join(xml) + "</sheetData></worksheet>")
+        mappe = (f'<?xml version="1.0"?><workbook xmlns="{ns}"><sheets>'
+                 '<sheet name="UNLOCODE_DE" sheetId="1" r:id="rId1" '
+                 'xmlns:r="http://schemas.openxmlformats.org/'
+                 'officeDocument/2006/relationships"/></sheets></workbook>')
         puffer = io.BytesIO()
         with zipfile.ZipFile(puffer, "w") as archiv:
             archiv.writestr("xl/workbook.xml", mappe)
@@ -480,188 +662,39 @@ with TestClient(app) as c:
         ["Quelle:", "https://service.unece.org/trade/locode/de.htm"],
         [],
         ["UNLOCODE", "Ort", "Bundesland", "Coordinates", "Remarks"],
-        ["AAH", "Aachen", "Nordrhein-Westfalen", "5046N 00605E", ""],
+        ["NIV", "Nievern", "Rheinland-Pfalz", "5023N 00745E", ""],
         ["HAM", "Hamburg", "Hamburg", "5333N 00958E", ""],
-        ["MUC", "München", "Bayern", "", ""],
         ["", "Zeile ohne Code", "", "", ""],
     ])
-
-    geladen = c.post(
-        "/api/mcdonalds/unlocode-tabelle",
-        files={"datei": ("anlage.xlsx", tabelle,
-                         "application/vnd.openxmlformats-officedocument"
-                         ".spreadsheetml.sheet")},
-    )
-    pruefe(geladen.status_code == 200,
-           f"UNLOCODE-Upload: {geladen.status_code} {geladen.text[:250]}")
-    geladen = geladen.json()
-    pruefe(geladen["eingelesen"] == 3, f"eingelesen: {geladen}")
-    pruefe(geladen["uebersprungen"] == 1, f"uebersprungen: {geladen}")
-    pruefe(geladen["blatt"] == "UNLOCODE_DE", f"blatt: {geladen}")
-
-    nachgeschlagen = c.get("/api/mcdonalds/unlocode?ort=Aachen")
-    pruefe(nachgeschlagen.status_code == 200,
-           f"Nachschlagen: {nachgeschlagen.text[:200]}")
-    pruefe(nachgeschlagen.json()["code"] == "AAH",
-           f"Code: {nachgeschlagen.json()}")
-    pruefe(c.get("/api/mcdonalds/unlocode?ort=Zzzzville").status_code == 404,
+    geladen = c.post("/api/mcdonalds/unlocode-tabelle",
+                     files={"datei": ("anlage.xlsx", tabelle,
+                                      "application/vnd.ms-excel")})
+    pruefe(geladen.status_code == 200, f"Upload: {geladen.text[:200]}")
+    pruefe(geladen.json()["eingelesen"] == 2, f"eingelesen: {geladen.json()}")
+    pruefe(geladen.json()["uebersprungen"] == 1, f"uebersprungen: {geladen.json()}")
+    pruefe(c.get("/api/mcdonalds/unlocode?ort=Nievern").json()["code"] == "NIV",
+           "Nachschlagen ueber das API")
+    pruefe(c.get("/api/mcdonalds/unlocode?ort=Zzzz").status_code == 404,
            "unbekannter Ort muesste 404 sein")
-
-    # Keine Excel-Datei: sprechende Meldung statt Rohfehler.
     kaputt = c.post("/api/mcdonalds/unlocode-tabelle",
-                    files={"datei": ("nicht.xlsx", b"kein zip", "application/octet")})
-    pruefe(kaputt.status_code == 400, f"kaputte Datei: {kaputt.status_code}")
-    pruefe(".xlsx" in kaputt.text, f"Meldung nennt das Format nicht: {kaputt.text[:200]}")
+                    files={"datei": ("x.xlsx", b"kein zip", "application/octet")})
+    pruefe(kaputt.status_code == 400 and ".xlsx" in kaputt.text,
+           f"kaputte Datei: {kaputt.status_code} {kaputt.text[:150]}")
 
-    # Jetzt greift der Abgleich: der Ordner bekommt einen echten Code.
-    settings.mcdonalds_basis_h = str(STORAGE / "H-Laufwerk")
-    try:
-        mit_code = c.post(f"/api/mcdonalds/faelle/{telefon['id']}/ordner").json()
-        pruefe(mit_code["unlocode"] == "HAM", f"UNLOCODE am Fall: {mit_code}")
-        pruefe(mit_code["ordner_name"] == "HAM_Hamburg Altona",
-               f"Ordnername mit Code: {mit_code['ordner_name']!r}")
-    finally:
-        settings.mcdonalds_basis_h = ""
+    # ── Loeschen ──
+    pruefe(c.delete(f"/api/mcdonalds/standorte/{hand['id']}").status_code == 204,
+           "Standort loeschen")
+    pruefe(c.get(f"/api/mcdonalds/standorte/{hand['id']}").status_code == 404,
+           "geloeschter Standort muesste 404 sein")
+    pruefe(c.get("/api/mcdonalds/standorte/99999").status_code == 404,
+           "unbekannter Standort muesste 404 sein")
+    pruefe((STORAGE / "STANDORTE" / "NIV_Nievern").is_dir(),
+           "der Ordner im Projektlaufwerk darf nicht mitgeloescht werden")
 
-    # ── Angebot anlegen ──
-    angebot = c.post(f"/api/mcdonalds/faelle/{fall_id}/angebote", json={
-        "fachplaner_id": planer["id"],
-        "betreff": "Beauftragung Aachen Europaplatz",
-        "angaben": {"Honorarzone": "III", "Anrechenbare Kosten": "480.000 €"},
-        "mehrleistungen": [
-            {"bezeichnung": "Zusätzliche Bestandsaufnahme", "betrag": 2400.0},
-            {"bezeichnung": "Nachtragsprüfung", "betrag": None},
-            {"bezeichnung": "   ", "betrag": 99.0},
-        ],
-    })
-    pruefe(angebot.status_code == 201, f"Angebot anlegen: {angebot.text[:250]}")
-    angebot = angebot.json()
-    pruefe(angebot["fachplaner_name"] == "Ingenieurbüro Müller GmbH",
-           f"Fachplanername am Angebot: {angebot}")
-    # Ohne eigene Angabe uebernimmt das Angebot die Phase des Falls.
-    pruefe(angebot["leistungsphase"] == 6, f"Phase geerbt: {angebot}")
-    # Die leere Zeile aus dem Formular wird verworfen, nicht bemaengelt.
-    pruefe(len(angebot["mehrleistungen"]) == 2,
-           f"Mehrleistungen: {angebot['mehrleistungen']}")
-    pruefe(angebot["mehrleistungen"][1]["betrag"] is None,
-           f"Betrag darf fehlen: {angebot['mehrleistungen']}")
-    pruefe(angebot["dokument_vorhanden"] is False,
-           "vor dem Erzeugen darf kein Dokument gemeldet werden")
-
-    angebot_id = angebot["id"]
-
-    # Das Angebot haengt am Fall und kommt in der Detailansicht mit.
-    detail = c.get(f"/api/mcdonalds/faelle/{fall_id}").json()
-    pruefe(len(detail["angebote"]) == 1, f"Angebote am Fall: {detail['angebote']}")
-
-    pruefe(c.post(f"/api/mcdonalds/faelle/{fall_id}/angebote",
-                  json={"fachplaner_id": 99999}).status_code == 400,
-           "unbekannter Fachplaner muesste 400 sein")
-    pruefe(c.post("/api/mcdonalds/faelle/99999/angebote",
-                  json={"fachplaner_id": planer["id"]}).status_code == 404,
-           "unbekannter Fall muesste 404 sein")
-
-    # ── Dokument erzeugen ──
-    dokument = c.post(f"/api/mcdonalds/angebote/{angebot_id}/dokument")
-    pruefe(dokument.status_code == 200,
-           f"Dokument: {dokument.status_code} {dokument.text[:200]}")
-    pruefe(dokument.content[:2] == b"PK",
-           "Antwort ist keine Word-Datei (kein ZIP-Kopf)")
-    pruefe("wordprocessingml" in dokument.headers.get("content-type", ""),
-           f"MIME-Typ: {dokument.headers.get('content-type')}")
-    pruefe(".docx" in dokument.headers.get("content-disposition", ""),
-           f"Content-Disposition: {dokument.headers.get('content-disposition')}")
-    pruefe(len(dokument.content) > 5000,
-           f"Dokument verdaechtig klein: {len(dokument.content)} Bytes")
-
-    nachher = c.get(f"/api/mcdonalds/angebote/{angebot_id}").json()
-    pruefe(nachher["dokument_vorhanden"] is True,
-           f"dokument_vorhanden nach dem Erzeugen: {nachher}")
-
-    # Erneut holen liefert dieselbe Datei ohne neuen POST.
-    erneut = c.get(f"/api/mcdonalds/angebote/{angebot_id}/dokument")
-    pruefe(erneut.status_code == 200 and erneut.content[:2] == b"PK",
-           f"Dokument erneut holen: {erneut.status_code}")
-
-    # ── Outlook-Entwurf ──
-    vorschlag = c.get(f"/api/mcdonalds/angebote/{angebot_id}/mail/vorschlag")
-    pruefe(vorschlag.status_code == 200, f"Vorschlag: {vorschlag.text[:200]}")
-    vorschlag = vorschlag.json()
-    pruefe(vorschlag["empfaenger"] == ["planung@mueller-ing.de"],
-           f"Empfaenger vorbelegt: {vorschlag['empfaenger']}")
-    pruefe("Aachen" in vorschlag["betreff"], f"Betreff: {vorschlag['betreff']!r}")
-    pruefe("Frau Stark" in vorschlag["nachricht"],
-           f"Anrede aus den Stammdaten: {vorschlag['nachricht'][:120]!r}")
-    pruefe("Mehrleistung" in vorschlag["nachricht"],
-           "Mehrleistungen werden im Text nicht erwaehnt")
-
-    entwurf = c.post(f"/api/mcdonalds/angebote/{angebot_id}/versenden", json={})
-    pruefe(entwurf.status_code == 200,
-           f"Entwurf: {entwurf.status_code} {entwurf.text[:200]}")
-    pruefe(entwurf.headers.get("content-type", "").startswith("message/rfc822"),
-           f"MIME-Typ des Entwurfs: {entwurf.headers.get('content-type')}")
-
-    from email import message_from_bytes, policy  # noqa: E402
-
-    mail = message_from_bytes(entwurf.content, policy=policy.default)
-    pruefe(mail.get("X-Unsent") == "1",
-           "X-Unsent fehlt — Outlook zeigte die Datei sonst als empfangene Mail")
-    pruefe(mail.get("From") is None, "ein Entwurf darf keinen Absender tragen")
-    pruefe(mail.get("To") == "planung@mueller-ing.de", f"To: {mail.get('To')!r}")
-    anhaenge = [t.get_filename() for t in mail.iter_attachments()]
-    pruefe(len(anhaenge) == 1 and str(anhaenge[0]).endswith(".docx"),
-           f"Anhang des Entwurfs: {anhaenge}")
-
-    # Der Entwurf wird als Versandweg notiert — abgeschickt hat ihn Outlook.
-    nachher = c.get(f"/api/mcdonalds/angebote/{angebot_id}").json()
-    pruefe(nachher["mail_weg"] == "entwurf", f"mail_weg: {nachher['mail_weg']!r}")
-    pruefe(nachher["mail_versendet_am"] is not None,
-           "mail_versendet_am muesste gesetzt sein")
-
-    # Ohne Postausgangsserver ist "direkt senden" gesperrt — mit Ausweg.
-    direkt = c.post(f"/api/mcdonalds/angebote/{angebot_id}/mail/senden", json={})
-    pruefe(direkt.status_code == 503, f"senden ohne SMTP: {direkt.status_code}")
-    pruefe("Outlook-Entwurf" in direkt.text,
-           f"Auswegs-Hinweis fehlt: {direkt.text[:200]}")
-
-    # ── Ein Fachplaner mit Angebot bleibt stehen ──
-    geschuetzt = c.delete(f"/api/fachplaner/{planer['id']}")
-    pruefe(geschuetzt.status_code == 409,
-           f"Fachplaner mit Angebot: {geschuetzt.status_code}")
-    pruefe("Angebot" in geschuetzt.text,
-           f"Meldung nennt die Angebote nicht: {geschuetzt.text[:200]}")
-
-    # ── Angebot und Fall loeschen ──
-    pruefe(c.delete(f"/api/mcdonalds/angebote/{angebot_id}").status_code == 204,
-           "Angebot loeschen")
-    pruefe(c.delete(f"/api/fachplaner/{planer['id']}").status_code == 204,
-           "Fachplaner nach dem Angebot loeschen")
-    pruefe(c.delete(f"/api/mcdonalds/faelle/{fall_id}").status_code == 204,
-           "Fall loeschen")
-    pruefe(c.get(f"/api/mcdonalds/faelle/{fall_id}").status_code == 404,
-           "geloeschter Fall muesste 404 sein")
-
-    # Der angelegte Ordner bleibt bewusst stehen (siehe delete_fall).
-    pruefe((STORAGE / "H-Laufwerk").is_dir(),
-           "der Ordner im Netzlaufwerk darf nicht mitgeloescht werden")
-
-    pruefe(c.get("/api/mcdonalds/faelle/99999").status_code == 404,
-           "unbekannter Fall muesste 404 sein")
-    pruefe(c.get("/api/mcdonalds/angebote/99999").status_code == 404,
-           "unbekanntes Angebot muesste 404 sein")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 6. Das Angebotsdokument selbst
-# ─────────────────────────────────────────────────────────────────────────────
-
-print("== Angebotsdokument ==")
-
-pruefe(angebot_dienst.TEMPLATE_NAME == "",
-       "TEMPLATE_NAME ist noch der Platzhalter (siehe TODO McDonald's)")
-pruefe(angebot_dienst._betrag(1234.5) == "1.234,50 €",
-       f"Betragsformat: {angebot_dienst._betrag(1234.5)!r}")
-pruefe(angebot_dienst._betrag(None) == "—", "fehlender Betrag")
+    # ── Zu grosse Datei ──
+    zu_gross = c.post("/api/mcdonalds/standorte", files={
+        "datei": ("gross.eml", b"x" * (26 * 1024 * 1024), "message/rfc822")})
+    pruefe(zu_gross.status_code == 413, f"zu gross: {zu_gross.status_code}")
 
 print(f"\n{ok} Pruefungen ok, {len(fehler)} Fehler")
 for f in fehler:

@@ -893,30 +893,41 @@ class Projektbeteiligter(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# McDonald's — automatisierte Projektanlage + Beauftragung
+# McDonald's — Standort anlegen und Subplaner beauftragen
 #
 # Der Ablauf, den diese Tabellen abbilden (interner Name des Büros:
 # "McDonald's", weil er für dieses Kundenkonto entstanden ist):
 #
-#   1. Der Kunde beauftragt per Mail eine Leistungsphase. Der Bauleiter
-#      exportiert die Mail als ``.eml`` und lädt sie hoch — oder trägt die
-#      Angaben von Hand ein, wenn telefonisch beauftragt wurde.
-#   2. Die App liest Standort, Auftraggeber und Leistungsphase heraus
-#      (app.services.mcdonalds_email_analyse).
-#   3. Im Hintergrund entsteht der Projektordner ``<UNLOCODE>_<Standortname>``
-#      im Netzlaufwerk und auf SharePoint (app.services.mcdonalds_ordner).
-#   4. Der Bauleiter erstellt daraus ein Angebot für einen Fachplaner und
-#      bekommt einen fertigen Outlook-Entwurf mit dem Dokument im Anhang.
+#   1. McDonald's legt im eigenen System (SLS) einen neuen Standort an und
+#      schickt eine Anfrage an das Büro:
+#        "SLS - Anfrage zur F1 Vorbereitung 56132 Nievern, Auf d. Lay"
+#      Ricardo leitet sie weiter, der Bauleiter lädt sie als ``.eml`` hoch.
+#   2. Die App liest Phase, Postleitzahl, Ort, Straße, Abgabetermin und die
+#      SLS-Vorgangsnummer nach Regeln heraus (``mcdonalds_sls``) und ermittelt
+#      den 3-stelligen Ortscode (``mcdonalds_unlocode``): Nievern -> NIV.
+#   3. Im Hintergrund entsteht der Standortordner ``NIV_Nievern`` mit der
+#      kompletten Musterstruktur des Büros — 163 Unterordner
+#      (``mcdonalds_ordner``, ``mcdonalds_musterstruktur``).
+#   4. Der Bauleiter wählt die Phase. Die Subplaner dieser Phase stehen in den
+#      Stammdaten; für jeden entsteht ein Einzelabruf als Outlook-Entwurf, der
+#      zugleich im Vertragsordner der Firma abgelegt wird
+#      (``mcdonalds_beauftragung``). Phase 1 = zwei Schreiben, Kocks und RKA.
 #
-# WARUM DER FALL EINE EIGENE TABELLE IST UND KEIN ``Projekt``
-# ==========================================================
+# WARUM DER STANDORT EINE EIGENE TABELLE IST UND KEIN ``Projekt``
+# ==============================================================
 # Ein ``Projekt`` in dieser App ist eine laufende Baustelle mit Gewerken,
-# Mängeln, Fotos und Berichten. Der McDonald's-Fall ist das, was *davor*
-# passiert: eine eingegangene Beauftragung, aus der erst noch eine Ablage und
-# ein Angebot werden. Die meisten Fälle werden nie ein Projekt in diesem Sinne
-# — sie enden mit dem versendeten Angebot. Ein ``Projekt`` mit zwölf leeren
-# Beziehungen dafür anzulegen, würde die Projektliste des Büros unbrauchbar
-# machen.
+# Mängeln, Fotos und Berichten. Ein McDonald's-Standort ist das, was *davor*
+# passiert: eine Anfrage, aus der erst eine Ablage und ein paar Verträge
+# werden. Die meisten kommen nie in die Bauphase — sie enden mit Phase 1 oder
+# 2. Ein ``Projekt`` mit zwölf leeren Beziehungen dafür anzulegen, würde die
+# Projektliste des Büros unbrauchbar machen.
+#
+# WARUM "PHASE" UND NICHT "LEISTUNGSPHASE"
+# ========================================
+# Die Phasen 1–3 sind die des McDonald's-Prozesses (so heißen auch die Ordner
+# ``PHASE 1`` … ``PHASE 4 & 5`` im Musterordner) und *nicht* die
+# Leistungsphasen 1–9 der HOAI. Sie zusammenzuwerfen hieße, in einem
+# Vertragstext "Phase 8" zu schreiben, wo es das nicht gibt.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -925,145 +936,182 @@ class Projektbeteiligter(Base):
 #: nicht darauf.
 MCDONALDS_ORDNER_STATUS = ("ausstehend", "angelegt", "fehler")
 
-#: Woher die Angaben eines Falls stammen. "telefon" ist kein Sonderfall,
-#: sondern der zweite reguläre Weg (siehe Konzeptblatt: "bei telefonischer
-#: Beauftragung Eingabe der Daten in die App").
-MCDONALDS_QUELLEN = ("eml", "telefon")
+#: Woher die Angaben eines Standorts stammen.
+MCDONALDS_QUELLEN = ("eml", "manuell")
+
+#: Die Phasen, für die es Stammdaten und Beauftragungen gibt. Der Musterordner
+#: kennt zusätzlich PHASE 0 und PHASE 4 & 5 — beauftragt werden Subplaner aber
+#: nur in 1 bis 3.
+MCDONALDS_PHASEN = (1, 2, 3)
 
 
-class McdonaldsFall(Base):
-    """Eine eingegangene Beauftragung — hochgeladene Mail oder Telefonnotiz."""
+class McdonaldsStandort(Base):
+    """Ein angefragter McDonald's-Standort — aus der SLS-Mail oder von Hand."""
 
-    __tablename__ = "mcdonalds_faelle"
+    __tablename__ = "mcdonalds_standorte"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    #: "eml" oder "telefon", siehe MCDONALDS_QUELLEN.
+    #: "eml" oder "manuell", siehe MCDONALDS_QUELLEN.
     quelle = Column(String, nullable=False, default="eml")
-    #: Name der hochgeladenen Datei — bei telefonischer Beauftragung leer.
+    #: Name der hochgeladenen Datei — bei Handeingabe leer.
     eml_dateiname = Column(String, nullable=False, default="")
-    #: Der Klartext der Mail, wie er analysiert wurde. Bleibt erhalten, damit
-    #: sich jede herausgelesene Angabe später gegenlesen lässt: Ein falsch
-    #: erkannter Standort sieht in der Ablage genauso aus wie ein richtiger.
+    #: Der Klartext der Mail, wie er ausgelesen wurde. Bleibt erhalten, damit
+    #: sich jede Angabe gegenlesen lässt: Ein falsch erkannter Termin sieht in
+    #: einem Vertrag genauso aus wie ein richtiger.
     roh_text = Column(Text, nullable=False, default="")
-    #: Namen der Mailanhänge — nur als Hinweis. Die Dateien selbst werden
-    #: nicht übernommen; sie gehören in den Projektordner.
+    #: Namen der Mailanhänge — nur als Hinweis. Die Dateien selbst werden nicht
+    #: übernommen; sie gehören in den Projektordner.
     anhaenge = Column(JSON, default=list)
-    #: Wann die KI-Analyse gelaufen ist. ``None`` heißt: nicht analysiert —
-    #: entweder fehlt der Anthropic-Schlüssel oder der Fall wurde von Hand
-    #: erfasst. Die Oberfläche zeigt das an, damit niemand geprüfte Angaben
-    #: vermutet, wo keine sind.
+    #: Hat der regelbasierte Leser die Datei als SLS-Anfrage erkannt? Nur dann
+    #: sind Phase, Ort und Termine aus der Mail und nicht geraten.
+    sls_erkannt = Column(Boolean, nullable=False, default=False)
+    #: Wann zusätzlich das Sprachmodell gelesen hat. ``None`` ist der
+    #: Normalfall — die Regeln genügen (siehe ``mcdonalds_sls``).
     analysiert_am = Column(DateTime, nullable=True)
 
-    # ── Die herausgelesenen Eckdaten ──
-    auftraggeber = Column(String, nullable=False, default="")
+    # ── Was in der Anfrage stand ──
+    #: 1–3, siehe MCDONALDS_PHASEN. ``None``, solange nichts erkannt wurde.
+    phase = Column(Integer, nullable=True)
+    #: Der Ort, wie ihn die Anfrage nennt ("Nievern"). Grundlage des Ortscodes.
+    ort = Column(String, nullable=False, default="")
+    plz = Column(String, nullable=False, default="")
+    strasse = Column(String, nullable=False, default="")
+    #: Der Teil hinter dem Ortscode im Ordnernamen. Vorbelegt mit ``ort``,
+    #: eigenes Feld, weil zwei Standorte in derselben Stadt liegen können —
+    #: dann heißt der zweite "Nievern Ost" und der Ort bleibt "Nievern".
     standort_name = Column(String, nullable=False, default="")
-    standort_adresse = Column(String, nullable=False, default="")
-    #: Nur der Ort aus der Adresse — die Grundlage des UNLOCODE-Abgleichs.
-    #: Eigenes Feld, weil "Große Bergstraße 160, 22767 Hamburg" für die Ablage
-    #: richtig ist, für die Suche in der Referenztabelle aber "Hamburg"
-    #: gebraucht wird.
-    standort_ort = Column(String, nullable=False, default="")
-    #: 1–9 nach HOAI; im McDonald's-Ablauf vor allem 6–9. ``None``, solange
-    #: nichts Verlässliches erkannt wurde — geraten wird nicht.
-    leistungsphase = Column(Integer, nullable=True)
-    #: Sonstige Eckdaten als {Bezeichnung: Wert}, z. B. Termine, Ansprech-
-    #: partner, Projektnummer des Kunden. Bewusst offen: Was in diesen Mails
-    #: steht, ist nicht in ein festes Feldschema zu pressen, und ein Feld pro
-    #: Möglichkeit wäre eine Tabelle mit dreißig leeren Spalten.
-    #: TODO McDonald's: Sobald der endgültige Feldkatalog vorliegt, die dann
-    #: sicher feststehenden Angaben als echte Spalten herausziehen.
-    eckdaten = Column(JSON, default=dict)
+    #: Wann die Unterlagen beim Kunden sein müssen — im Einzelabruf die Zeile
+    #: "Abgabe Phase 1".
+    abgabetermin = Column(Date, nullable=True)
+    #: Datum der SLS-Anfrage = Leistungsbeginn der Subplaner.
+    leistungsbeginn = Column(Date, nullable=True)
+    #: SLS-Vorgangsnummer (``activity_id``) — der Rückweg in das Kundensystem.
+    sls_vorgang = Column(String, nullable=False, default="")
 
     # ── Ablage (app.services.mcdonalds_ordner) ──
-    #: 3-stelliger UN/LOCODE des Ortes. ``None``, solange kein Treffer in der
-    #: Referenztabelle gefunden wurde (oder sie noch nicht hochgeladen ist).
+    #: 3-stelliger UN/LOCODE des Ortes: Nievern -> NIV. ``None``, solange kein
+    #: Treffer in der Referenztabelle gefunden wurde.
     unlocode = Column(String, nullable=True)
-    #: Der gebildete Ordnername ``<UNLOCODE>_<Standortname>``. Steht mit in
-    #: der Datenbank und wird nicht jedes Mal neu berechnet: Wird der Standort
-    #: später korrigiert, bleibt so nachvollziehbar, wie der schon angelegte
-    #: Ordner heißt.
+    #: Der gebildete Ordnername ``<CODE>_<Standortname>``. Steht mit in der
+    #: Datenbank und wird nicht jedes Mal neu berechnet: Wird der Ort später
+    #: korrigiert, bleibt so nachvollziehbar, wie der angelegte Ordner heißt.
     ordner_name = Column(String, nullable=False, default="")
     ordner_status = Column(String, nullable=False, default="ausstehend")
-    ordner_pfad_h = Column(String, nullable=True)
+    #: Vollständiger Pfad des Standortordners im Projektlaufwerk.
+    ordner_pfad = Column(String, nullable=True)
     ordner_pfad_sharepoint = Column(String, nullable=True)
+    #: Wie viele Unterordner dabei entstanden sind. Zur Kontrolle in der
+    #: Oberfläche: 163 heißt vollständig, 12 heißt, dass etwas schiefging.
+    ordner_anzahl = Column(Integer, nullable=False, default=0)
     #: Was fehlt oder schiefging — Klartext für die Oberfläche, kein Code.
     fehlermeldung = Column(String, nullable=True)
 
     erstellt_am = Column(DateTime, default=func.now())
     aktualisiert_am = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    angebote = relationship(
-        "McdonaldsAngebot",
-        back_populates="fall",
+    beauftragungen = relationship(
+        "McdonaldsBeauftragung",
+        back_populates="standort",
         cascade="all, delete-orphan",
     )
 
 
-class Fachplaner(Base):
-    """Stammdaten der Unternehmen, die beauftragt werden.
+class McdonaldsSubplaner(Base):
+    """Stammdaten der Subplaner, je Phase.
 
-    Aufbau wie ``Empfaenger``: eine flache, projektunabhängige Liste, die sich
-    in der Oberfläche pflegen lässt. Bewusst nicht ``Gewerk`` — dort stehen
-    die ausführenden Nachunternehmer einer Baustelle mit Vergabeeinheit; hier
-    stehen Planungsbüros, die über alle Standorte hinweg dieselben bleiben.
+    In der Oberfläche gruppiert nach Phase: Phase 1 -> Unternehmen -> deren
+    E-Mail-Adressen. Die Firmen sind über alle Standorte dieselben, deshalb
+    steht das hier und nicht am Standort — genau das ist der Sinn der
+    Stammdaten.
 
-    TODO McDonald's: Laut Konzeptblatt sollen je Leistungsphase nur die
-    passenden Unternehmen erscheinen ("Auswahl von der jeweiligen Phase →
-    passende Unternehmen werden angezeigt"). Dafür kommt später eine Zuordnung
-    Phase → Fachplaner dazu; heute zeigt die Auswahl alle.
+    Phase 1 sind Kocks und RKA. Was sich je Firma unterscheidet und deshalb
+    hier hängt: die Anrede, das Angebotsdatum, auf das der Einzelabruf sich
+    beruft, der Ordner im Vertragsverzeichnis und die Textfassung des
+    Schreibens (siehe ``mcdonalds_beauftragung``).
     """
 
-    __tablename__ = "mcdonalds_fachplaner"
+    __tablename__ = "mcdonalds_subplaner"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    #: 1–3, siehe MCDONALDS_PHASEN.
+    phase = Column(Integer, nullable=False, default=1)
+    #: Kurzform für den Betreff: "…_Beauftragung Phase 1 **KOCKS**".
+    kuerzel = Column(String, nullable=False, default="")
+    #: Firmenname, wie er im Schreiben steht ("Kocks Consult").
     name = Column(String, nullable=False)
+    #: Ordner der Firma unter ``02_Subplaner``, z. B. "090_VAA_Kocks". Dorthin
+    #: wird die Beauftragung abgelegt; der übrige Pfad ist für alle Standorte
+    #: gleich (siehe ``mcdonalds_beauftragung.VERTRAGSPFAD``).
+    ordner = Column(String, nullable=False, default="")
+    #: Die Person, an die das Schreiben geht ("Herr Hömmerich").
     ansprechpartner = Column(String, nullable=False, default="")
-    #: Empfänger des Outlook-Entwurfs (app.services.mcdonalds_versand).
-    email = Column(String, nullable=False)
-    adresse = Column(String, nullable=False, default="")
+    #: Die Anredezeile im Wortlaut ("Sehr geehrter Herr Hömmerich,").
+    #: Eigenes Feld und nicht aus dem Namen gebaut: "Sehr geehrter Herr" oder
+    #: "Sehr geehrte Frau" richtig zu raten geht schief, und im ersten Satz
+    #: eines Vertragsschreibens fällt das auf.
+    anrede = Column(String, nullable=False, default="")
+    #: Alle Empfängeradressen der Firma, ``["a@x.de", "b@x.de"]``. Mehrere,
+    #: weil im Büro der Sachbearbeiter und das Sekretariat mitlesen.
+    emails = Column(JSON, default=list)
+    #: "gemäß ihrem Angebot vom …" — je Firma fest, nicht je Standort.
+    angebot_datum = Column(Date, nullable=True)
+    #: Kennung der Textfassung, siehe ``mcdonalds_beauftragung.TEXTVARIANTEN``.
+    textvariante = Column(String, nullable=False, default="rka")
+    #: Reihenfolge innerhalb der Phase — bestimmt auch, in welcher Folge die
+    #: Entwürfe erzeugt werden.
+    sortierung = Column(Integer, nullable=False, default=0)
     erstellt_am = Column(DateTime, default=func.now())
 
-    angebote = relationship("McdonaldsAngebot", back_populates="fachplaner")
-
-
-class McdonaldsAngebot(Base):
-    """Ein Angebot zur Beauftragung eines Fachplaners in einem Fall."""
-
-    __tablename__ = "mcdonalds_angebote"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    fall_id = Column(Integer, ForeignKey("mcdonalds_faelle.id"), nullable=False)
-    fachplaner_id = Column(
-        Integer, ForeignKey("mcdonalds_fachplaner.id"), nullable=False
+    beauftragungen = relationship(
+        "McdonaldsBeauftragung", back_populates="subplaner"
     )
 
-    #: Betreff des Angebots und der Mail — steht im Dokumentkopf.
-    betreff = Column(String, nullable=False, default="")
-    #: Beauftragte Leistungsphase. Vorbelegt aus dem Fall, aber überschreibbar:
-    #: Ein Standort kann in mehreren Phasen beauftragt werden.
-    leistungsphase = Column(Integer, nullable=True)
-    #: Die Kernangaben als {Bezeichnung: Wert}.
-    #: TODO McDonald's: Das genaue Feldschema des Angebots wird nachgereicht
-    #: (die Excel-Vorlage des Büros liegt noch nicht vor). Bis dahin bleibt es
-    #: offen, damit die Oberfläche schon Felder anbieten kann, ohne dass jede
-    #: Änderung eine Datenbankmigration nach sich zieht.
-    angaben = Column(JSON, default=dict)
-    #: Zusätzliche Leistungen, beliebig viele Zeilen:
-    #: ``[{"bezeichnung": "…", "betrag": 1234.0 | None}]``. Der Betrag darf
-    #: fehlen — im Gespräch steht oft erst die Leistung fest, nicht der Preis.
-    mehrleistungen = Column(JSON, default=list)
 
-    #: Pfad des erzeugten Word-Dokuments; ``None``, solange keines erzeugt ist.
-    dokument_pfad = Column(String, nullable=True)
-    #: Wie beim Fotoversand: Datum und Weg getrennt, weil "Entwurf erstellt"
-    #: und "versendet" ein echter Unterschied ist — abgeschickt hat den
-    #: Entwurf dann Outlook, nicht die App (siehe app.services.fotoversand).
+class McdonaldsBeauftragung(Base):
+    """Ein Einzelabruf an einen Subplaner für einen Standort.
+
+    Die Termine stehen hier noch einmal, obwohl sie am Standort stehen: Was in
+    einem herausgegangenen Schreiben steht, darf sich nicht ändern, wenn
+    jemand später am Standort einen Termin korrigiert. Ein Vertragstext ist
+    ein Stand, keine Ansicht.
+    """
+
+    __tablename__ = "mcdonalds_beauftragungen"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    standort_id = Column(
+        Integer, ForeignKey("mcdonalds_standorte.id"), nullable=False
+    )
+    subplaner_id = Column(
+        Integer, ForeignKey("mcdonalds_subplaner.id"), nullable=False
+    )
+
+    phase = Column(Integer, nullable=False, default=1)
+    betreff = Column(String, nullable=False, default="")
+    #: Das vollständige Schreiben, wie es verschickt wurde.
+    text = Column(Text, nullable=False, default="")
+
+    #: Die eingesetzten Termine — siehe Klassentext.
+    beauftragung_am = Column(Date, nullable=True)
+    leistungsbeginn = Column(Date, nullable=True)
+    projektplanung = Column(Date, nullable=True)
+    klaerung = Column(Date, nullable=True)
+    abgabe = Column(Date, nullable=True)
+
+    #: An wen der Entwurf ging.
+    empfaenger = Column(JSON, default=list)
+    #: Wohin die ``.eml`` im Projektordner gelegt wurde; ``None``, wenn das
+    #: Laufwerk nicht erreichbar war — der Entwurf ist dann trotzdem da.
+    eml_pfad = Column(String, nullable=True)
+    #: Wie beim Fotoversand: "entwurf" (Outlook hat den fertigen Entwurf
+    #: bekommen) oder "smtp" (die App hat wirklich verschickt). Das ist ein
+    #: echter Unterschied, den die Oberfläche auch anzeigt.
     mail_versendet_am = Column(Date, nullable=True)
     mail_weg = Column(String, nullable=False, default="")
     erstellt_am = Column(DateTime, default=func.now())
 
-    fall = relationship("McdonaldsFall", back_populates="angebote")
-    fachplaner = relationship("Fachplaner", back_populates="angebote")
+    standort = relationship("McdonaldsStandort", back_populates="beauftragungen")
+    subplaner = relationship("McdonaldsSubplaner", back_populates="beauftragungen")
 
 
 class UnlocodeEintrag(Base):
@@ -1072,7 +1120,7 @@ class UnlocodeEintrag(Base):
     Wird per Excel-Upload gefüllt und ersetzt dabei den ganzen Bestand
     (app.services.mcdonalds_unlocode). Deshalb ohne eigene Beziehungen: Die
     Tabelle ist ein Nachschlagewerk, kein Stammdatensatz, an dem etwas hängt —
-    der ermittelte Code steht am Fall.
+    der ermittelte Code steht am Standort.
 
     ``ort`` und ``ort_normal`` stehen beide da: Der erste ist die Schreibweise
     der Tabelle für die Anzeige, der zweite die vereinfachte Fassung für den
@@ -1083,7 +1131,7 @@ class UnlocodeEintrag(Base):
     __tablename__ = "mcdonalds_unlocode"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    #: 3-stellig, z. B. "AAH" für Aachen.
+    #: 3-stellig, z. B. "NIV" für Nievern.
     code = Column(String, nullable=False, index=True)
     ort = Column(String, nullable=False)
     #: Kleingeschrieben und ohne Umlaute/Sonderzeichen — siehe Klassentext.

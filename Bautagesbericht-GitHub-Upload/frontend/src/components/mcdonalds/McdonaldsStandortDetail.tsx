@@ -1,40 +1,30 @@
 "use client";
 
 /**
- * Eine Beauftragung: Angaben prüfen, Ablage verfolgen, Angebot erstellen.
+ * Ein Standort: Angaben prüfen, Ordner verfolgen, Subplaner beauftragen.
  *
- * WARUM DIE ANGABEN HIER ÄNDERBAR SIND
- * ====================================
- * Die Mail-Analyse schlägt vor, sie entscheidet nicht (siehe
- * backend/app/services/mcdonalds_email_analyse). Und ohne Anthropic-Schlüssel
- * schlägt sie gar nichts vor. Diese Ansicht ist deshalb der Ort, an dem ein
- * Mensch draufsieht, bevor aus den Angaben ein Ordnername und ein Angebot
- * werden — mit sichtbarem Unterschied zwischen "von der KI gelesen" und "von
- * Hand eingetragen".
- *
- * DER ORDNER IST EIN ZUSTAND, KEIN KNOPF
- * ======================================
- * Er entsteht im Hintergrund. Angezeigt wird, was daraus wurde, samt Pfad zum
- * Nachschauen. Der Knopf "Ordner anlegen" ist der zweite Versuch — nach einer
- * Korrektur oder nachdem der Basispfad eingetragen wurde.
+ * WARUM DIE ANGABEN ÄNDERBAR SIND
+ * ===============================
+ * Die Mail-Auswertung *schlägt vor*. Bei einer echten SLS-Anfrage trifft sie
+ * zuverlässig, weil die Mail maschinenerzeugt ist — aber ein zweiter Standort
+ * in derselben Stadt braucht einen anderen Ordnernamen, und ein Termin kann
+ * sich ändern. Diese Ansicht ist der Ort, an dem ein Mensch draufsieht, bevor
+ * aus den Angaben ein Ordnername und ein Vertragstermin wird.
  */
 
 import {
   AlertTriangle,
   ArrowLeft,
-  Building2,
-  Calendar,
   CheckCircle2,
+  Clock,
   Download,
-  FileText,
   FolderOpen,
   Loader2,
-  Mail,
   MapPin,
   Pencil,
-  Plus,
   RefreshCw,
   Search,
+  Send,
   Table,
   Trash2,
   Upload,
@@ -45,11 +35,11 @@ import { useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { dateiSpeichern } from "@/lib/dateien";
 import type {
-  Fachplaner,
-  McdonaldsAngebot,
-  McdonaldsFaehigkeiten,
-  McdonaldsFall,
+  McdBeauftragung,
+  McdFaehigkeiten,
+  McdStandort,
   OrdnerStatus,
+  Subplaner,
 } from "@/lib/types";
 import {
   Karte,
@@ -68,41 +58,41 @@ import {
   Select,
   formatDatum,
 } from "@/components/ui";
-import { AngebotErstellen } from "@/components/mcdonalds/AngebotErstellen";
+import { BeauftragungErstellen } from "@/components/mcdonalds/BeauftragungErstellen";
 
-const PHASEN = [6, 7, 8, 9, 1, 2, 3, 4, 5];
+const PHASEN = [1, 2, 3];
 
 const STATUS_TEXT: Record<OrdnerStatus, string> = {
   ausstehend: "wird angelegt",
+  vorbereitet: "vorbereitet",
   angelegt: "angelegt",
-  fehler: "offen",
+  fehler: "fehlerhaft",
 };
 
-const STATUS_ART: Record<OrdnerStatus, "ok" | "warn" | "gefahr"> = {
+const STATUS_ART: Record<OrdnerStatus, "ok" | "warn" | "gefahr" | "info"> = {
   ausstehend: "warn",
+  vorbereitet: "info",
   angelegt: "ok",
   fehler: "gefahr",
 };
 
-export function McdonaldsFallDetail({
-  fall,
-  fachplaner,
+export function McdonaldsStandortDetail({
+  standort,
+  subplaner,
   faehigkeiten,
   onZurueck,
   onAktualisiert,
   onGeloescht,
-  onFachplanerAendern,
 }: {
-  fall: McdonaldsFall;
-  fachplaner: Fachplaner[];
-  faehigkeiten: McdonaldsFaehigkeiten | null;
+  standort: McdStandort;
+  subplaner: Subplaner[];
+  faehigkeiten: McdFaehigkeiten | null;
   onZurueck: () => void;
   onAktualisiert: () => void;
   onGeloescht: () => void;
-  onFachplanerAendern: () => void;
 }) {
   const [bearbeiten, setBearbeiten] = useState(false);
-  const [angebotOffen, setAngebotOffen] = useState(false);
+  const [beauftragenOffen, setBeauftragenOffen] = useState(false);
   const [laeuft, setLaeuft] = useState("");
   const [fehler, setFehler] = useState<string | null>(null);
   const [meldung, setMeldung] = useState<string | null>(null);
@@ -112,10 +102,10 @@ export function McdonaldsFallDetail({
     setFehler(null);
     setMeldung(null);
     try {
-      const neu = await api.mcdonalds.ordnerAnlegen(fall.id);
+      const neu = await api.mcdonalds.ordnerAnlegen(standort.id);
       setMeldung(
         neu.ordner_status === "angelegt"
-          ? `Ordner „${neu.ordner_name}“ ist angelegt.`
+          ? `Ordner „${neu.ordner_name}“ ist angelegt — ${neu.ordner_anzahl} Unterordner.`
           : neu.fehlermeldung || "Der Ordner konnte nicht angelegt werden."
       );
       onAktualisiert();
@@ -129,16 +119,16 @@ export function McdonaldsFallDetail({
   async function loeschen() {
     if (
       !window.confirm(
-        `Diese Beauftragung löschen?\n\n` +
-          `Zugehörige Angebote werden mit entfernt. Der bereits angelegte ` +
-          `Ordner im Netzlaufwerk bleibt bestehen.`
+        "Diesen Standort löschen?\n\n" +
+          "Die erzeugten Einzelabrufe werden mit entfernt. Ein bereits " +
+          "angelegter Ordner im Projektlaufwerk bleibt bestehen."
       )
     ) {
       return;
     }
     setLaeuft("loeschen");
     try {
-      await api.mcdonalds.fallLoeschen(fall.id);
+      await api.mcdonalds.standortLoeschen(standort.id);
       onGeloescht();
     } catch (err) {
       setFehler(err instanceof Error ? err.message : "Löschen fehlgeschlagen.");
@@ -147,7 +137,7 @@ export function McdonaldsFallDetail({
   }
 
   const titel =
-    fall.standort_name || fall.ordner_name || fall.standort_ort || "Ohne Standort";
+    standort.ordner_name || standort.standort_name || standort.ort || "Ohne Ort";
 
   return (
     <div className="flex flex-col gap-3">
@@ -164,9 +154,9 @@ export function McdonaldsFallDetail({
           >
             Löschen
           </Button>
-          {!angebotOffen && (
-            <Button icon={Plus} onClick={() => setAngebotOffen(true)}>
-              Angebot erstellen
+          {!beauftragenOffen && (
+            <Button icon={Send} onClick={() => setBeauftragenOffen(true)}>
+              Subplaner beauftragen
             </Button>
           )}
         </div>
@@ -174,7 +164,7 @@ export function McdonaldsFallDetail({
 
       {fehler && <Meldung art="fehler">{fehler}</Meldung>}
       {meldung && <Meldung art="erfolg">{meldung}</Meldung>}
-      {fall.hinweise.map((hinweis, i) => (
+      {standort.hinweise.map((hinweis, i) => (
         <Meldung key={i} art="hinweis">
           {hinweis}
         </Meldung>
@@ -187,11 +177,11 @@ export function McdonaldsFallDetail({
             titel={titel}
             icon={MapPin}
             unterzeile={
-              fall.analysiert_am
-                ? `Aus der Mail gelesen am ${formatDatum(fall.analysiert_am)} — bitte gegenlesen`
-                : fall.quelle === "telefon"
-                ? "Von Hand erfasst (telefonische Beauftragung)"
-                : "Nicht automatisch ausgewertet — Angaben von Hand prüfen"
+              standort.sls_erkannt
+                ? "Aus der SLS-Anfrage gelesen — Betreff und Text, ohne KI"
+                : standort.analysiert_am
+                ? `KI-Auswertung vom ${formatDatum(standort.analysiert_am)} — bitte gegenlesen`
+                : "Von Hand erfasst"
             }
             aktion={
               !bearbeiten ? (
@@ -208,7 +198,7 @@ export function McdonaldsFallDetail({
           <KarteInhalt>
             {bearbeiten ? (
               <AngabenFormular
-                fall={fall}
+                standort={standort}
                 onFertig={() => {
                   setBearbeiten(false);
                   onAktualisiert();
@@ -217,21 +207,37 @@ export function McdonaldsFallDetail({
               />
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
-                <ReadOnlyField label="Auftraggeber" wert={fall.auftraggeber} />
                 <ReadOnlyField
-                  label="Leistungsphase"
-                  wert={fall.leistungsphase ? `LPH ${fall.leistungsphase}` : ""}
+                  label="Phase"
+                  wert={standort.phase ? `Phase ${standort.phase}` : ""}
+                />
+                <ReadOnlyField label="UN/LOCODE" wert={standort.unlocode ?? ""} />
+                <ReadOnlyField
+                  label="Ort"
+                  wert={standort.ort}
+                  hervorgehoben={!standort.ort}
                 />
                 <ReadOnlyField
                   label="Anschrift"
-                  wert={fall.standort_adresse}
-                  hervorgehoben={!fall.standort_adresse}
+                  wert={[standort.strasse, `${standort.plz} ${standort.ort}`.trim()]
+                    .filter(Boolean)
+                    .join(", ")}
                 />
-                <ReadOnlyField label="Ort (für den Ortscode)" wert={fall.standort_ort} />
-                <ReadOnlyField label="UN/LOCODE" wert={fall.unlocode ?? ""} />
+                <ReadOnlyField
+                  label="Leistungsbeginn"
+                  wert={formatDatum(standort.leistungsbeginn)}
+                />
+                <ReadOnlyField
+                  label="Abgabetermin"
+                  wert={formatDatum(standort.abgabetermin)}
+                />
+                <ReadOnlyField
+                  label="SLS-Vorgang"
+                  wert={standort.sls_vorgang}
+                />
                 <ReadOnlyField
                   label="Erfasst am"
-                  wert={formatDatum(fall.erstellt_am)}
+                  wert={formatDatum(standort.erstellt_am)}
                 />
               </div>
             )}
@@ -241,12 +247,16 @@ export function McdonaldsFallDetail({
         {/* ── Ablage ── */}
         <Karte>
           <KarteKopf
-            titel="Projektordner"
+            titel="Standortordner"
             icon={FolderOpen}
-            unterzeile="Netzlaufwerk und SharePoint — im Hintergrund angelegt."
+            unterzeile={
+              faehigkeiten
+                ? `Musterstruktur mit ${faehigkeiten.unterordner} Unterordnern`
+                : "Musterstruktur des Büros"
+            }
             aktion={
-              <Plakette art={STATUS_ART[fall.ordner_status]}>
-                {STATUS_TEXT[fall.ordner_status]}
+              <Plakette art={STATUS_ART[standort.ordner_status]}>
+                {STATUS_TEXT[standort.ordner_status]}
               </Plakette>
             }
           />
@@ -254,29 +264,43 @@ export function McdonaldsFallDetail({
             <ReadOnlyField
               label="Ordnername"
               wert={
-                fall.ordner_name ? (
-                  <span className="font-mono">{fall.ordner_name}</span>
+                standort.ordner_name ? (
+                  <span className="font-mono">{standort.ordner_name}</span>
                 ) : (
                   ""
                 )
               }
             />
-            <PfadZeile
-              label="Netzlaufwerk H:"
-              pfad={fall.ordner_pfad_h}
-              fehlt="Noch nicht angelegt."
-            />
-            <PfadZeile
-              label="SharePoint"
-              pfad={fall.ordner_pfad_sharepoint}
-              fehlt="Anbindung noch nicht in Betrieb — bitte von Hand anlegen."
+            <ReadOnlyField
+              label="Projektlaufwerk"
+              wert={
+                standort.ordner_pfad ? (
+                  <span className="inline-flex items-start gap-1.5">
+                    <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-app-ok" />
+                    <span className="min-w-0 font-mono text-[12px] break-all">
+                      {standort.ordner_pfad}
+                      {standort.ordner_anzahl > 0 && (
+                        <span className="text-app-text-still">
+                          {" "}
+                          ({standort.ordner_anzahl} Unterordner)
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-app-text-still">
+                    <Clock size={13} className="shrink-0" />
+                    Noch nicht angelegt
+                  </span>
+                )
+              }
             />
 
-            {fall.fehlermeldung && (
+            {standort.fehlermeldung && (
               <Meldung
-                art={fall.ordner_status === "fehler" ? "fehler" : "hinweis"}
+                art={standort.ordner_status === "fehler" ? "fehler" : "hinweis"}
               >
-                {fall.fehlermeldung}
+                {standort.fehlermeldung}
               </Meldung>
             )}
 
@@ -287,8 +311,8 @@ export function McdonaldsFallDetail({
                 onClick={ordnerAnlegen}
                 disabled={laeuft !== ""}
               >
-                {fall.ordner_status === "angelegt"
-                  ? "Erneut anlegen"
+                {standort.ordner_status === "angelegt"
+                  ? "Struktur ergänzen"
                   : "Ordner anlegen"}
               </Button>
             </div>
@@ -296,57 +320,42 @@ export function McdonaldsFallDetail({
         </Karte>
       </div>
 
-      {/* ── Weitere Eckdaten ── */}
-      {Object.keys(fall.eckdaten).length > 0 && (
-        <Karte>
-          <KarteKopf titel="Weitere Eckdaten" icon={Calendar} />
-          <KarteInhalt className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(fall.eckdaten).map(([bezeichnung, wert]) => (
-              <ReadOnlyField key={bezeichnung} label={bezeichnung} wert={wert} />
-            ))}
-          </KarteInhalt>
-        </Karte>
-      )}
-
-      {/* ── Angebot erstellen ── */}
-      {angebotOffen && (
-        <AngebotErstellen
-          fall={fall}
-          fachplaner={fachplaner}
+      {/* ── Beauftragen ── */}
+      {beauftragenOffen && (
+        <BeauftragungErstellen
+          standort={standort}
+          subplaner={subplaner}
           faehigkeiten={faehigkeiten}
           onFertig={() => {
-            setAngebotOffen(false);
+            setBeauftragenOffen(false);
             onAktualisiert();
           }}
-          onAbbrechen={() => setAngebotOffen(false)}
-          onFachplanerAendern={onFachplanerAendern}
+          onAbbrechen={() => setBeauftragenOffen(false)}
         />
       )}
 
-      {/* ── Angebote ── */}
+      {/* ── Erzeugte Einzelabrufe ── */}
       <Karte>
         <KarteKopf
-          titel="Angebote"
-          icon={FileText}
-          unterzeile="Dokument erzeugen und als Outlook-Entwurf verschicken."
+          titel="Einzelabrufe"
+          icon={Send}
+          unterzeile="Erzeugte Beauftragungen — Entwurf jederzeit erneut abrufbar."
         />
         <KarteInhalt className="px-0 sm:px-0">
-          {fall.angebote.length === 0 ? (
+          {standort.beauftragungen.length === 0 ? (
             <div className="px-4 sm:px-5">
               <LeerHinweis>
-                Noch kein Angebot. „Angebot erstellen“ öffnet das Formular.
+                Noch kein Einzelabruf. „Subplaner beauftragen“ führt durch
+                Phase, Termine und Vorschau.
               </LeerHinweis>
             </div>
           ) : (
             <div className="border-t border-app-linie">
-              {fall.angebote.map((angebot) => (
-                <AngebotZeile
-                  key={angebot.id}
-                  angebot={angebot}
-                  smtp={faehigkeiten?.smtp ?? false}
-                  onAendern={onAktualisiert}
+              {standort.beauftragungen.map((eintrag) => (
+                <BeauftragungZeile
+                  key={eintrag.id}
+                  eintrag={eintrag}
                   onFehler={setFehler}
-                  onMeldung={setMeldung}
                 />
               ))}
             </div>
@@ -365,64 +374,36 @@ export function McdonaldsFallDetail({
   );
 }
 
-function PfadZeile({
-  label,
-  pfad,
-  fehlt,
-}: {
-  label: string;
-  pfad: string | null;
-  fehlt: string;
-}) {
-  return (
-    <ReadOnlyField
-      label={label}
-      wert={
-        pfad ? (
-          <span className="inline-flex items-start gap-1.5">
-            <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-app-ok" />
-            <span className="min-w-0 font-mono text-[12px] break-all">{pfad}</span>
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-app-text-still">
-            <AlertTriangle size={13} className="shrink-0" />
-            {fehlt}
-          </span>
-        )
-      }
-    />
-  );
-}
-
-/** Die Angaben eines Falls korrigieren. */
+/** Die Angaben eines Standorts korrigieren. */
 function AngabenFormular({
-  fall,
+  standort,
   onFertig,
   onAbbrechen,
 }: {
-  fall: McdonaldsFall;
+  standort: McdStandort;
   onFertig: () => void;
   onAbbrechen: () => void;
 }) {
-  const [standortName, setStandortName] = useState(fall.standort_name);
-  const [adresse, setAdresse] = useState(fall.standort_adresse);
-  const [ort, setOrt] = useState(fall.standort_ort);
-  const [auftraggeber, setAuftraggeber] = useState(fall.auftraggeber);
+  const [ort, setOrt] = useState(standort.ort);
+  const [plz, setPlz] = useState(standort.plz);
+  const [strasse, setStrasse] = useState(standort.strasse);
+  const [name, setName] = useState(standort.standort_name);
   const [phase, setPhase] = useState(
-    fall.leistungsphase ? String(fall.leistungsphase) : ""
+    standort.phase ? String(standort.phase) : ""
   );
-  const [code, setCode] = useState(fall.unlocode ?? "");
+  const [beginn, setBeginn] = useState(standort.leistungsbeginn ?? "");
+  const [abgabe, setAbgabe] = useState(standort.abgabetermin ?? "");
+  const [code, setCode] = useState(standort.unlocode ?? "");
   const [speichert, setSpeichert] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
   const [treffer, setTreffer] = useState<string | null>(null);
 
   async function codeSuchen() {
-    const gesucht = ort.trim() || adresse.trim();
-    if (!gesucht) return;
+    if (!ort.trim()) return;
     setFehler(null);
     setTreffer(null);
     try {
-      const ergebnis = await api.mcdonalds.unlocodeSuche(gesucht);
+      const ergebnis = await api.mcdonalds.unlocodeSuche(ort.trim());
       setCode(ergebnis.code);
       setTreffer(
         `${ergebnis.code} — ${ergebnis.ort}` +
@@ -440,12 +421,14 @@ function AngabenFormular({
     setSpeichert(true);
     setFehler(null);
     try {
-      await api.mcdonalds.aendern(fall.id, {
-        standort_name: standortName.trim(),
-        standort_adresse: adresse.trim(),
-        standort_ort: ort.trim(),
-        auftraggeber: auftraggeber.trim(),
-        leistungsphase: phase ? Number(phase) : null,
+      await api.mcdonalds.aendern(standort.id, {
+        ort: ort.trim(),
+        plz: plz.trim(),
+        strasse: strasse.trim(),
+        standort_name: name.trim() || ort.trim(),
+        phase: phase ? Number(phase) : null,
+        leistungsbeginn: beginn || null,
+        abgabetermin: abgabe || null,
         ...(code.trim().length === 3 ? { unlocode: code.trim() } : {}),
       });
       onFertig();
@@ -462,31 +445,31 @@ function AngabenFormular({
       {treffer && <Meldung art="hinweis">{treffer}</Meldung>}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Standort">
-          <Input
-            value={standortName}
-            onChange={(e) => setStandortName(e.target.value)}
-            placeholder="z. B. Aachen Europaplatz"
-          />
-        </Field>
-        <Field label="Auftraggeber">
-          <Input
-            value={auftraggeber}
-            onChange={(e) => setAuftraggeber(e.target.value)}
-          />
-        </Field>
-        <Field label="Anschrift">
-          <Input value={adresse} onChange={(e) => setAdresse(e.target.value)} />
-        </Field>
         <Field label="Ort" hinweis="Grundlage der Ortscode-Suche.">
           <Input value={ort} onChange={(e) => setOrt(e.target.value)} />
         </Field>
-        <Field label="Leistungsphase">
+        <Field
+          label="Ordnername (Teil nach dem Code)"
+          hinweis="Leer = wie der Ort. Bei zwei Standorten in einer Stadt hier unterscheiden."
+        >
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={ort}
+          />
+        </Field>
+        <Field label="Postleitzahl">
+          <Input value={plz} onChange={(e) => setPlz(e.target.value)} />
+        </Field>
+        <Field label="Straße">
+          <Input value={strasse} onChange={(e) => setStrasse(e.target.value)} />
+        </Field>
+        <Field label="Phase">
           <Select value={phase} onChange={(e) => setPhase(e.target.value)}>
             <option value="">nicht angegeben</option>
             {PHASEN.map((p) => (
               <option key={p} value={p}>
-                LPH {p}
+                Phase {p}
               </option>
             ))}
           </Select>
@@ -499,13 +482,27 @@ function AngabenFormular({
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, 3))}
-              placeholder="AAH"
+              placeholder="NIV"
               className="w-24 font-mono"
             />
             <Button variante="sekundaer" icon={Search} onClick={codeSuchen}>
               Suchen
             </Button>
           </div>
+        </Field>
+        <Field label="Leistungsbeginn">
+          <Input
+            type="date"
+            value={beginn}
+            onChange={(e) => setBeginn(e.target.value)}
+          />
+        </Field>
+        <Field label="Abgabetermin">
+          <Input
+            type="date"
+            value={abgabe}
+            onChange={(e) => setAbgabe(e.target.value)}
+          />
         </Field>
       </div>
 
@@ -521,117 +518,49 @@ function AngabenFormular({
   );
 }
 
-/** Eine Zeile der Angebotsliste samt ihren beiden Aktionen. */
-function AngebotZeile({
-  angebot,
-  smtp,
-  onAendern,
+function BeauftragungZeile({
+  eintrag,
   onFehler,
-  onMeldung,
 }: {
-  angebot: McdonaldsAngebot;
-  smtp: boolean;
-  onAendern: () => void;
+  eintrag: McdBeauftragung;
   onFehler: (text: string | null) => void;
-  onMeldung: (text: string | null) => void;
 }) {
-  const [laeuft, setLaeuft] = useState("");
-
-  async function dokument() {
-    setLaeuft("dokument");
-    onFehler(null);
-    onMeldung(null);
-    try {
-      const { blob, dateiname } = await api.mcdonalds.dokumentErzeugen(angebot.id);
-      dateiSpeichern(blob, dateiname || "angebot.docx");
-      onMeldung("Das Angebotsdokument wurde erzeugt und heruntergeladen.");
-      onAendern();
-    } catch (err) {
-      onFehler(err instanceof Error ? err.message : "Erzeugen fehlgeschlagen.");
-    } finally {
-      setLaeuft("");
-    }
-  }
+  const [laeuft, setLaeuft] = useState(false);
 
   async function entwurf() {
-    setLaeuft("entwurf");
+    setLaeuft(true);
     onFehler(null);
-    onMeldung(null);
     try {
-      const { blob, dateiname } = await api.mcdonalds.entwurf(angebot.id);
-      dateiSpeichern(blob, dateiname || "angebot.eml");
-      onMeldung(
-        "Der Outlook-Entwurf wurde heruntergeladen. Doppelklick öffnet ihn " +
-          "mit Empfänger, Text und Angebot im Anhang — abgeschickt wird er " +
-          "von Outlook."
-      );
-      onAendern();
+      const { blob, dateiname } = await api.mcdonalds.entwurf(eintrag.id);
+      dateiSpeichern(blob, dateiname || "beauftragung.eml");
     } catch (err) {
       onFehler(err instanceof Error ? err.message : "Entwurf fehlgeschlagen.");
     } finally {
-      setLaeuft("");
-    }
-  }
-
-  async function senden() {
-    setLaeuft("senden");
-    onFehler(null);
-    onMeldung(null);
-    try {
-      const ergebnis = await api.mcdonalds.senden(angebot.id);
-      onMeldung(ergebnis.nachricht);
-      onAendern();
-    } catch (err) {
-      onFehler(err instanceof Error ? err.message : "Versand fehlgeschlagen.");
-    } finally {
-      setLaeuft("");
+      setLaeuft(false);
     }
   }
 
   return (
     <ListenZeile
-      vorne={<Building2 size={14} className="shrink-0 text-app-text-leise" />}
-      titel={angebot.fachplaner_name || "ohne Fachplaner"}
+      vorne={<Send size={14} className="shrink-0 text-app-text-leise" />}
+      titel={eintrag.betreff || eintrag.subplaner_name}
       unterzeile={
         <>
-          {angebot.leistungsphase ? `LPH ${angebot.leistungsphase} · ` : ""}
-          {angebot.fachplaner_email}
-          {angebot.mail_versendet_am
-            ? ` · ${
-                angebot.mail_weg === "entwurf" ? "Entwurf erstellt" : "versendet"
-              } ${formatDatum(angebot.mail_versendet_am)}`
-            : ""}
+          {eintrag.empfaenger.join(", ") || "ohne Empfänger"}
+          {eintrag.eml_pfad
+            ? " · im Vertragsordner abgelegt"
+            : " · Ablage steht noch aus"}
         </>
       }
       rechts={
-        <span className="flex items-center gap-1.5">
-          <Button
-            variante="still"
-            icon={laeuft === "dokument" ? Loader2 : Download}
-            onClick={dokument}
-            disabled={laeuft !== ""}
-          >
-            Dokument
-          </Button>
-          <Button
-            variante="sekundaer"
-            icon={laeuft === "entwurf" ? Loader2 : Mail}
-            onClick={entwurf}
-            disabled={laeuft !== ""}
-          >
-            Outlook-Entwurf
-          </Button>
-          {smtp && (
-            <Button
-              variante="still"
-              icon={laeuft === "senden" ? Loader2 : Mail}
-              onClick={senden}
-              disabled={laeuft !== ""}
-            >
-              Direkt senden
-            </Button>
-          )}
-        </span>
+        <Button
+          variante="sekundaer"
+          icon={laeuft ? Loader2 : Download}
+          onClick={entwurf}
+          disabled={laeuft}
+        >
+          Entwurf
+        </Button>
       }
     />
   );
@@ -649,7 +578,7 @@ function UnlocodeKarte({
   onFehler,
   onMeldung,
 }: {
-  faehigkeiten: McdonaldsFaehigkeiten | null;
+  faehigkeiten: McdFaehigkeiten | null;
   onGeladen: () => void;
   onFehler: (text: string | null) => void;
   onMeldung: (text: string | null) => void;
@@ -710,9 +639,9 @@ function UnlocodeKarte({
           {laeuft ? "Wird gelesen…" : "Excel-Tabelle hochladen"}
         </Button>
         <span className="text-[12px] text-app-text-still">
-          Ersetzt den bisherigen Bestand. Nur <span className="font-mono">.xlsx</span>{" "}
-          — eine alte <span className="font-mono">.xls</span> vorher in Excel neu
-          speichern.
+          Ersetzt den bisherigen Bestand. Nur{" "}
+          <span className="font-mono">.xlsx</span> — eine alte{" "}
+          <span className="font-mono">.xls</span> vorher in Excel neu speichern.
         </span>
       </KarteInhalt>
     </Karte>

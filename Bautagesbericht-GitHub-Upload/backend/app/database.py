@@ -4,6 +4,8 @@ Funktioniert sowohl mit SQLite (lokal) als auch mit Postgres (Produktion).
 Der Treiber wird an der URL erkannt.
 """
 
+from datetime import date
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -54,9 +56,61 @@ def get_db():
 
 def init_db():
     from app import models  # noqa: F401
+    _raeume_alte_mcdonalds_tabellen_auf()
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
     _seed_mangel_stammdaten()
+    _seed_mcdonalds_subplaner()
+
+
+# Tabellen der ersten McDonald's-Fassung. Sie hießen anders und hatten ein
+# anderes Feldschema (``leistungsphase`` 1-9 statt ``phase`` 1-3, ein Angebot
+# als Word-Dokument statt eines Einzelabrufs). Beim Umbau am 10.09.2026 sind
+# sie ersatzlos entfallen.
+ALTE_MCDONALDS_TABELLEN = ("mcdonalds_angebote", "mcdonalds_faelle",
+                           "mcdonalds_fachplaner")
+
+
+def _raeume_alte_mcdonalds_tabellen_auf() -> None:
+    """Entfernt die alten McDonald's-Tabellen — aber nur, wenn sie leer sind.
+
+    WARUM UEBERHAUPT LOESCHEN
+    =========================
+    ``create_all`` legt die neuen Tabellen daneben an und ruehrt die alten
+    nicht an. Die blieben dann fuer immer stehen: drei Tabellen, die niemand
+    liest, mit Spalten, die es im Modell nicht mehr gibt. Wer spaeter in die
+    Datenbank schaut, sieht zwei Feature-Generationen und weiss nicht, welche
+    gilt.
+
+    WARUM NUR WENN LEER
+    ===================
+    Weil ein Loeschen mit Daten Datenverlust waere. Die Bedingung ist die
+    Sicherung: Das Feature ist am 04.09.2026 entstanden und wurde am
+    10.09.2026 umgebaut, es kann also hoechstens Probierdatensaetze geben.
+    Steht irgendwo eine Zeile, bleibt alles liegen und diese Funktion tut
+    nichts — dann entscheidet ein Mensch, was damit passiert.
+
+    Die Reihenfolge ist wichtig: ``mcdonalds_angebote`` zeigt per
+    Fremdschluessel auf die beiden anderen und muss zuerst weg.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    vorhanden = [t for t in ALTE_MCDONALDS_TABELLEN
+                 if t in set(inspector.get_table_names())]
+    if not vorhanden:
+        return
+
+    with engine.begin() as conn:
+        for tabelle in vorhanden:
+            anzahl = conn.execute(
+                text(f"SELECT COUNT(*) FROM {tabelle}")  # noqa: S608
+            ).scalar_one()
+            if anzahl:
+                return          # Daten drin: nichts anfassen.
+
+        for tabelle in vorhanden:
+            conn.execute(text(f"DROP TABLE {tabelle}"))
 
 
 # Nachträglich ins Modell aufgenommene Spalten, Tabelle -> Spaltenname -> DDL.
@@ -191,5 +245,66 @@ def _seed_mangel_stammdaten() -> None:
                 db.add(MangelRueckmeldungStatus(bezeichnung=bezeichnung, sortierung=i))
 
         db.commit()
+    finally:
+        db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Startwerte der McDonald's-Stammdaten
+#
+# In Phase 1 werden immer dieselben zwei Subplaner beauftragt. Die Angaben
+# stammen aus den Musterschreiben des Büros (Stand 10.09.2026) und sind hier
+# hinterlegt, damit der Ablauf nach dem Aktualisieren sofort funktioniert,
+# ohne dass jemand zwei Firmen von Hand einträgt.
+#
+# NUR DIE E-MAIL-ADRESSEN FEHLEN
+# ==============================
+# Sie standen in den Musterschreiben nicht drin und werden deshalb NICHT
+# geraten — eine falsche Adresse in einem Einzelabruf fällt erst auf, wenn
+# der Subplaner nicht liefert. Die Oberfläche zeigt die beiden Firmen mit dem
+# Hinweis "Adresse fehlt" und lässt keinen Entwurf zu, solange keine
+# hinterlegt ist (siehe app.routers.mcdonalds).
+#
+# Angelegt wird nur, solange die Tabelle noch leer ist — wer die Stammdaten
+# anpasst oder eine Firma löscht, bekommt sie beim nächsten Start nicht
+# zurück. Dieselbe Regel wie bei den Mängel-Wertelisten oben.
+# ─────────────────────────────────────────────────────────────────────────────
+
+MCDONALDS_SUBPLANER_START = [
+    {
+        "phase": 1,
+        "kuerzel": "KOCKS",
+        "name": "Kocks Consult",
+        "ordner": "090_VAA_Kocks",
+        "ansprechpartner": "Herr Hömmerich",
+        "anrede": "Sehr geehrter Herr Hömmerich,",
+        "angebot_datum": date(2026, 2, 27),
+        "textvariante": "kocks",
+        "sortierung": 1,
+    },
+    {
+        "phase": 1,
+        "kuerzel": "RKA",
+        "name": "RKA Architekten Ammon & Kanthak PartGmbB",
+        "ordner": "010_OPG_ARC_RKA",
+        "ansprechpartner": "Frau Ammon",
+        "anrede": "Sehr geehrte Frau Ammon,",
+        "angebot_datum": date(2026, 3, 12),
+        "textvariante": "rka",
+        "sortierung": 2,
+    },
+]
+
+
+def _seed_mcdonalds_subplaner() -> None:
+    """Legt die Subplaner der Phase 1 an, falls noch keine vorhanden sind."""
+    from app.models import McdonaldsSubplaner
+
+    db = SessionLocal()
+    try:
+        if db.query(McdonaldsSubplaner).count() == 0:
+            for angaben in MCDONALDS_SUBPLANER_START:
+                db.add(McdonaldsSubplaner(emails=[], **angaben))
+            db.commit()
     finally:
         db.close()

@@ -163,25 +163,48 @@ class Settings(BaseSettings):
     )
     smtp_absender_name: str = "HPP Baumanagement"
 
-    # ── McDonald's: wohin der Projektordner angelegt wird ──
+    # ── McDonald's: wo die Standortordner entstehen ──
     #
-    # Zum Ablauf siehe app.services.mcdonalds_ordner. Der übergeordnete Ordner
-    # heißt ``<UNLOCODE>_<Standortname>`` und entsteht zweimal: einmal im
-    # Netzlaufwerk, einmal auf SharePoint.
+    # Zum Ablauf siehe app.services.mcdonalds_ordner. Ein Standort bekommt den
+    # Ordner ``<UNLOCODE>_<Standortname>`` mit der kompletten Musterstruktur
+    # des Büros (163 Unterordner), also z. B.
     #
-    # Beide Werte sind absichtlich leer. Solange einer fehlt, legt die App den
-    # betreffenden Ordner nicht an, sondern schreibt eine sprechende Meldung an
-    # den Fall (``ordner_status="fehler"``) — die Mail-Analyse, das Angebot und
-    # der Outlook-Entwurf funktionieren davon unabhängig weiter. Ein Absturz
-    # oder ein still ins Nichts geschriebener Ordner wäre die schlechtere
-    # Variante: Im Büro würde niemand merken, dass die Ablage fehlt.
+    #   M:\HAM-226010\STANDORTE\NIV_Nievern\18-GP\12_Verträge\…
     #
-    # TODO McDonald's: Echte Zielpfade eintragen, sobald sie feststehen —
-    # z. B. BTB_MCDONALDS_BASIS_H=H:\McDonalds\Projekte. Auf dem Bürorechner
-    # geht das über einstellungen.txt (mcdonalds_ordner_h /
-    # mcdonalds_ordner_sharepoint), siehe desktop/paket/server_starten.py.
-    mcdonalds_basis_h: str = ""            # TODO / später: Basispfad Netzlaufwerk H:
-    mcdonalds_basis_sharepoint: str = ""   # TODO / später: SharePoint-Zielbibliothek/-pfad
+    # ``mcdonalds_basis_standorte`` ist der STANDORTE-Ordner darüber.
+    #
+    # AUF DER WEBSITE BLEIBT ER LEER, UND ZWAR DAUERHAFT
+    # ==================================================
+    # Ein Dienst im Internet erreicht kein Laufwerk im Büronetz. Das ist keine
+    # fehlende Einstellung, sondern eine Tatsache — genau wie bei den Baufotos,
+    # die ein Bürorechner abholt (siehe app.routers.baufotos). Solange der Wert
+    # leer ist, legt die App keinen Ordner an, sondern merkt sich den fertigen
+    # Namen samt Struktur und meldet den Standort als "vorbereitet". Die
+    # Mail-Auswertung, die Ortscode-Ermittlung und die Einzelabrufe an die
+    # Subplaner funktionieren davon unabhängig vollständig.
+    #
+    # Auf dem Bürorechner (Windows-Paket) darf der Pfad gesetzt werden, dann
+    # entsteht der Ordner sofort und wirklich.
+    mcdonalds_basis_standorte: str = Field(
+        default="",
+        # Der frühere Name hieß nach dem Laufwerk H:; das echte Laufwerk ist
+        # M:. Der alte Name gilt weiter, damit eine schon eingetragene
+        # Einstellung nicht stillschweigend wirkungslos wird.
+        validation_alias=AliasChoices(
+            "BTB_MCDONALDS_BASIS_STANDORTE", "BTB_MCDONALDS_BASIS_H"
+        ),
+    )
+
+    # Der Musterordner, der kopiert wird. Leer = der Ordner
+    # ``x_CODE_NAME (Muster) [leer]`` neben den Standorten. Ist er nicht
+    # erreichbar, entsteht die Struktur aus der mitgelieferten Liste
+    # (app.services.mcdonalds_musterstruktur) — dann fehlen nur die beiden
+    # PDF-Vorlagen im StaffSafe-Ordner.
+    mcdonalds_musterordner: str = ""
+
+    # TODO McDonald's: SharePoint-Zielbibliothek. Anbindung noch nicht gebaut,
+    # nur der Aufrufpunkt steht (mcdonalds_ordner._lege_sharepoint_ordner_an).
+    mcdonalds_basis_sharepoint: str = ""
 
     # Öffentlich erreichbare Basis-URL der App, um im Teams-Post einen
     # funktionierenden Download-Link zu erzeugen, z. B.

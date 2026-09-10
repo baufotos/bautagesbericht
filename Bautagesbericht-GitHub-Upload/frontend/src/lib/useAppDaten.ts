@@ -39,16 +39,16 @@ import { NUR_FOTOS } from "./umfang";
 import type {
   Einreichung,
   Empfaenger,
-  Fachplaner,
   FotosatzListItem,
   Gewerk,
   MangelFilter,
   MangelListItem,
   MangelStammdaten,
-  McdonaldsFaehigkeiten,
-  McdonaldsFall,
+  McdFaehigkeiten,
+  McdStandort,
   Projekt,
   ProjektPlan,
+  Subplaner,
 } from "./types";
 
 const PROJEKT_SPEICHER = "hpp-app-projekt";
@@ -62,9 +62,9 @@ export interface AppDaten {
   einreichungen: Einreichung[];
 
   /* McDonald's — projektunabhängig, siehe Kommentar bei ladeMcdonalds. */
-  mcdonaldsFaelle: McdonaldsFall[];
-  fachplaner: Fachplaner[];
-  mcdonaldsFaehigkeiten: McdonaldsFaehigkeiten | null;
+  mcdStandorte: McdStandort[];
+  subplaner: Subplaner[];
+  mcdFaehigkeiten: McdFaehigkeiten | null;
   laedtMcdonalds: boolean;
   ladeMcdonalds: () => Promise<void>;
 
@@ -111,10 +111,10 @@ export function useAppDaten(): AppDaten {
 
   const [maengelFilter, setMaengelFilter] = useState<MangelFilter>({});
 
-  const [mcdonaldsFaelle, setMcdonaldsFaelle] = useState<McdonaldsFall[]>([]);
-  const [fachplaner, setFachplaner] = useState<Fachplaner[]>([]);
-  const [mcdonaldsFaehigkeiten, setMcdonaldsFaehigkeiten] =
-    useState<McdonaldsFaehigkeiten | null>(null);
+  const [mcdStandorte, setMcdStandorte] = useState<McdStandort[]>([]);
+  const [subplaner, setSubplaner] = useState<Subplaner[]>([]);
+  const [mcdFaehigkeiten, setMcdFaehigkeiten] =
+    useState<McdFaehigkeiten | null>(null);
   const [laedtMcdonalds, setLaedtMcdonalds] = useState(false);
 
   const [laedt, setLaedt] = useState(true);
@@ -179,14 +179,14 @@ export function useAppDaten(): AppDaten {
     if (NUR_FOTOS) return;
     setLaedtMcdonalds(true);
     try {
-      const [faelle, planer, faehig] = await Promise.all([
-        api.mcdonalds.faelle(),
-        api.fachplaner.list(),
+      const [standorte, planer, faehig] = await Promise.all([
+        api.mcdonalds.standorte(),
+        api.subplaner.list(),
         api.mcdonalds.faehigkeiten(),
       ]);
-      setMcdonaldsFaelle(faelle);
-      setFachplaner(planer);
-      setMcdonaldsFaehigkeiten(faehig);
+      setMcdStandorte(standorte);
+      setSubplaner(planer);
+      setMcdFaehigkeiten(faehig);
     } catch {
       /* Der globale Fehlerhinweis steht schon; hier nicht überschreiben. */
     } finally {
@@ -297,8 +297,8 @@ export function useAppDaten(): AppDaten {
     return () => clearInterval(zeitgeber);
   }, [inArbeit, ladeEinreichungen]);
 
-  const ordnerInArbeit = mcdonaldsFaelle.some(
-    (f) => f.ordner_status === "ausstehend"
+  const ordnerInArbeit = mcdStandorte.some(
+    (s) => s.ordner_status === "ausstehend"
   );
 
   useEffect(() => {
@@ -341,9 +341,9 @@ export function useAppDaten(): AppDaten {
     maengelFilter,
     setzeMaengelFilter: setMaengelFilter,
 
-    mcdonaldsFaelle,
-    fachplaner,
-    mcdonaldsFaehigkeiten,
+    mcdStandorte,
+    subplaner,
+    mcdFaehigkeiten,
     laedtMcdonalds,
     ladeMcdonalds,
 

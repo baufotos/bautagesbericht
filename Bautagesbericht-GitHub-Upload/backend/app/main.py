@@ -12,7 +12,6 @@ from app.routers import (
     besprechungsprotokolle,
     einreichungen,
     empfaenger,
-    fachplaner,
     gewerke,
     health,
     maengel,
@@ -23,6 +22,7 @@ from app.routers import (
     plaene,
     projekte,
     projektberichte,
+    subplaner,
 )
 from app.security import pruefe_seitenpasswort
 
@@ -78,12 +78,12 @@ app.include_router(baufotos.router, prefix="/api")
 
 # McDonald's — automatisierte Projektanlage + Beauftragung
 #
-# Zwei Router, weil es zwei Dinge sind: der Ablauf selbst (Mail hochladen,
-# Ordner anlegen, Angebot verschicken) und die Stammdaten der Unternehmen, die
-# beauftragt werden. Die Fachplaner stehen deshalb bei den anderen Stammdaten
-# in der Oberfläche und nicht im McDonald's-Bereich.
+# Zwei Router, weil es zwei Dinge sind: der Ablauf selbst (SLS-Mail hochladen,
+# Standortordner anlegen, Subplaner beauftragen) und die Stammdaten der
+# Unternehmen je Phase. Die Subplaner stehen deshalb bei den anderen
+# Stammdaten in der Oberfläche und nicht im McDonald's-Bereich.
 app.include_router(mcdonalds.router, prefix="/api")
-app.include_router(fachplaner.router, prefix="/api")
+app.include_router(subplaner.router, prefix="/api")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

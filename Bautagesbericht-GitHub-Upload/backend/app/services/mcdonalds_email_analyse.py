@@ -1,35 +1,34 @@
-"""Eine als ``.eml`` exportierte Auftragsmail auswerten.
+"""Eine ``.eml``-Datei zerlegen — und als Notausgang vom Modell lesen lassen.
 
-WAS DIESES MODUL TUT — UND WAS AUSDRÜCKLICH NICHT
-=================================================
-Es **schlägt vor**. Dieselbe Regel wie bei der Besprechungsanalyse
-(``besprechung_analyse``) und aus demselben Grund: Ein falsch gelesener
-Standort sieht in der Ablage genauso aus wie ein richtiger. Alles, was hier
-entsteht, landet im Fall als Entwurf und ist in der Oberfläche änderbar,
-bevor daraus ein Ordnername oder ein Angebot wird.
+ZWEI AUFGABEN, KLAR GETRENNT
+============================
+1. ``lies_eml`` zerlegt die hochgeladene Datei: Kopfdaten, Klartext (aus dem
+   HTML-Teil, wenn es keinen Klartext gibt) und die Namen der Anhänge. Reine
+   Stdlib, kein Netz, keine Kosten — das funktioniert immer.
+2. ``analysiere`` fragt das Sprachmodell. Das ist der **Notausgang**, nicht
+   der Hauptweg.
 
-ZWEI SCHRITTE, DIE GETRENNT BLEIBEN MÜSSEN
-==========================================
-1. **Die Mail lesen** (``lies_eml``) — reine Stdlib, kein Netz, keine Kosten.
-   Sie liefert Betreff, Absender, Datum, Klartext und die Namen der Anhänge.
-2. **Die Angaben herauslesen** (``analysiere``) — dafür wird die
-   Anthropic-Schnittstelle gefragt.
+DER HAUPTWEG IST ``mcdonalds_sls``
+==================================
+Die SLS-Anfrage von McDonald's ist maschinenerzeugt und immer gleich
+aufgebaut; sie wird nach Regeln gelesen. Das ist schneller, kostenlos,
+braucht keinen Schlüssel und ist zuverlässiger, weil ein regulärer Ausdruck
+auf einer festen Zeile trifft oder gar nicht trifft — ein Modell hält
+dagegen auch mal etwas anderes für plausibel.
 
-Der erste Schritt funktioniert immer, der zweite nur mit hinterlegtem
-Schlüssel. Auf dem Bürorechner ist er oft nicht hinterlegt (siehe
-einstellungen.txt). Deshalb ist die Trennung keine Formsache: Ohne Schlüssel
-wird die Mail trotzdem hochgeladen und ihr Text gespeichert, und der Bauleiter
-trägt die vier Eckdaten von Hand ein — statt einer Fehlermeldung, nach der er
-von vorn anfängt.
+Dieses Modul kommt zum Zug, wenn die Regeln nichts finden: McDonald's ändert
+das Format, oder jemand lädt eine andere Auftragsmail hoch. Dann liest — falls
+ein Anthropic-Schlüssel hinterlegt ist — das Modell dieselben Felder aus dem
+Freitext. Findet auch das nichts, bleiben die Felder leer und werden von Hand
+gefüllt; der hochgeladene Text ist gespeichert und geht nicht verloren.
 
-WAS NICHT GERATEN WIRD
-======================
-* Die Leistungsphase nur, wenn sie in der Mail steht. "wahrscheinlich LPH 8"
-  ist keine Beauftragung.
-* Der Standortname nur, wenn er benennbar ist — nicht aus der Adresse
-  zusammengebaut.
-* Kein Auftraggeber aus der Absenderdomäne. Wer die Mail geschrieben hat, ist
-  nicht zwangsläufig der Auftraggeber.
+WAS DIESES MODUL NICHT TUT
+==========================
+Es entscheidet nichts. Alles, was hier entsteht, ist ein Vorschlag und in der
+Oberfläche änderbar, bevor daraus ein Ordnername oder ein Vertragstermin wird
+— dieselbe Regel wie in ``besprechung_analyse``, aus demselben Grund: Ein
+falsch gelesener Termin sieht in einem Einzelabruf genauso aus wie ein
+richtiger.
 """
 
 from __future__ import annotations
@@ -56,9 +55,8 @@ MAX_TOKENS = 2048
 #: weitergeleiteten Mail der angehängte Verlauf früherer Nachrichten.
 MAX_MAILTEXT = 60_000
 
-#: Leistungsphasen nach HOAI. Im McDonald's-Ablauf sind vor allem 6–9
-#: relevant (Vergabe, Objektüberwachung, Objektbetreuung).
-LEISTUNGSPHASEN = tuple(range(1, 10))
+#: Die Phasen des Kundenprozesses, gegen die geprüft wird.
+from app.models import MCDONALDS_PHASEN  # noqa: E402
 
 
 class AnalyseFehler(RuntimeError):
@@ -80,15 +78,14 @@ class EmlInhalt:
 
 @dataclass
 class FallAngaben:
-    """Die herausgelesenen Eckdaten einer Beauftragung."""
+    """Die herausgelesenen Eckdaten — Feldnamen wie am Modell."""
 
-    auftraggeber: str = ""
-    standort_name: str = ""
-    standort_adresse: str = ""
-    standort_ort: str = ""
-    leistungsphase: int | None = None
-    #: Sonstige Eckdaten als {Bezeichnung: Wert} — siehe models.McdonaldsFall.
-    eckdaten: dict[str, str] = field(default_factory=dict)
+    #: Ort des Standorts ("Nievern") — Grundlage des Ortscodes.
+    ort: str = ""
+    plz: str = ""
+    strasse: str = ""
+    #: 1-3, die Phase des McDonald's-Prozesses (NICHT die HOAI-Leistungsphase).
+    phase: int | None = None
     #: Was beim Auswerten aufgefallen ist. Steht in der Oberfläche.
     hinweise: list[str] = field(default_factory=list)
 
@@ -250,95 +247,62 @@ def prompttext(inhalt: EmlInhalt) -> tuple[str, list[str]]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Der Auftrag an das Modell
 #
-# TODO McDonald's: Anweisung und Feldkatalog werden vom Büro nachgereicht.
-# Was hier steht, ist ein tragfähiger Anfang mit den vier Angaben, die
-# feststehen (Standortname, Adresse, Auftraggeber, Leistungsphase) plus einem
-# offenen Fach für alles Weitere. Beide Konstanten sind bewusst reine Daten:
-# Sie lassen sich austauschen, ohne den Ablauf darunter anzufassen.
+# Gefragt wird nach genau den Feldern, die ``mcdonalds_sls`` aus dem Betreff
+# liest — Phase, Postleitzahl, Ort, Straße. Nach den Terminen wird NICHT
+# gefragt: Sie stehen in einem Vertragstext, und ein geratener Termin ist
+# schlimmer als ein leeres Feld, das jemand füllen muss.
 # ─────────────────────────────────────────────────────────────────────────────
 
-ANWEISUNG = """Du liest die Auftragsmail eines Kunden an ein Architekturbüro \
-und trägst die Eckdaten in ein Formular ein.
+ANWEISUNG = """Du liest eine Auftragsmail an ein Architekturbüro und trägst \
+den Standort in ein Formular ein.
+
+Zum Zusammenhang: Der Kunde ist McDonald's Deutschland. Die Mails kündigen \
+einen neuen Restaurant-Standort an und bitten um die Vorbereitung einer von \
+drei Projektphasen.
 
 Regeln:
 
 1. NICHTS RATEN. Was nicht in der Mail steht, bleibt leer. Ein leeres Feld \
 wird im Büro nachgetragen; ein erfundenes fällt niemandem auf.
-2. Der STANDORTNAME ist die Bezeichnung, unter der das Büro den Standort \
-kennt — meist Ort plus Lage ("Aachen Europaplatz", "Hamburg Altona"). Steht \
-in der Mail nur eine Anschrift, bleibt das Feld leer; die Adresse gehört \
-in ihr eigenes Feld.
-3. Die ADRESSE vollständig, wie sie in der Mail steht (Straße, Hausnummer, \
-Postleitzahl, Ort) — in einer Zeile, Teile durch Komma getrennt.
-4. Der ORT ist nur der Ortsname aus dieser Adresse, ohne Postleitzahl und \
-ohne Stadtteil ("Hamburg", nicht "22767 Hamburg-Altona"). Er wird für die \
-Suche in einer amtlichen Ortstabelle gebraucht, in der nur Ortsnamen stehen.
-5. Der AUFTRAGGEBER ist das beauftragende Unternehmen, nicht die Person, die \
-die Mail geschrieben hat, und nicht aus der Mailadresse abgeleitet.
-6. Die LEISTUNGSPHASE ist eine Zahl von 1 bis 9 nach HOAI und nur zu setzen, \
-wenn sie in der Mail benannt ist ("LPH 6", "Leistungsphase 8", "Phase 3"). \
-Sonst null.
-7. In ECKDATEN gehört, was für die Beauftragung sonst zählt und klar in der \
-Mail steht: Termine, Fristen, Ansprechpartner mit Rolle, Projekt- oder \
-Bestellnummern des Kunden, Budget. Jeweils als kurze Bezeichnung und Wert. \
-Keine Zusammenfassung des Mailtexts.
-8. In HINWEISE gehört, was beim Lesen unklar blieb — insbesondere \
-Widersprüche und Angaben, die zwar dastehen, aber mehrdeutig sind."""
+2. Der ORT ist der Ortsname allein, ohne Postleitzahl und ohne Stadtteil \
+("Nievern", nicht "56132 Nievern, Auf d. Lay"). Er wird für die Suche in \
+einer amtlichen Ortstabelle gebraucht, in der nur Ortsnamen stehen.
+3. Die POSTLEITZAHL fünfstellig, nur wenn sie dasteht.
+4. Die STRASSE mit Hausnummer, falls angegeben, ohne Ort.
+5. Die PHASE ist 1, 2 oder 3 und nur zu setzen, wenn die Mail sie benennt — \
+"F1", "Phase 1", "F2 Vorbereitung". Achtung: Das sind die Phasen des \
+Kundenprozesses, NICHT die Leistungsphasen 1-9 der HOAI. Steht in der Mail \
+eine Leistungsphase nach HOAI, gehört sie nicht in dieses Feld.
+6. In HINWEISE gehört, was unklar blieb — besonders Widersprüche und \
+Angaben, die dastehen, aber mehrdeutig sind."""
 
 WERKZEUG = {
-    "name": "beauftragung_erfassen",
+    "name": "standort_erfassen",
     "description": (
-        "Trägt die Eckdaten einer Auftragsmail in das Formular des Büros ein."
+        "Trägt den Standort einer Auftragsmail in das Formular des Büros ein."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "auftraggeber": {
+            "ort": {
                 "type": "string",
                 "description": (
-                    "Beauftragendes Unternehmen, wie in der Mail benannt. "
-                    "Leer, wenn nicht genannt."
+                    "Nur der Ortsname, ohne Postleitzahl und Stadtteil."
                 ),
             },
-            "standort_name": {
+            "plz": {
                 "type": "string",
-                "description": (
-                    "Bezeichnung des Standorts, z. B. 'Aachen Europaplatz'. "
-                    "Leer, wenn die Mail nur eine Anschrift enthält."
-                ),
+                "description": "Fünfstellige Postleitzahl, sonst leer.",
             },
-            "standort_adresse": {
+            "strasse": {
                 "type": "string",
-                "description": (
-                    "Vollständige Anschrift in einer Zeile, Teile durch Komma "
-                    "getrennt."
-                ),
+                "description": "Straße mit Hausnummer, sonst leer.",
             },
-            "standort_ort": {
-                "type": "string",
-                "description": (
-                    "Nur der Ortsname aus der Anschrift, ohne Postleitzahl "
-                    "und ohne Stadtteil."
-                ),
-            },
-            "leistungsphase": {
+            "phase": {
                 "type": ["integer", "null"],
                 "description": (
-                    "1 bis 9 nach HOAI, oder null, wenn in der Mail keine "
-                    "Phase benannt ist."
+                    "1, 2 oder 3 (Kundenprozess, nicht HOAI), oder null."
                 ),
-            },
-            "eckdaten": {
-                "type": "array",
-                "description": "Weitere klar benannte Angaben zur Beauftragung.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "bezeichnung": {"type": "string"},
-                        "wert": {"type": "string"},
-                    },
-                    "required": ["bezeichnung", "wert"],
-                },
             },
             "hinweise": {
                 "type": "array",
@@ -346,13 +310,7 @@ WERKZEUG = {
                 "items": {"type": "string"},
             },
         },
-        "required": [
-            "auftraggeber",
-            "standort_name",
-            "standort_adresse",
-            "standort_ort",
-            "leistungsphase",
-        ],
+        "required": ["ort", "plz", "strasse", "phase"],
     },
 }
 
@@ -362,34 +320,10 @@ WERKZEUG = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-#: Wie lange auf eine Antwort gewartet wird. Eine Beauftragungs-Mail ist
-#: kurz; eine Minute reicht reichlich. Siehe ``_client``.
-ZEITGRENZE_SEKUNDEN = 60.0
-
-
 def _client():
-    """Der Zugang zur Schnittstelle — mit Zeitgrenze und ohne Eigenleben.
-
-    Dasselbe Muster wie in ``anzeige_formulierung._client``, und aus
-    demselben Grund:
-
-    ``timeout`` — ohne Angabe wartet das Paket zehn Minuten (nachgesehen:
-    ``anthropic._constants.DEFAULT_TIMEOUT``, read=600). Ist
-    api.anthropic.com wegen einer Firewall gar nicht erreichbar, stünde die
-    Oberfläche zehn Minuten ohne Erklärung.
-
-    ``max_retries=0`` — das Paket wiederholt von sich aus zweimal, und
-    ``schnittstelle.mit_wiederholung`` wiederholt außen dreimal. Zusammen
-    sind das neun Anfragen je Aufruf. Wiederholt wird deshalb nur außen, wo
-    die Wartezeiten und die Fehlerdeutung hinterlegt sind.
-    """
     import anthropic
 
-    return anthropic.Anthropic(
-        api_key=settings.anthropic_api_key,
-        timeout=ZEITGRENZE_SEKUNDEN,
-        max_retries=0,
-    )
+    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
 def _werkzeug_antwort(antwort, name: str) -> dict:
@@ -433,61 +367,43 @@ def _text(wert) -> str:
 def zu_angaben(roh: dict) -> FallAngaben:
     """Macht aus der Modellantwort ein geprüftes Ergebnisobjekt.
 
-    Jedes Feld wird einzeln geprüft. Eine Phase 12 oder ein Eckdatum ohne
-    Bezeichnung wird verworfen und gemeldet, nicht durchgelassen: Was hier
-    hineinkommt, steht nachher im Ordnernamen und im Angebot.
+    Jedes Feld wird einzeln geprüft. Eine Phase 7 oder eine vierstellige
+    Postleitzahl wird verworfen und gemeldet, nicht durchgelassen: Was hier
+    hineinkommt, steht nachher im Ordnernamen.
     """
     angaben = FallAngaben(
-        auftraggeber=_text(roh.get("auftraggeber")),
-        standort_name=_text(roh.get("standort_name")),
-        standort_adresse=_text(roh.get("standort_adresse")),
-        standort_ort=_text(roh.get("standort_ort")),
+        ort=_text(roh.get("ort")),
+        plz=_text(roh.get("plz")),
+        strasse=_text(roh.get("strasse")),
     )
 
-    phase = roh.get("leistungsphase")
+    if angaben.plz and not re.fullmatch(r"\d{5}", angaben.plz):
+        angaben.hinweise.append(
+            f"„{angaben.plz}“ ist keine deutsche Postleitzahl und wurde nicht "
+            "übernommen."
+        )
+        angaben.plz = ""
+
+    phase = roh.get("phase")
     if phase not in (None, ""):
         try:
             zahl = int(phase)
         except (TypeError, ValueError):
             angaben.hinweise.append(
-                f"Die Leistungsphase „{phase}“ war keine Zahl und wurde nicht "
-                "übernommen."
+                f"Die Phase „{phase}“ war keine Zahl und wurde nicht übernommen."
             )
         else:
-            if zahl in LEISTUNGSPHASEN:
-                angaben.leistungsphase = zahl
+            if zahl in MCDONALDS_PHASEN:
+                angaben.phase = zahl
             else:
                 angaben.hinweise.append(
-                    f"Leistungsphase {zahl} gibt es nicht (1–9) — nicht "
-                    "übernommen."
+                    f"Phase {zahl} gibt es nicht (1–3) — nicht übernommen."
                 )
-
-    for eintrag in roh.get("eckdaten") or []:
-        if not isinstance(eintrag, dict):
-            continue
-        bezeichnung = _text(eintrag.get("bezeichnung"))
-        wert = _text(eintrag.get("wert"))
-        if bezeichnung and wert:
-            angaben.eckdaten[bezeichnung] = wert
 
     for hinweis in roh.get("hinweise") or []:
         text = _text(hinweis)
         if text:
             angaben.hinweise.append(text)
-
-    if not angaben.standort_ort and angaben.standort_adresse:
-        # Der Ort ist die Grundlage des UNLOCODE-Abgleichs. Fehlt er, wird er
-        # aus der Adresse abgeleitet — mit Hinweis, denn das ist eine Regel
-        # und keine gelesene Angabe.
-        from app.services.mcdonalds_unlocode import ort_aus_adresse
-
-        abgeleitet = ort_aus_adresse(angaben.standort_adresse)
-        if abgeleitet:
-            angaben.standort_ort = abgeleitet
-            angaben.hinweise.append(
-                f"Der Ort „{abgeleitet}“ wurde aus der Adresse abgeleitet, "
-                "nicht der Mail entnommen. Bitte prüfen."
-            )
 
     return angaben
 
@@ -503,13 +419,15 @@ def ist_verfuegbar() -> bool:
 
 
 async def analysiere(inhalt: EmlInhalt) -> FallAngaben:
-    """Liest die Eckdaten aus dem Inhalt einer Auftragsmail heraus."""
+    """Liest den Standort aus dem Inhalt einer Auftragsmail heraus.
+
+    Nur aufrufen, wenn ``mcdonalds_sls`` nichts gefunden hat — siehe
+    Modultext.
+    """
     if not ist_verfuegbar():
         raise AnalyseFehler(
-            "Für die Mail-Analyse fehlt der Anthropic-Schlüssel. In "
-            "einstellungen.txt bei „anthropic_key=“ eintragen — er beginnt "
-            "mit „sk-ant-“. Ohne ihn lassen sich die Angaben von Hand "
-            "erfassen."
+            "Für die Mail-Analyse fehlt der Anthropic-Schlüssel. Ohne ihn "
+            "lassen sich die Angaben von Hand erfassen."
         )
     if not (inhalt.text or "").strip():
         raise AnalyseFehler(
@@ -538,9 +456,9 @@ async def analysiere(inhalt: EmlInhalt) -> FallAngaben:
 
     angaben = zu_angaben(roh)
     angaben.hinweise = hinweise + inhalt.hinweise + angaben.hinweise
-    if not (angaben.standort_name or angaben.standort_adresse):
+    if not angaben.ort:
         angaben.hinweise.append(
-            "In der Mail war kein Standort zu finden. Ohne Standort lässt "
-            "sich kein Projektordner benennen — bitte nachtragen."
+            "In der Mail war kein Ort zu finden. Ohne Ort gibt es keinen "
+            "Ortscode und keinen Ordnernamen — bitte nachtragen."
         )
     return angaben

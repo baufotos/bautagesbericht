@@ -995,114 +995,190 @@ export interface AnzeigeGlaettenErgebnis {
 
 /* ───────────────────────── McDonald's ─────────────────────────
  *
- * Automatisierte Projektanlage und Beauftragung. Zum Ablauf siehe
- * components/mcdonalds/ und backend/app/models.py (Abschnitt McDonald's).
+ * Standort aus der SLS-Anfrage anlegen und die Subplaner der Phase
+ * beauftragen. Zum Ablauf siehe components/mcdonalds/ und
+ * backend/app/models.py (Abschnitt McDonald's).
  */
 
-/** Ein Fachplaner-Unternehmen aus den Stammdaten. */
-export interface Fachplaner {
+/** Die Phasen des Kundenprozesses — NICHT die HOAI-Leistungsphasen. */
+export type McdPhase = 1 | 2 | 3;
+
+/** Ein Subplaner aus den Stammdaten, einer Phase zugeordnet. */
+export interface Subplaner {
   id: number;
+  phase: number;
+  /** Firmenname, wie er im Schreiben steht („Kocks Consult"). */
   name: string;
+  /** Kurzform für den Betreff („KOCKS"). */
+  kuerzel: string;
+  /** Ordner unter 02_Subplaner, z. B. „090_VAA_Kocks". */
+  ordner: string;
   ansprechpartner: string;
-  email: string;
-  adresse: string;
+  /** Die Anredezeile im Wortlaut („Sehr geehrter Herr Hömmerich,"). */
+  anrede: string;
+  /** Mehrere Empfängeradressen. Leer = es geht noch kein Entwurf. */
+  emails: string[];
+  /** „gemäß ihrem Angebot vom …" */
+  angebot_datum: string | null;
+  /** Kennung der Textfassung des Einzelabrufs. */
+  textvariante: string;
+  sortierung: number;
   erstellt_am: string;
 }
 
-/** Eine Zeile im Abschnitt „Mehrleistungen“ eines Angebots. */
-export interface Mehrleistung {
-  bezeichnung: string;
-  /** Darf fehlen: Oft steht erst die Leistung fest, der Preis später. */
-  betrag: number | null;
+export interface SubplanerEingabe {
+  phase: number;
+  name: string;
+  kuerzel?: string;
+  ordner?: string;
+  ansprechpartner?: string;
+  anrede?: string;
+  emails?: string[];
+  angebot_datum?: string | null;
+  textvariante?: string;
+  sortierung?: number;
 }
 
-export interface McdonaldsAngebot {
+/** Eine wählbare Textfassung — für das Auswahlfeld in den Stammdaten. */
+export interface TextvarianteInfo {
+  kennung: string;
+  beschriftung: string;
+}
+
+/** Ein erzeugter Einzelabruf. */
+export interface McdBeauftragung {
   id: number;
-  fall_id: number;
-  fachplaner_id: number;
-  fachplaner_name: string;
-  fachplaner_email: string;
+  standort_id: number;
+  subplaner_id: number;
+  subplaner_name: string;
+  subplaner_kuerzel: string;
+  phase: number;
   betreff: string;
-  leistungsphase: number | null;
-  angaben: Record<string, string>;
-  mehrleistungen: Mehrleistung[];
-  dokument_vorhanden: boolean;
+  /** Das vollständige Schreiben — zum Gegenlesen. */
+  text: string;
+  beauftragung_am: string | null;
+  leistungsbeginn: string | null;
+  projektplanung: string | null;
+  klaerung: string | null;
+  abgabe: string | null;
+  empfaenger: string[];
+  /** Wohin die .eml gelegt wurde; null = Ablage steht noch aus. */
+  eml_pfad: string | null;
   mail_versendet_am: string | null;
-  /** "entwurf" (Outlook hat den Entwurf) | "smtp" | "". */
   mail_weg: string;
   erstellt_am: string;
 }
 
-/** Zustand der Ordneranlage — die Plakette in der Übersicht. */
-export type OrdnerStatus = "ausstehend" | "angelegt" | "fehler";
+/**
+ * Zustand der Ordneranlage.
+ *
+ * „vorbereitet" ist auf der Website der Normalfall und **kein Fehler**: Ein
+ * Dienst im Internet erreicht das Projektlaufwerk im Büronetz nicht. Name und
+ * Struktur stehen fest, angelegt wird der Ordner von einem Rechner im Büro.
+ */
+export type OrdnerStatus = "ausstehend" | "vorbereitet" | "angelegt" | "fehler";
 
-export interface McdonaldsFall {
+export interface McdStandort {
   id: number;
-  /** "eml" (Mail hochgeladen) | "telefon" (von Hand erfasst). */
+  /** „eml" (SLS-Anfrage hochgeladen) | „manuell". */
   quelle: string;
   eml_dateiname: string;
-  /** null = nicht per KI ausgewertet (kein Schlüssel, oder Handeingabe). */
+  /** Wurde die Datei als SLS-Anfrage erkannt? Dann sind die Werte gelesen. */
+  sls_erkannt: boolean;
+  /** Gesetzt, wenn zusätzlich die KI gelesen hat (Notausgang). */
   analysiert_am: string | null;
-  auftraggeber: string;
+  phase: number | null;
+  ort: string;
+  plz: string;
+  strasse: string;
   standort_name: string;
-  standort_adresse: string;
-  standort_ort: string;
-  leistungsphase: number | null;
-  eckdaten: Record<string, string>;
+  abgabetermin: string | null;
+  leistungsbeginn: string | null;
+  sls_vorgang: string;
   anhaenge: string[];
   unlocode: string | null;
   ordner_name: string;
   ordner_status: OrdnerStatus;
-  ordner_pfad_h: string | null;
+  ordner_pfad: string | null;
   ordner_pfad_sharepoint: string | null;
+  ordner_anzahl: number;
   fehlermeldung: string | null;
   erstellt_am: string;
   aktualisiert_am: string | null;
-  /** Nur in der Detailansicht belegt — in der Liste leer. */
+  /** Nur in der Detailansicht belegt. */
   roh_text: string;
-  angebote: McdonaldsAngebot[];
+  beauftragungen: McdBeauftragung[];
   /** Rückmeldung auf genau diesen Aufruf, nicht gespeichert. */
   hinweise: string[];
 }
 
-/** Angaben der telefonischen Beauftragung. */
-export interface McdonaldsFallManuell {
-  standort_name: string;
-  standort_adresse?: string;
-  standort_ort?: string;
-  auftraggeber?: string;
-  leistungsphase?: number | null;
-  eckdaten?: Record<string, string>;
+export interface McdStandortManuell {
+  ort: string;
+  plz?: string;
+  strasse?: string;
+  standort_name?: string;
+  phase?: number | null;
+  abgabetermin?: string | null;
+  leistungsbeginn?: string | null;
+  sls_vorgang?: string;
   notiz?: string;
 }
 
-/** Nachträgliche Korrektur eines Falls. Nicht gesetzte Felder bleiben. */
-export interface McdonaldsFallUpdate {
+export interface McdStandortUpdate {
+  ort?: string;
+  plz?: string;
+  strasse?: string;
   standort_name?: string;
-  standort_adresse?: string;
-  standort_ort?: string;
-  auftraggeber?: string;
-  leistungsphase?: number | null;
-  eckdaten?: Record<string, string>;
+  phase?: number | null;
+  abgabetermin?: string | null;
+  leistungsbeginn?: string | null;
+  sls_vorgang?: string;
   unlocode?: string;
 }
 
-export interface McdonaldsAngebotEingabe {
-  fachplaner_id: number;
-  betreff?: string;
-  leistungsphase?: number | null;
-  angaben?: Record<string, string>;
-  mehrleistungen?: Mehrleistung[];
+/** Die Termine der Einzelabrufe — alle vorbelegt, alle überschreibbar. */
+export interface BeauftragungTermine {
+  beauftragung_am?: string | null;
+  leistungsbeginn?: string | null;
+  projektplanung?: string | null;
+  klaerung?: string | null;
+  abgabe?: string | null;
+}
+
+export interface BeauftragungAnfrage extends BeauftragungTermine {
+  phase: number;
+  /** Leer = alle Subplaner der Phase. */
+  subplaner_ids?: number[];
+}
+
+/** Was ein Einzelabruf enthalten würde — vor dem Erzeugen. */
+export interface BeauftragungVorschau {
+  subplaner_id: number;
+  subplaner_name: string;
+  subplaner_kuerzel: string;
+  empfaenger: string[];
+  betreff: string;
+  text: string;
+  /** Ordner, in dem die .eml landet (relativ zum Standortordner). */
+  ablage: string;
+  bereit: boolean;
+  hindernis: string;
 }
 
 /** Was der Server in diesem Bereich kann — steuert die Knöpfe. */
-export interface McdonaldsFaehigkeiten {
+export interface McdFaehigkeiten {
   analyse: boolean;
   smtp: boolean;
   absender: string;
-  ordner_h: boolean;
+  /** Kann diese Installation Ordner anlegen? Auf der Website dauerhaft false. */
+  ordner_laufwerk: boolean;
+  /** Ist der echte Musterordner erreichbar? */
+  musterordner: boolean;
+  /** Wie viele Unterordner ein neuer Standort bekommt. */
+  unterordner: number;
   ordner_sharepoint: boolean;
   unlocode_eintraege: number;
+  textvarianten: TextvarianteInfo[];
 }
 
 export interface UnlocodeLadeErgebnis {
@@ -1116,22 +1192,7 @@ export interface UnlocodeTreffer {
   code: string;
   ort: string;
   bundesland: string;
-  /** "exakt" | "unscharf" — ein unscharfer Treffer gehört gegengelesen. */
+  /** „exakt" | „unscharf" — ein unscharfer Treffer gehört gegengelesen. */
   art: string;
   guete: number;
-}
-
-export interface McdonaldsMailAnfrage {
-  empfaenger?: string[];
-  kopie?: string[];
-  betreff?: string;
-  nachricht?: string;
-}
-
-export interface McdonaldsMailVorschlag {
-  empfaenger: string[];
-  betreff: string;
-  nachricht: string;
-  dokument_dateiname: string;
-  dokument_vorhanden: boolean;
 }

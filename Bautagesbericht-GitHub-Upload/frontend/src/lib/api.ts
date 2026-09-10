@@ -19,7 +19,6 @@ import type {
   Einreichung,
   EinreichungFaehigkeiten,
   Empfaenger,
-  Fachplaner,
   Fotosatz,
   FotosatzFilter,
   FotosatzListItem,
@@ -46,14 +45,14 @@ import type {
   MangelTyp,
   MangelUpdateInput,
   MangelVersandErgebnis,
-  McdonaldsAngebot,
-  McdonaldsAngebotEingabe,
-  McdonaldsFaehigkeiten,
-  McdonaldsFall,
-  McdonaldsFallManuell,
-  McdonaldsFallUpdate,
-  McdonaldsMailAnfrage,
-  McdonaldsMailVorschlag,
+  BeauftragungAnfrage,
+  BeauftragungVorschau,
+  McdFaehigkeiten,
+  McdStandort,
+  McdStandortManuell,
+  McdStandortUpdate,
+  Subplaner,
+  SubplanerEingabe,
   Projekt,
   Projektbeteiligter,
   Projektbericht,
@@ -939,61 +938,59 @@ export const api = {
   },
 
   /** Fachplaner-Unternehmen (Stammdaten für die Beauftragung). */
-  fachplaner: {
-    list: () => fetchAPI<Fachplaner[]>("/fachplaner"),
-    create: (data: {
-      name: string;
-      email: string;
-      ansprechpartner?: string;
-      adresse?: string;
-    }) => fetchAPI<Fachplaner>("/fachplaner", json("POST", data)),
+  /** Subplaner-Stammdaten, je Phase (Stammdaten → Subplaner). */
+  subplaner: {
+    list: (phase?: number) =>
+      fetchAPI<Subplaner[]>(`/subplaner${query({ phase })}`),
+    create: (data: SubplanerEingabe) =>
+      fetchAPI<Subplaner>("/subplaner", json("POST", data)),
+    /** Der Weg, auf dem die fehlenden Adressen von Kocks und RKA hineinkommen. */
+    aendern: (id: number, data: Partial<SubplanerEingabe>) =>
+      fetchAPI<Subplaner>(`/subplaner/${id}`, json("PATCH", data)),
     delete: (id: number) =>
-      fetchAPI<void>(`/fachplaner/${id}`, { method: "DELETE" }),
+      fetchAPI<void>(`/subplaner/${id}`, { method: "DELETE" }),
   },
 
   /**
-   * McDonald's — automatisierte Projektanlage und Beauftragung.
+   * McDonald's — Standort aus der SLS-Anfrage, Ordner, Einzelabrufe.
    *
-   * Der Upload einer ``.eml`` scheitert bewusst nicht daran, dass die
-   * KI-Analyse nicht möglich ist (kein Anthropic-Schlüssel, Schnittstelle
-   * überlastet): Der Fall wird angelegt, und in ``hinweise`` steht, was
-   * nachzutragen ist. Deshalb muss die Oberfläche die Hinweise auch zeigen.
+   * Der Upload scheitert bewusst fast nie: Ist die Datei lesbar, entsteht ein
+   * Standort, und in ``hinweise`` steht, was nicht erkannt wurde. Die
+   * Oberfläche muss die Hinweise deshalb auch zeigen.
    */
   mcdonalds: {
-    /** Was der Server hier kann — steuert die Knöpfe der Ansicht. */
     faehigkeiten: () =>
-      fetchAPI<McdonaldsFaehigkeiten>("/mcdonalds/faehigkeiten"),
+      fetchAPI<McdFaehigkeiten>("/mcdonalds/faehigkeiten"),
 
-    faelle: () => fetchAPI<McdonaldsFall[]>("/mcdonalds/faelle"),
-    fall: (id: number) => fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}`),
+    standorte: () => fetchAPI<McdStandort[]>("/mcdonalds/standorte"),
+    standort: (id: number) =>
+      fetchAPI<McdStandort>(`/mcdonalds/standorte/${id}`),
 
-    /** Als ``.eml`` exportierte Auftragsmail hochladen. */
+    /** Als .eml exportierte SLS-Anfrage hochladen. */
     hochladen: (datei: File) => {
       const formular = new FormData();
       formular.append("datei", datei);
-      return fetchAPI<McdonaldsFall>("/mcdonalds/faelle", {
+      return fetchAPI<McdStandort>("/mcdonalds/standorte", {
         method: "POST",
         body: formular,
       });
     },
-    /** Telefonische Beauftragung — dieselbe Weiterverarbeitung ohne Analyse. */
-    manuell: (data: McdonaldsFallManuell) =>
-      fetchAPI<McdonaldsFall>("/mcdonalds/faelle/manuell", json("POST", data)),
-    aendern: (id: number, data: McdonaldsFallUpdate) =>
-      fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}`, json("PATCH", data)),
+    manuell: (data: McdStandortManuell) =>
+      fetchAPI<McdStandort>("/mcdonalds/standorte/manuell", json("POST", data)),
+    aendern: (id: number, data: McdStandortUpdate) =>
+      fetchAPI<McdStandort>(`/mcdonalds/standorte/${id}`, json("PATCH", data)),
     /**
-     * Ordneranlage erneut anstoßen — nach einer Korrektur oder nachdem der
-     * Basispfad eingetragen wurde. Antwortet erst, wenn es durch ist: Wer
-     * hier klickt, will wissen, ob es jetzt geht.
+     * Ordneranlage erneut anstoßen. Antwortet erst, wenn es durch ist: Wer
+     * hier klickt, hat gerade etwas geändert und will wissen, ob es geht.
      */
     ordnerAnlegen: (id: number) =>
-      fetchAPI<McdonaldsFall>(`/mcdonalds/faelle/${id}/ordner`, {
+      fetchAPI<McdStandort>(`/mcdonalds/standorte/${id}/ordner`, {
         method: "POST",
       }),
-    fallLoeschen: (id: number) =>
-      fetchAPI<void>(`/mcdonalds/faelle/${id}`, { method: "DELETE" }),
+    standortLoeschen: (id: number) =>
+      fetchAPI<void>(`/mcdonalds/standorte/${id}`, { method: "DELETE" }),
 
-    /** UN/LOCODE-Referenztabelle (Anlage 5.1) hochladen — ersetzt den Bestand. */
+    /** UN/LOCODE-Referenztabelle (Anlage 5.1) — ersetzt den Bestand. */
     unlocodeTabelle: (datei: File) => {
       const formular = new FormData();
       formular.append("datei", datei);
@@ -1007,35 +1004,27 @@ export const api = {
         `/mcdonalds/unlocode${query({ ort, bundesland })}`
       ),
 
-    angebotAnlegen: (fallId: number, data: McdonaldsAngebotEingabe) =>
-      fetchAPI<McdonaldsAngebot>(
-        `/mcdonalds/faelle/${fallId}/angebote`,
+    /** Zeigt je Subplaner der Phase, was verschickt würde. */
+    vorschau: (standortId: number, data: BeauftragungAnfrage) =>
+      fetchAPI<BeauftragungVorschau[]>(
+        `/mcdonalds/standorte/${standortId}/beauftragungen/vorschau`,
         json("POST", data)
       ),
-    angebot: (id: number) =>
-      fetchAPI<McdonaldsAngebot>(`/mcdonalds/angebote/${id}`),
-    angebotLoeschen: (id: number) =>
-      fetchAPI<void>(`/mcdonalds/angebote/${id}`, { method: "DELETE" }),
-
-    /** Dokument erzeugen und herunterladen. */
-    dokumentErzeugen: (id: number) =>
-      fetchDatei(`/mcdonalds/angebote/${id}/dokument`, { method: "POST" }),
-    /** Schon erzeugtes Dokument erneut holen. */
-    dokument: (id: number) =>
-      fetchDatei(`/mcdonalds/angebote/${id}/dokument`),
-
-    mailVorschlag: (id: number) =>
-      fetchAPI<McdonaldsMailVorschlag>(
-        `/mcdonalds/angebote/${id}/mail/vorschlag`
-      ),
-    /** Fertige Mail als .eml — Outlook öffnet sie als Entwurf zum Senden. */
-    entwurf: (id: number, data: McdonaldsMailAnfrage = {}) =>
-      fetchDatei(`/mcdonalds/angebote/${id}/versenden`, json("POST", data)),
-    /** Wirklich verschicken — nur mit hinterlegtem Postausgangsserver. */
-    senden: (id: number, data: McdonaldsMailAnfrage = {}) =>
-      fetchAPI<{ angebot_id: number; versendet: boolean; empfaenger: string[]; nachricht: string }>(
-        `/mcdonalds/angebote/${id}/mail/senden`,
+    /**
+     * Erzeugt die Einzelabrufe, legt sie im Vertragsordner ab und liefert die
+     * Entwürfe — bei mehreren Subplanern als ZIP (Phase 1: Kocks und RKA).
+     */
+    beauftragen: (standortId: number, data: BeauftragungAnfrage) =>
+      fetchDatei(
+        `/mcdonalds/standorte/${standortId}/beauftragungen`,
         json("POST", data)
       ),
+    /** Den Entwurf eines schon erzeugten Einzelabrufs erneut holen. */
+    entwurf: (beauftragungId: number) =>
+      fetchDatei(`/mcdonalds/beauftragungen/${beauftragungId}/entwurf`),
+    beauftragungLoeschen: (beauftragungId: number) =>
+      fetchAPI<void>(`/mcdonalds/beauftragungen/${beauftragungId}`, {
+        method: "DELETE",
+      }),
   },
 };

@@ -87,7 +87,7 @@ export type Ansicht =
   | "btb-uebersicht"
   | "stamm-projekte"
   | "stamm-empfaenger"
-  | "stamm-fachplaner"
+  | "stamm-subplaner"
   | "stamm-firmen"
   | "stamm-plaene"
   | "stamm-besprechung"
@@ -215,7 +215,7 @@ const NAVIGATION_VOLL: NavGruppe[] = [
     eintraege: [
       {
         key: "mcdonalds",
-        label: "Beauftragungen",
+        label: "Standorte",
         kurz: "McD",
         icon: Beef,
         titel: "McDonald's — Beauftragungen",
@@ -276,10 +276,10 @@ const NAVIGATION_VOLL: NavGruppe[] = [
         bereich: "Stammdaten",
       },
       {
-        key: "stamm-fachplaner",
-        label: "Fachplaner",
+        key: "stamm-subplaner",
+        label: "Subplaner",
         icon: Building2,
-        titel: "Fachplaner-Unternehmen",
+        titel: "Subplaner je Phase",
         bereich: "Stammdaten",
       },
       {

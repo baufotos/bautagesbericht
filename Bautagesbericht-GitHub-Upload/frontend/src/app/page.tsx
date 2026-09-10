@@ -49,10 +49,10 @@ import { BerichtEinreichen } from "@/components/bautagesberichte/BerichtEinreich
 import { BerichteUebersicht } from "@/components/bautagesberichte/BerichteUebersicht";
 import { ProjekteVerwaltung } from "@/components/stammdaten/ProjekteVerwaltung";
 import { EmpfaengerVerwaltung } from "@/components/stammdaten/EmpfaengerVerwaltung";
-import { FachplanerVerwaltung } from "@/components/stammdaten/FachplanerVerwaltung";
+import { SubplanerVerwaltung } from "@/components/stammdaten/SubplanerVerwaltung";
 import { McdonaldsUebersicht } from "@/components/mcdonalds/McdonaldsUebersicht";
-import { McdonaldsFallUpload } from "@/components/mcdonalds/McdonaldsFallUpload";
-import { McdonaldsFallDetail } from "@/components/mcdonalds/McdonaldsFallDetail";
+import { McdonaldsStandortUpload } from "@/components/mcdonalds/McdonaldsStandortUpload";
+import { McdonaldsStandortDetail } from "@/components/mcdonalds/McdonaldsStandortDetail";
 import { MangelUebersicht } from "@/components/maengel/MangelUebersicht";
 import { MangelErfassung } from "@/components/maengel/MangelErfassung";
 import { MaengelanzeigeErstellen } from "@/components/maengel/MaengelanzeigeErstellen";
@@ -101,8 +101,8 @@ export default function Home() {
   /* McDonald's: welche Beauftragung ist offen, und wird gerade eine erfasst?
      Beides gehört in den Router und nicht in die Übersicht — der Detailfall
      ersetzt die Liste, genau wie beim Mangel-Detail. */
-  const [offenerFall, setOffenerFall] = useState<number | null>(null);
-  const [fallErfassen, setFallErfassen] = useState(false);
+  const [offenerStandort, setOffenerStandort] = useState<number | null>(null);
+  const [standortErfassen, setStandortErfassen] = useState(false);
 
   /* ───────── Startansicht: Link, dann Gedächtnis ───────── */
 
@@ -138,8 +138,8 @@ export default function Home() {
     // Dasselbe für McDonald's: Wer den Bereich verlässt, soll ihn nicht mit
     // einer halb ausgefüllten Erfassung wiederfinden.
     if (ziel !== "mcdonalds") {
-      setOffenerFall(null);
-      setFallErfassen(false);
+      setOffenerStandort(null);
+      setStandortErfassen(false);
     }
     window.localStorage.setItem(ANSICHT_SPEICHER, ziel);
   }, []);
@@ -280,10 +280,10 @@ export default function Home() {
             onAnsicht={wechsle}
             onMangel={oeffneMangel}
             onMangelHinweis={setDetailHinweis}
-            offenerFall={offenerFall}
-            onFall={setOffenerFall}
-            fallErfassen={fallErfassen}
-            onFallErfassen={setFallErfassen}
+            offenerStandort={offenerStandort}
+            onStandort={setOffenerStandort}
+            standortErfassen={standortErfassen}
+            onStandortErfassen={setStandortErfassen}
           />
         </>
       )}
@@ -300,10 +300,10 @@ function Inhalt({
   onAnsicht,
   onMangel,
   onMangelHinweis,
-  offenerFall,
-  onFall,
-  fallErfassen,
-  onFallErfassen,
+  offenerStandort,
+  onStandort,
+  standortErfassen,
+  onStandortErfassen,
 }: {
   ansicht: Ansicht;
   daten: ReturnType<typeof useAppDaten>;
@@ -312,12 +312,12 @@ function Inhalt({
   onAnsicht: (ansicht: Ansicht) => void;
   onMangel: (id: number) => void;
   onMangelHinweis: (hinweis?: string) => void;
-  /** McDonald's: geöffnete Beauftragung, sonst null. */
-  offenerFall: number | null;
-  onFall: (id: number | null) => void;
+  /** McDonald's: geöffneter Standort, sonst null. */
+  offenerStandort: number | null;
+  onStandort: (id: number | null) => void;
   /** McDonald's: Erfassungsformular statt Liste zeigen. */
-  fallErfassen: boolean;
-  onFallErfassen: (offen: boolean) => void;
+  standortErfassen: boolean;
+  onStandortErfassen: (offen: boolean) => void;
 }) {
   const { projekt } = daten;
 
@@ -462,38 +462,37 @@ function Inhalt({
        McDonald's-Einträgen wäre eine Wegbeschreibung für einen Weg, den man
        ohnehin geht. */
     case "mcdonalds": {
-      const fall =
-        offenerFall === null
+      const standort =
+        offenerStandort === null
           ? null
-          : daten.mcdonaldsFaelle.find((f) => f.id === offenerFall) ?? null;
+          : daten.mcdStandorte.find((s) => s.id === offenerStandort) ?? null;
 
-      if (fall) {
+      if (standort) {
         return (
-          <McdonaldsFallDetail
-            fall={fall}
-            fachplaner={daten.fachplaner}
-            faehigkeiten={daten.mcdonaldsFaehigkeiten}
-            onZurueck={() => onFall(null)}
+          <McdonaldsStandortDetail
+            standort={standort}
+            subplaner={daten.subplaner}
+            faehigkeiten={daten.mcdFaehigkeiten}
+            onZurueck={() => onStandort(null)}
             onAktualisiert={daten.ladeMcdonalds}
             onGeloescht={() => {
-              onFall(null);
+              onStandort(null);
               daten.ladeMcdonalds();
             }}
-            onFachplanerAendern={daten.ladeMcdonalds}
           />
         );
       }
 
-      if (fallErfassen) {
+      if (standortErfassen) {
         return (
-          <McdonaldsFallUpload
-            faehigkeiten={daten.mcdonaldsFaehigkeiten}
+          <McdonaldsStandortUpload
+            faehigkeiten={daten.mcdFaehigkeiten}
             onAngelegt={(neu) => {
               // Direkt in die Detailansicht: Dort stehen die Hinweise der
-              // Analyse und der Status der Ordneranlage.
-              onFallErfassen(false);
+              // Auswertung und der Status der Ordneranlage.
+              onStandortErfassen(false);
               daten.ladeMcdonalds();
-              onFall(neu.id);
+              onStandort(neu.id);
             }}
           />
         );
@@ -501,34 +500,15 @@ function Inhalt({
 
       return (
         <McdonaldsUebersicht
-          faelle={daten.mcdonaldsFaelle}
-          faehigkeiten={daten.mcdonaldsFaehigkeiten}
+          standorte={daten.mcdStandorte}
+          faehigkeiten={daten.mcdFaehigkeiten}
           laedt={daten.laedtMcdonalds}
-          onOeffnen={onFall}
-          onNeu={() => onFallErfassen(true)}
+          onOeffnen={onStandort}
+          onNeu={() => onStandortErfassen(true)}
           onAktualisieren={daten.ladeMcdonalds}
         />
       );
     }
-
-    case "btb-einreichen":
-      return (
-        <BerichtEinreichen
-          projekte={daten.projekte}
-          empfaenger={daten.empfaenger}
-          projektId={daten.projektId}
-          einreichungen={daten.einreichungen}
-          onEingereicht={daten.ladeEinreichungen}
-        />
-      );
-
-    case "btb-uebersicht":
-      return (
-        <BerichteUebersicht
-          einreichungen={daten.einreichungen}
-          onAendern={daten.ladeEinreichungen}
-        />
-      );
 
     case "stamm-projekte":
       return (
@@ -563,10 +543,11 @@ function Inhalt({
         />
       );
 
-    case "stamm-fachplaner":
+    case "stamm-subplaner":
       return (
-        <FachplanerVerwaltung
-          fachplaner={daten.fachplaner}
+        <SubplanerVerwaltung
+          subplaner={daten.subplaner}
+          faehigkeiten={daten.mcdFaehigkeiten}
           onAendern={daten.ladeMcdonalds}
         />
       );
