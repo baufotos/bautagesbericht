@@ -1764,10 +1764,36 @@ def adresse_pruefen(eingabe: str) -> str:
         return validate_email(text, check_deliverability=False).normalized
     except EmailNotValidError as fehler:
         raise ValueError(
-            f"„{eingabe.strip()}“ ist keine gültige E-Mail-Adresse "
-            f"({fehler}). Mehrere Adressen mit Komma, Semikolon oder "
-            "Leerzeichen trennen."
+            f"„{eingabe.strip()}“ ist keine gültige E-Mail-Adresse: "
+            f"{_grund_auf_deutsch(fehler)} Mehrere Adressen mit Komma, "
+            "Semikolon oder Leerzeichen trennen."
         ) from fehler
+
+
+#: Die häufigen Beanstandungen der Prüfbibliothek auf Deutsch. Sie meldet
+#: englisch, und ein halb englischer Satz in einer deutschen Oberfläche ist
+#: genau die Sorte Meldung, die man nicht liest. Was hier nicht steht, wird
+#: weggelassen — der erste Satzteil nennt die Adresse und reicht dann aus.
+_GRUENDE = (
+    ("must have an @-sign", "Es fehlt das @-Zeichen."),
+    ("should have a period", "Nach dem @ fehlt der Punkt, z. B. .de."),
+    ("There must be something after the @-sign",
+     "Nach dem @ fehlt der Firmenteil, z. B. kocks-ing.de."),
+    ("There must be something before the @-sign",
+     "Vor dem @ fehlt der Name."),
+    ("not valid. It should have a period",
+     "Nach dem @ fehlt der Punkt, z. B. .de."),
+    ("contains invalid characters", "Darin steht ein unzulässiges Zeichen."),
+    ("is not valid", "Der Teil nach dem @ stimmt nicht."),
+)
+
+
+def _grund_auf_deutsch(fehler) -> str:
+    text = str(fehler)
+    for englisch, deutsch in _GRUENDE:
+        if englisch in text:
+            return deutsch
+    return ""
 
 
 def adressen_lesen(wert):
