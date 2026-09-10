@@ -16,7 +16,14 @@ basisordner = M:\HAM-226010\STANDORTE
 # Dasselbe Losungswort wie in Foto-Abholung\einstellungen.txt (Feld
 # "token") - beide Abholskripte teilen sich BTB_ABHOL_TOKEN auf dem
 # Server. Nur aendern, wenn das Wort auf Render neu vergeben wird.
-token = abhol-lXBwgMCQVrn0jYTv2sPsey1lwOLm
+#
+# HIER BLEIBT DAS FELD LEER, und das ist Absicht: Diese Datei liegt im
+# oeffentlichen GitHub-Repo. Ein Wort, das hier eingetragen wird, ist damit
+# fuer jeden lesbar - und mit ihm kaeme jeder an die Baufotos-ZIPs vorbei am
+# Seiten-Passwort (siehe backend/app/security.py). Das echte Wort steht nur
+# in der Kopie auf dem Buerorechner, unter C:\HPP-Mcdonalds-Abholung. Genau
+# so wird es bei der Foto-Abholung schon gehalten.
+token =
 
 # Wohin das Protokoll geschrieben wird. Leer lassen = abholung.log neben
 # diesem Skript.
