@@ -367,10 +367,35 @@ def baue_prompt(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+#: Wie lange auf eine Antwort gewartet wird. Eine Besprechungsanalyse liest
+#: ein ganzes Protokoll und braucht dafuer laenger als eine einzelne Seite;
+#: drei Minuten sind grosszuegig. Siehe ``_client``.
+ZEITGRENZE_SEKUNDEN = 180.0
+
+
 def _client():
+    """Der Zugang zur Schnittstelle — mit Zeitgrenze und ohne Eigenleben.
+
+    Dasselbe Muster wie in ``anzeige_formulierung._client``, und aus
+    demselben Grund:
+
+    ``timeout`` — ohne Angabe wartet das Paket zehn Minuten (nachgesehen:
+    ``anthropic._constants.DEFAULT_TIMEOUT``, read=600). Ist
+    api.anthropic.com wegen einer Firewall gar nicht erreichbar, stünde die
+    Oberfläche zehn Minuten ohne Erklärung.
+
+    ``max_retries=0`` — das Paket wiederholt von sich aus zweimal, und
+    ``schnittstelle.mit_wiederholung`` wiederholt außen dreimal. Zusammen
+    sind das neun Anfragen je Aufruf. Wiederholt wird deshalb nur außen, wo
+    die Wartezeiten und die Fehlerdeutung hinterlegt sind.
+    """
     import anthropic
 
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return anthropic.Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=ZEITGRENZE_SEKUNDEN,
+        max_retries=0,
+    )
 
 
 def _werkzeug_antwort(antwort, name: str) -> dict:

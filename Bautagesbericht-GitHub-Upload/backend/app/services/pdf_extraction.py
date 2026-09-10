@@ -914,24 +914,54 @@ def _scan_seiten_als_bilder(file_path: Path) -> list[bytes]:
     Der Scan steckt oft in geringer Auflösung im PDF, und die Aufbereitung
     oben greift nur auf Bildern.
     """
+    # Eine Seite zur Zeit, danach sofort freigeben: Bei OCR_DPI = 300 ist ein
+    # A4-Blatt als Rohbild 26 MB, und offene pdfium-Seiten summieren sich bis
+    # zum Schließen des Dokuments (siehe services/pdf_seiten).
+    import io
+
+    from app.services import pdf_seiten
+
     try:
-        import pypdfium2 as pdfium
-
-        dokument = pdfium.PdfDocument(str(file_path))
-        try:
-            bilder: list[bytes] = []
-            for nummer in range(min(len(dokument), OCR_MAX_SEITEN)):
-                import io
-
-                seite = dokument[nummer].render(scale=OCR_DPI / 72).to_pil()
-                puffer = io.BytesIO()
-                seite.save(puffer, format="PNG")
-                bilder.append(_bild_aufbereiten(puffer.getvalue()))
-            return bilder
-        finally:
-            dokument.close()
+        bilder: list[bytes] = []
+        for _, seite in pdf_seiten.seiten(Path(file_path), dpi=OCR_DPI,
+                                          max_seiten=OCR_MAX_SEITEN):
+            puffer = io.BytesIO()
+            seite.save(puffer, format="PNG")
+            bilder.append(_bild_aufbereiten(puffer.getvalue()))
+        return bilder
     except Exception:
         return []
+
+
+#: Wie lange auf EINE Anfrage gewartet wird. Ein gescanntes Formblatt ist in
+#: zehn bis vierzig Sekunden ausgelesen; anderthalb Minuten sind großzügig.
+#: Siehe ``_client``.
+ZEITGRENZE_SEKUNDEN = 90.0
+
+
+def _client():
+    """Der Zugang zur Schnittstelle — mit Zeitgrenze und ohne Eigenleben.
+
+    Dasselbe Muster wie in ``anzeige_formulierung._client``, und aus
+    demselben Grund:
+
+    ``timeout`` — ohne Angabe wartet das Paket zehn Minuten (nachgesehen:
+    ``anthropic._constants.DEFAULT_TIMEOUT``, read=600). Ist
+    api.anthropic.com wegen einer Firewall gar nicht erreichbar, stünde die
+    Oberfläche zehn Minuten ohne Erklärung.
+
+    ``max_retries=0`` — das Paket wiederholt von sich aus zweimal, und
+    ``schnittstelle.mit_wiederholung`` wiederholt außen dreimal. Zusammen
+    sind das neun Anfragen je Aufruf. Wiederholt wird deshalb nur außen, wo
+    die Wartezeiten und die Fehlerdeutung hinterlegt sind.
+    """
+    import anthropic
+
+    return anthropic.Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=ZEITGRENZE_SEKUNDEN,
+        max_retries=0,
+    )
 
 
 #: Was Claude über die Vorlage wissen muss. Ohne diese Hinweise werden
@@ -1064,7 +1094,7 @@ async def _extract_scan_via_claude(
 
     import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = _client()
 
     # Gescannte PDFs seitenweise rendern — das ist der Schritt, der bei
     # Handschrift den Unterschied macht.
@@ -1198,7 +1228,7 @@ async def _extract_text_via_claude(text: str, file_name: str,
 
     import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = _client()
 
     hinweise = [
         "Extrahiere aus dem folgenden Bautagesbericht die Firmeneinträge. "

@@ -1091,20 +1091,16 @@ def _anlagen_bilder(pfad: Path) -> list[bytes]:
     """
     endung = pfad.suffix.lower()
     if endung == ".pdf":
-        try:
-            import pypdfium2 as pdfium
-        except ImportError:
-            return []
+        # Seitenweise und mit sofortiger Freigabe: Eine Anlage kann ein
+        # ganzer Planordner sein, und offene pdfium-Seiten summieren sich
+        # bis zum Schliessen des Dokuments (siehe services/pdf_seiten).
+        from app.services import pdf_seiten
+
         seiten: list[bytes] = []
-        dokument = pdfium.PdfDocument(str(pfad))
-        try:
-            for i in range(len(dokument)):
-                bild = dokument[i].render(scale=ANLAGE_DPI / 72).to_pil()
-                puffer = io.BytesIO()
-                bild.convert("RGB").save(puffer, format="JPEG", quality=85)
-                seiten.append(puffer.getvalue())
-        finally:
-            dokument.close()
+        for _, bild in pdf_seiten.seiten(pfad, dpi=ANLAGE_DPI):
+            puffer = io.BytesIO()
+            bild.convert("RGB").save(puffer, format="JPEG", quality=85)
+            seiten.append(puffer.getvalue())
         return seiten
 
     try:

@@ -119,17 +119,70 @@ function mitZugang(options?: RequestInit): RequestInit {
   return { ...options, headers };
 }
 
+/**
+ * Meldung fuer Antworten, die NICHT vom Backend selbst kommen.
+ *
+ * Auf Render laufen Frontend und Backend im selben Container: Next.js
+ * liefert die Seite aus und leitet /api intern weiter (siehe
+ * next.config.ts). Ist das Backend in dem Moment nicht da — es startet
+ * gerade, oder es wurde wegen Speichermangels abgeraeumt —, antwortet
+ * Next.js selbst, und zwar mit dem nackten Text "Internal Server Error".
+ * Der stand dann wortwoertlich im roten Balken der App: eine Meldung, mit
+ * der niemand etwas anfangen kann, am wenigsten auf der Baustelle.
+ *
+ * Erkennbar ist der Fall daran, dass die Antwort KEIN JSON ist — das
+ * Backend antwortet auf jeden Fehler mit ``{"detail": ...}``. Kommt also
+ * ein Serverfehler ohne JSON, war das Backend nicht am Apparat.
+ *
+ * Gibt ``null`` zurueck, wenn die Antwort echt vom Backend stammt; dann
+ * bleibt dessen eigene Meldung stehen.
+ */
+function meldungOhneBackend(status: number, warJson: boolean): string | null {
+  if (warJson || status < 500) return null;
+  if (status === 503 || status === 504) {
+    return (
+      "Der Server antwortet gerade nicht. Er fährt vermutlich nur hoch — " +
+      "nach einer Pause ohne Zugriff dauert der erste Aufruf bis zu einer " +
+      "Minute. Bitte noch einmal versuchen."
+    );
+  }
+  return (
+    "Der Server hat die Anfrage abgebrochen. Bei vielen Seiten auf einmal " +
+    "geht ihm der Speicher aus; er startet dann von selbst neu und ist nach " +
+    "etwa einer Minute wieder da. Bitte erneut versuchen — und wenn es " +
+    "wieder passiert, den Zeitraum oder die Zahl der Dateien verkleinern."
+  );
+}
+
+/** Meldung, wenn die Anfrage den Server gar nicht erreicht hat. */
+function meldungOhneNetz(): string {
+  return (
+    "Keine Verbindung zum Server. Bitte die Netzverbindung prüfen und " +
+    "noch einmal versuchen."
+  );
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, mitZugang(options));
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, mitZugang(options));
+  } catch {
+    // "Failed to fetch" ist keine Meldung fuer den Anwender.
+    throw new ApiError(0, null, meldungOhneNetz());
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let detail: unknown = text;
+    let warJson = false;
     try {
       const parsed = JSON.parse(text);
       detail = parsed?.detail ?? parsed;
+      warJson = true;
     } catch {
       /* keine JSON-Antwort — Rohtext behalten */
     }
+    const ausfall = meldungOhneBackend(res.status, warJson);
+    if (ausfall) throw new ApiError(res.status, ausfall, ausfall);
     const message =
       typeof detail === "object" && detail !== null && "nachricht" in detail
         ? String((detail as { nachricht: unknown }).nachricht)
@@ -153,16 +206,25 @@ async function fetchDatei(
   path: string,
   options?: RequestInit
 ): Promise<{ blob: Blob; dateiname: string }> {
-  const res = await fetch(`${API_BASE}${path}`, mitZugang(options));
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, mitZugang(options));
+  } catch {
+    throw new ApiError(0, null, meldungOhneNetz());
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let detail: unknown = text;
+    let warJson = false;
     try {
       const parsed = JSON.parse(text);
       detail = parsed?.detail ?? parsed;
+      warJson = true;
     } catch {
       /* keine JSON-Antwort — Rohtext behalten */
     }
+    const ausfall = meldungOhneBackend(res.status, warJson);
+    if (ausfall) throw new ApiError(res.status, ausfall, ausfall);
     throw new ApiError(
       res.status,
       detail,

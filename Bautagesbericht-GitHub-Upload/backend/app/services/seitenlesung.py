@@ -117,6 +117,12 @@ VERSUCHE = 3
 #: Wartezeit vor dem zweiten Versuch, danach jeweils das Doppelte.
 WARTEN_SEKUNDEN = 2.0
 
+#: Wie lange auf EINE Seite gewartet wird. Ein Blatt Schreibschrift ist in
+#: zehn bis vierzig Sekunden gelesen; anderthalb Minuten sind großzügig.
+#: Bei zwölf Seiten und zwei Durchgängen hängt an dieser Zahl, wie lange die
+#: Oberfläche im schlechtesten Fall wartet — siehe ``_client``.
+ZEITGRENZE_SEKUNDEN = 90.0
+
 CLAUDE_MODELL = "claude-opus-5"
 
 
@@ -223,16 +229,27 @@ def _lesbar_machen(bild):
                                                threshold=3))
 
 
-def _verkleinert(bild):
+def _verkleinert(bild, schonen: bool = True):
+    """Auf ``MAX_KANTE`` verkleinern.
+
+    ``schonen=False`` verkleinert die Vorlage an Ort und Stelle und spart
+    damit eine Vollkopie — erlaubt nur, wenn der Aufrufer die Vorlage danach
+    nicht mehr braucht. Bei 300 dpi sind das 26 MB je Blatt.
+    """
     from PIL import Image
 
-    kopie = bild.copy()
-    kopie.thumbnail((MAX_KANTE, MAX_KANTE), Image.Resampling.LANCZOS)
-    return kopie
+    ziel = bild.copy() if schonen else bild
+    ziel.thumbnail((MAX_KANTE, MAX_KANTE), Image.Resampling.LANCZOS)
+    return ziel
 
 
 def _ausschnitte(bild) -> list:
-    """Zwei überlappende Hälften, geteilt entlang der langen Blattkante.
+    """Die RAHMEN zweier überlappender Hälften, entlang der langen Blattkante.
+
+    Gibt Rahmen und nicht schon die Bilder zurück, damit der Aufrufer die
+    Hälften einzeln ausschneiden und einzeln wieder freigeben kann: Bei
+    300 dpi ist eine Hälfte 19 MB, und beide gleichzeitig im Speicher zu
+    halten ist auf dem kostenlosen Render-Plan nicht nötig.
 
     Geteilt wird immer quer zur langen Kante: Bei einem hochkanten A4-Blatt
     entstehen so zwei breite Streifen, und eine Tabellenzeile bleibt in einem
@@ -252,7 +269,7 @@ def _ausschnitte(bild) -> list:
     else:
         fenster = int(breite * AUSSCHNITT_ANTEIL)
         rahmen = [(0, 0, fenster, hoehe), (breite - fenster, 0, breite, hoehe)]
-    return [bild.crop(r) for r in rahmen]
+    return rahmen
 
 
 def _als_seitenbild(bild) -> Seitenbild:
@@ -266,32 +283,53 @@ def _als_seitenbild(bild) -> Seitenbild:
     """
     from PIL import ImageOps
 
-    bild = ImageOps.exif_transpose(bild)
+    # Nur drehen, wenn wirklich eine Drehung hinterlegt ist: Ein Handyfoto
+    # braucht das (sonst liegt das Blatt quer), eine gerenderte PDF-Seite hat
+    # kein EXIF — dort legte ``exif_transpose`` bloß eine 35-MB-Vollkopie an,
+    # die keinen einzigen Bildpunkt verändert. Dasselbe gilt für
+    # ``convert("RGB")`` bei einem Bild, das schon RGB ist: Pillow kopiert
+    # auch dann. Zusammen waren das 70 MB je Blatt, für nichts.
+    if bild.getexif().get(0x0112) not in (None, 1):
+        bild = ImageOps.exif_transpose(bild)
     if bild.mode != "RGB":
         bild = bild.convert("RGB")
 
-    uebersicht = _jpeg(_lesbar_machen(_verkleinert(bild)))
-    teile = [_jpeg(_lesbar_machen(_verkleinert(teil)))
-             for teil in _ausschnitte(bild)]
+    # ZUERST die Ausschnitte, DANN die Übersicht: Die Ausschnitte brauchen
+    # das Blatt in voller Auflösung, die Übersicht ist danach nur noch eine
+    # Verkleinerung davon. In dieser Reihenfolge darf das Blatt für die
+    # Übersicht an Ort und Stelle verkleinert werden (``schonen=False``) —
+    # eine weitere Vollkopie gespart.
+    #
+    # Jede Hälfte wird einzeln geschnitten, verkleinert und sofort wieder
+    # freigegeben; bei 300 dpi sind es 19 MB je Hälfte.
+    teile = []
+    for rahmen in _ausschnitte(bild):
+        teil = bild.crop(rahmen)
+        teile.append(_jpeg(_lesbar_machen(_verkleinert(teil, schonen=False))))
+        teil.close()
+
+    uebersicht = _jpeg(_lesbar_machen(_verkleinert(bild, schonen=False)))
     return Seitenbild(uebersicht=uebersicht, ausschnitte=teile)
 
 
 def _seitenbilder(pfad: Path) -> list[Seitenbild]:
-    """PDF-Seiten oder ein Foto als aufbereitete Bilder."""
+    """PDF-Seiten oder ein Foto als aufbereitete Bilder.
+
+    Gerendert wird über ``pdf_seiten.seiten`` — eine Seite zur Zeit, und die
+    wird danach sofort freigegeben. Das ist hier keine Feinheit: Bei 300 dpi
+    ist ein A4-Blatt als Rohbild 26 MB, und solange die Seiten offen blieben,
+    wuchs der Speicher mit jedem Blatt weiter (siehe services/pdf_seiten).
+    Zurück bleiben nur die fertigen JPEGs, rund 0,2 MB je Seite.
+    """
     if pfad.suffix.lower() != ".pdf":
         einzeln = _aufbereiten(pfad)
         return [einzeln] if einzeln else []
 
-    import pypdfium2 as pdfium
+    from app.services import pdf_seiten
 
-    bilder: list[Seitenbild] = []
-    doc = pdfium.PdfDocument(str(pfad))
-    try:
-        for i in range(min(len(doc), MAX_SEITEN)):
-            bilder.append(_als_seitenbild(doc[i].render(scale=DPI / 72).to_pil()))
-    finally:
-        doc.close()
-    return bilder
+    return [_als_seitenbild(bild)
+            for _, bild in pdf_seiten.seiten(pfad, dpi=DPI,
+                                             max_seiten=MAX_SEITEN)]
 
 
 def _aufbereiten(pfad: Path) -> Seitenbild | None:
@@ -483,9 +521,28 @@ def _bekannt_hinweis(bekannte: tuple[str, ...]) -> str:
 
 
 def _client():
+    """Der Zugang zur Schnittstelle — mit Zeitgrenze und ohne Eigenleben.
+
+    Dasselbe Muster wie in ``anzeige_formulierung._client``, und aus
+    demselben Grund:
+
+    ``timeout`` — ohne Angabe wartet das Paket zehn Minuten (nachgesehen:
+    ``anthropic._constants.DEFAULT_TIMEOUT``, read=600). Ist
+    api.anthropic.com wegen einer Firewall gar nicht erreichbar, stünde die
+    Oberfläche zehn Minuten ohne Erklärung.
+
+    ``max_retries=0`` — das Paket wiederholt von sich aus zweimal, und
+    ``schnittstelle.mit_wiederholung`` wiederholt außen dreimal. Zusammen
+    sind das neun Anfragen je Aufruf. Wiederholt wird deshalb nur außen, wo
+    die Wartezeiten und die Fehlerdeutung hinterlegt sind.
+    """
     import anthropic
 
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return anthropic.Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=ZEITGRENZE_SEKUNDEN,
+        max_retries=0,
+    )
 
 
 def _werkzeug_antwort(antwort, name: str) -> dict:

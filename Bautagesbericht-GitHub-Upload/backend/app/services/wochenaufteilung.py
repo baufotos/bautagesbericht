@@ -388,33 +388,34 @@ def _seiten_per_ocr(pdf_pfad: Path, nummern: list[int]) -> dict[int, str]:
 
     import tempfile
 
-    try:
-        import pypdfium2 as pdfium
-    except ImportError:
-        return {}
+    from app.services import pdf_seiten
 
     ausgewaehlt = nummern[:OCR_MAX_SEITEN]
-    try:
-        dokument = pdfium.PdfDocument(str(pdf_pfad))
-    except Exception:
-        return {}
 
     with tempfile.TemporaryDirectory(prefix="hpp-ocr-seiten-") as ordner:
         basis = Path(ordner)
+        # Nur die Seiten, die wirklich gerendert werden konnten — und je
+        # Seite wird der Speicher sofort wieder frei (services/pdf_seiten).
+        # Die Zuordnung Nummer -> Text darf sich dabei nicht verschieben,
+        # deshalb werden beide Listen gemeinsam gefuehrt.
+        gerendert: list[int] = []
         bilder: list[Path] = []
         try:
-            for nummer in ausgewaehlt:
+            for nummer, seite in pdf_seiten.seiten(pdf_pfad, dpi=OCR_DPI,
+                                                   nummern=ausgewaehlt):
                 bild = basis / f"s{nummer}.png"
-                dokument[nummer].render(scale=OCR_DPI / 72).to_pil().save(bild)
+                seite.save(bild)
+                gerendert.append(nummer)
                 bilder.append(bild)
         except Exception:
             return {}
-        finally:
-            dokument.close()
+
+        if not bilder:
+            return {}
 
         texte = windows_ocr.text_aus_bildern(bilder)
 
-    return {nummer: text for nummer, text in zip(ausgewaehlt, texte)}
+    return {nummer: text for nummer, text in zip(gerendert, texte)}
 
 
 def seiten_lesen(pdf_pfad: Path) -> list[str]:
@@ -709,9 +710,15 @@ def schreibe_teil_pdf(quelle: Path, seiten: list[int], ziel: Path) -> Path:
             shutil.copy2(quelle, ziel)
             return ziel
 
+        # Auch das neu angelegte Dokument wieder schliessen: Es haelt die
+        # uebernommenen Seiten, und bei einer Woche laeuft das hier je Tag
+        # einmal. Siehe services/pdf_seiten, dort steht der ganze Grund.
         neu = pdfium.PdfDocument.new()
-        neu.import_pages(quell_dokument, [s - 1 for s in gewaehlt])
-        neu.save(str(ziel))
+        try:
+            neu.import_pages(quell_dokument, [s - 1 for s in gewaehlt])
+            neu.save(str(ziel))
+        finally:
+            neu.close()
         return ziel
     finally:
         quell_dokument.close()

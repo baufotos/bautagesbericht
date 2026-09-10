@@ -57,6 +57,39 @@ const UMFANG = (UMFAENGE as readonly string[]).includes(
   ? (process.env.APP_UMFANG as string)
   : "voll";
 
+/**
+ * WIE LANGE NEXT.JS SEINEM BACKEND ZEIT GIBT.
+ *
+ * Das ist die wichtigste Zahl in dieser Datei, und sie stand hier lange
+ * nicht: Ohne Angabe gibt Next.js einer weitergeleiteten /api-Anfrage
+ * genau 30 Sekunden (nachgesehen in
+ * node_modules/next/dist/server/lib/router-utils/proxy-request.js:
+ * "proxyTimeout || 30000"; nachgemessen am 10.09.2026: 29 s gehen durch,
+ * 31 s brechen nach 30,04 s ab).
+ *
+ * Danach antwortet Next.js NICHT mit einer Zeitüberschreitung, sondern mit
+ * "HTTP 500 Internal Server Error" als nacktem Text. Genau diese Meldung
+ * stand in der App, wenn man beim Wochenpaket auf "Tage erkennen" drückte:
+ * Ein handschriftlicher Wochenstapel wird Seite für Seite gelesen und
+ * geprüft (services/seitenlesung) und braucht dafür Minuten — nach 30
+ * Sekunden war die Leitung weg, während das Backend ruhig weiterarbeitete.
+ *
+ * Auf dem Bürorechner fiel das nie auf: Das Windows-Paket ist ein
+ * statischer Export, den FastAPI selbst ausliefert (NEXT_EXPORT=1, siehe
+ * unten). Dort gibt es keinen Zwischenweg und damit keine Grenze — der
+ * Fehler trat NUR im Netz auf.
+ *
+ * Betroffen war nicht nur das Wochenpaket, sondern alles, was länger als
+ * eine halbe Minute rechnet: die Analyse einer Baubesprechung
+ * (ZEITGRENZE_SEKUNDEN dort 180 s), das Formulieren einer Anzeige, das
+ * Auslesen einer Beauftragungsmail und der PDF-Export über LibreOffice.
+ *
+ * Zehn Minuten sind mit Absicht großzügig und nicht "unbegrenzt": Die
+ * Grenzen sollen im Backend liegen, wo sie je Aufgabe begründet sind
+ * (siehe die ZEITGRENZE_SEKUNDEN der einzelnen Dienste), nicht hier.
+ */
+const BACKEND_GEDULD_MS = 600_000;
+
 /** Was in beiden Betriebsarten gleich ist. */
 const GEMEINSAM = {
   // Wird zur Bauzeit in den Code eingesetzt, siehe src/lib/umfang.ts.
@@ -73,6 +106,8 @@ const nextConfig: NextConfig = STATISCHER_EXPORT
     }
   : {
       ...GEMEINSAM,
+      // Gilt nur hier: Der statische Export hat keinen Rewrite (siehe oben).
+      experimental: { proxyTimeout: BACKEND_GEDULD_MS },
       async rewrites() {
         return [
           {
