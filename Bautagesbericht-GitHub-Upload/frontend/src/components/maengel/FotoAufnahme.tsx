@@ -24,7 +24,27 @@ import { ladeFotosHoch } from "@/lib/fotoupload";
 import type { MangelFoto } from "@/lib/types";
 import { Button, EmptyState, Label, Meldung } from "@/components/ui";
 
-const MAX_FOTOS = 20;
+/**
+ * Höchstzahl der Fotos in EINER Auswahl — zwei Zahlen, weil es zwei
+ * verschiedene Vorgänge sind:
+ *
+ *   Mangel      20   Eine Mängelrüge, die mehr braucht, beschreibt in
+ *                    Wahrheit zwei Mängel.
+ *   Baufotos   200   Ein Bautag bringt schnell fünfzig bis hundert Bilder mit.
+ *                    Die Zahl ist hier kein fachliches Maß, sondern nur ein
+ *                    Schutz gegen die versehentlich ausgewählte ganze
+ *                    Kamerarolle.
+ *
+ * Wichtiger als die Zahl ist, dass ihr Überschreiten SICHTBAR wird — siehe
+ * ``hinzufuegen``. Bis zum 11.09.2026 stand hier ein hartes
+ * ``.slice(0, MAX_FOTOS)`` ohne jede Meldung: Wer auf der Baustelle 35 Fotos
+ * auswählte, sah 20 in der Vorschau, bekam 20 hochgeladen und erfuhr nie, dass
+ * fünfzehn Bilder eines Bautags niemals im Projektordner ankamen. Ein stiller
+ * Verlust ist der schlimmste — er wird erst Monate später bemerkt, wenn das
+ * Foto gebraucht wird.
+ */
+export const MAX_FOTOS_MANGEL = 20;
+export const MAX_FOTOS_BAUFOTOS = 200;
 
 /* ───────── Auswahl vor dem Speichern ───────── */
 
@@ -32,6 +52,7 @@ export function FotoAuswahl({
   dateien,
   onChange,
   hinweis = "Noch keine Fotos. Für die Mängelrüge zählt vor allem, dass die Stelle erkennbar ist.",
+  maxFotos = MAX_FOTOS_MANGEL,
 }: {
   dateien: File[];
   onChange: (dateien: File[]) => void;
@@ -41,10 +62,14 @@ export function FotoAuswahl({
    * Mängelrüge, und ein falscher Hinweis ist schlimmer als keiner.
    */
   hinweis?: string;
+  /** Obergrenze dieser Auswahl, siehe MAX_FOTOS_MANGEL / MAX_FOTOS_BAUFOTOS. */
+  maxFotos?: number;
 }) {
   const kameraRef = useRef<HTMLInputElement>(null);
   const galerieRef = useRef<HTMLInputElement>(null);
   const [vorschauen, setVorschauen] = useState<string[]>([]);
+  /** Wie viele Fotos die letzte Auswahl nicht mehr aufnehmen konnte. */
+  const [abgewiesen, setAbgewiesen] = useState(0);
 
   useEffect(() => {
     const urls = dateien.map((datei) => URL.createObjectURL(datei));
@@ -52,10 +77,22 @@ export function FotoAuswahl({
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [dateien]);
 
+  /**
+   * Neue Dateien übernehmen — und sagen, wenn etwas nicht mitgeht.
+   *
+   * Dass irgendwo eine Grenze liegt, ist unvermeidlich. Sie zu verschweigen
+   * war der Fehler: Zurückgewiesene Fotos werden gezählt und über der Vorschau
+   * genannt, bis die nächste Auswahl die Meldung ersetzt.
+   */
   function hinzufuegen(event: React.ChangeEvent<HTMLInputElement>) {
     const neue = Array.from(event.target.files || []);
-    onChange([...dateien, ...neue].slice(0, MAX_FOTOS));
     event.target.value = "";
+    if (neue.length === 0) return;
+
+    const platz = Math.max(0, maxFotos - dateien.length);
+    const uebernommen = neue.slice(0, platz);
+    setAbgewiesen(neue.length - uebernommen.length);
+    if (uebernommen.length > 0) onChange([...dateien, ...uebernommen]);
   }
 
   return (
@@ -100,6 +137,19 @@ export function FotoAuswahl({
         onChange={hinzufuegen}
       />
 
+      {abgewiesen > 0 && (
+        <div className="mt-3">
+          {/* Bewusst neutral formuliert: Denselben Satz liest einmal, wer einen
+              Mangel erfasst, und einmal, wer Baufotos hochlädt. „Zweiter
+              Fotosatz" wäre auf der Mangelseite falsch. */}
+          <Meldung art="hinweis">
+            {abgewiesen} Foto(s) wurden nicht übernommen — in eine Auswahl passen
+            höchstens {maxFotos}. Die übrigen bitte gesondert hochladen, damit
+            sie nicht liegen bleiben.
+          </Meldung>
+        </div>
+      )}
+
       {dateien.length > 0 ? (
         <>
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -116,11 +166,20 @@ export function FotoAuswahl({
                     src={vorschauen[i]}
                     alt={`Foto ${i + 1}`}
                     className="size-full object-cover"
+                    // Bei zweihundert Vorschauen entscheidet das über einen
+                    // flüssigen Bildschirm und einen abgeschossenen Tab: Der
+                    // Browser dekodiert dann nur, was gerade zu sehen ist.
+                    loading="lazy"
+                    decoding="async"
                   />
                 )}
                 <button
                   type="button"
-                  onClick={() => onChange(dateien.filter((_, j) => j !== i))}
+                  onClick={() => {
+                    // Es ist wieder Platz — die Meldung darüber wäre jetzt falsch.
+                    setAbgewiesen(0);
+                    onChange(dateien.filter((_, j) => j !== i));
+                  }}
                   aria-label={`Foto ${i + 1} entfernen`}
                   className="absolute right-1 top-1 rund-voll bg-white/90 p-1 text-ui-text-muted hover:text-ui-danger cursor-pointer transition-colors"
                 >
@@ -133,9 +192,10 @@ export function FotoAuswahl({
             ))}
           </div>
           <p className="mt-2 text-[12px] text-ui-text-muted">
-            {dateien.length} Foto(s) ausgewählt. Sie werden beim Speichern
-            verkleinert und einzeln übertragen — das funktioniert auch bei
-            schwacher Verbindung.
+            {dateien.length} Foto(s) ausgewählt
+            {dateien.length >= maxFotos ? " — das Höchstmaß für eine Auswahl" : ""}.
+            Sie werden beim Speichern verkleinert und einzeln übertragen — das
+            funktioniert auch bei schwacher Verbindung.
           </p>
         </>
       ) : (

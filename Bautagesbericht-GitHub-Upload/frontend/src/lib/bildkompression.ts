@@ -116,6 +116,11 @@ export async function komprimiereBild(
     const blob = await new Promise<Blob | null>((fertig) =>
       canvas.toBlob(fertig, "image/jpeg", qualitaet)
     );
+    // Zeichenfläche sofort freigeben. Bei zwanzig Fotos fiel das nicht auf;
+    // seit ein Fotosatz zweihundert enthalten darf, sammelt iOS Safari die
+    // Flächen sonst an, bis es den Tab abschießt — mitten im Hochladen.
+    canvas.width = 0;
+    canvas.height = 0;
     if (!blob || blob.size >= datei.size) return datei;
 
     const name = datei.name.replace(/\.[^.]+$/, "") || "foto";

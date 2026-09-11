@@ -36,7 +36,10 @@ import { heuteIso } from "@/lib/formate";
 import type { Empfaenger, Fotosatz, Gewerk, Projekt } from "@/lib/types";
 import { Karte, KarteInhalt, KarteKopf, Plakette } from "@/components/dashboard";
 import { Button, Field, Input, LinkButton, Meldung, Textarea } from "@/components/ui";
-import { FotoAuswahl } from "@/components/maengel/FotoAufnahme";
+import {
+  FotoAuswahl,
+  MAX_FOTOS_BAUFOTOS,
+} from "@/components/maengel/FotoAufnahme";
 import { FotosatzMailDialog } from "@/components/baufotos/FotosatzMailDialog";
 
 /**
@@ -91,6 +94,20 @@ export function BaufotosHochladen({
     null
   );
   const [meldung, setMeldung] = useState<string | null>(null);
+  /**
+   * Fotos, die auch beim zweiten Versuch nicht durchkamen — samt dem Fotosatz,
+   * in den sie gehören.
+   *
+   * Sie bleiben als Datei im Speicher liegen, damit man sie nachreichen kann,
+   * ohne sie in der Handygalerie neu heraussuchen zu müssen. Vorher stand hier
+   * nur eine Warnung mit dem Rat, die Fotos „in den Fotosätzen nachzutragen" —
+   * was gar nicht ging: Die Galerie kennt keinen Weg, an einen bestehenden
+   * Satz etwas anzuhängen. Die Bilder waren damit schlicht weg.
+   */
+  const [nachzureichen, setNachzureichen] = useState<{
+    satzId: number;
+    dateien: File[];
+  } | null>(null);
   // Für den Mail-Dialog wird der fertige Satz nachgeladen: Er braucht
   // Kategorie, Größe und Archivname, und die Wahrheit dazu steht im Server.
   const [mailFuer, setMailFuer] = useState<Fotosatz | null>(null);
@@ -107,12 +124,48 @@ export function BaufotosHochladen({
   const kannSpeichern =
     kategorie.trim().length > 0 && datum.length === 10 && fotos.length > 0 && !laeuft;
 
+  /**
+   * Fotos einzeln in einen bestehenden Fotosatz senden.
+   *
+   * Einzeln und nicht als Bündel: Bricht die Verbindung auf der Baustelle mitten
+   * im Vorgang ab, kostet das höchstens dieses eine Foto. Zwei Versuche je Foto;
+   * was danach immer noch nicht durch ist, kommt als **Datei** zurück — nicht
+   * als Fehlertext. Nur so lässt es sich später nachreichen.
+   */
+  async function sendeFotos(satzId: number, dateien: File[]) {
+    const gescheitert: File[] = [];
+    let uebertragen = 0;
+    let letzterFehler = "";
+
+    for (let i = 0; i < dateien.length; i++) {
+      setFortschritt({ aktuell: i + 1, gesamt: dateien.length });
+      // Vor dem Senden verkleinern: Das ist der Unterschied zwischen
+      // "geht durch" und "läuft in die Zeitüberschreitung".
+      const klein = await komprimiereBild(dateien[i]);
+      let erfolg = false;
+      for (let versuch = 1; versuch <= 2 && !erfolg; versuch++) {
+        try {
+          await api.baufotos.uploadFotos(satzId, [klein]);
+          erfolg = true;
+          uebertragen += 1;
+        } catch (err) {
+          letzterFehler = err instanceof Error ? err.message : "";
+        }
+      }
+      if (!erfolg) gescheitert.push(dateien[i]);
+    }
+
+    setFortschritt(null);
+    return { uebertragen, gescheitert, letzterFehler };
+  }
+
   async function hochladen() {
     if (!kannSpeichern) return;
     setLaeuft(true);
     setFehler(null);
     setWarnung(null);
     setMeldung(null);
+    setNachzureichen(null);
 
     try {
       // Schritt 1: Fotosatz anlegen — ab hier ist der Vorgang gesichert.
@@ -124,32 +177,10 @@ export function BaufotosHochladen({
       });
 
       // Schritt 2: Fotos einzeln, mit einem zweiten Versuch je Foto.
-      let uebertragen = 0;
-      const gescheitert: string[] = [];
-      for (let i = 0; i < fotos.length; i++) {
-        setFortschritt({ aktuell: i + 1, gesamt: fotos.length });
-        // Vor dem Senden verkleinern: Das ist der Unterschied zwischen
-        // "geht durch" und "läuft in den Zeitüberschreitung".
-        const klein = await komprimiereBild(fotos[i]);
-        let erfolg = false;
-        for (let versuch = 1; versuch <= 2 && !erfolg; versuch++) {
-          try {
-            await api.baufotos.uploadFotos(satz.id, [klein]);
-            erfolg = true;
-            uebertragen += 1;
-          } catch (err) {
-            if (versuch === 2) {
-              gescheitert.push(
-                `${fotos[i].name}${
-                  err instanceof Error ? ` (${err.message})` : ""
-                }`
-              );
-            }
-          }
-        }
-      }
-
-      setFortschritt(null);
+      const { uebertragen, gescheitert, letzterFehler } = await sendeFotos(
+        satz.id,
+        fotos
+      );
 
       if (uebertragen === 0) {
         // Kein einziges Foto angekommen: Der leere Fotosatz wäre nur Ballast.
@@ -162,9 +193,12 @@ export function BaufotosHochladen({
       }
 
       if (gescheitert.length > 0) {
+        setNachzureichen({ satzId: satz.id, dateien: gescheitert });
         setWarnung(
-          `${gescheitert.length} von ${fotos.length} Foto(s) sind nicht angekommen ` +
-            `(${gescheitert[0]}). Sie lassen sich in den Fotosätzen nachtragen.`
+          `${gescheitert.length} von ${fotos.length} Foto(s) sind nicht angekommen` +
+            (letzterFehler ? ` (${letzterFehler})` : "") +
+            ". Sie liegen noch hier — mit dem Knopf darunter gehen sie in " +
+            "denselben Fotosatz. Solange diese Seite offen bleibt."
         );
       }
 
@@ -179,6 +213,52 @@ export function BaufotosHochladen({
       setFehler(
         err instanceof Error ? err.message : "Hochladen fehlgeschlagen."
       );
+    } finally {
+      setLaeuft(false);
+      setFortschritt(null);
+    }
+  }
+
+  /** Nur die Fotos erneut senden, die beim ersten Durchgang hängen geblieben sind. */
+  async function nachreichen() {
+    if (!nachzureichen || laeuft) return;
+    setLaeuft(true);
+    setFehler(null);
+    setMeldung(null);
+
+    try {
+      const { uebertragen, gescheitert, letzterFehler } = await sendeFotos(
+        nachzureichen.satzId,
+        nachzureichen.dateien
+      );
+
+      // Die Zahl am Kopf der Karte kommt vom Server, nicht aus einer eigenen
+      // Rechnung — sonst gäbe es zwei Wahrheiten über denselben Satz.
+      const aktuell = await api.baufotos.get(nachzureichen.satzId);
+      setFertig({
+        id: aktuell.id,
+        zip: aktuell.zip_dateiname,
+        anzahl: aktuell.anzahl_fotos,
+      });
+
+      if (gescheitert.length === 0) {
+        setNachzureichen(null);
+        setWarnung(null);
+        setMeldung(
+          `${uebertragen} nachgereichte(s) Foto(s) sind angekommen — der ` +
+            "Fotosatz ist jetzt vollständig."
+        );
+      } else {
+        setNachzureichen({ satzId: nachzureichen.satzId, dateien: gescheitert });
+        setWarnung(
+          `${gescheitert.length} Foto(s) fehlen weiterhin` +
+            (letzterFehler ? ` (${letzterFehler})` : "") +
+            ". Bei besserem Empfang noch einmal versuchen — die Bilder bleiben " +
+            "so lange hier liegen."
+        );
+      }
+    } catch (err) {
+      setFehler(err instanceof Error ? err.message : "Nachreichen fehlgeschlagen.");
     } finally {
       setLaeuft(false);
       setFortschritt(null);
@@ -200,7 +280,31 @@ export function BaufotosHochladen({
   if (fertig) {
     return (
       <div className="flex flex-col gap-3">
-        {warnung && <Meldung art="hinweis">{warnung}</Meldung>}
+        {warnung && (
+          <div className="flex flex-col items-start gap-2">
+            <Meldung art="hinweis">{warnung}</Meldung>
+            {/* Der Knopf steht direkt unter der Warnung, weil er ihre Behebung
+                ist — nicht unten zwischen Herunterladen und Melden. */}
+            {nachzureichen && (
+              <Button
+                onClick={nachreichen}
+                disabled={laeuft}
+                icon={laeuft ? undefined : Upload}
+              >
+                {laeuft ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    {fortschritt
+                      ? `Foto ${fortschritt.aktuell} von ${fortschritt.gesamt}…`
+                      : "Wird gesendet…"}
+                  </>
+                ) : (
+                  `${nachzureichen.dateien.length} fehlende(s) Foto(s) erneut senden`
+                )}
+              </Button>
+            )}
+          </div>
+        )}
         <Karte>
           <KarteKopf
             titel="Fotosatz fertig"
@@ -255,10 +359,25 @@ export function BaufotosHochladen({
               </Button>
               <Button
                 variante="still"
+                disabled={laeuft}
                 onClick={() => {
+                  // Noch nicht übertragene Fotos liegen nur im Speicher dieser
+                  // Seite. Sie beim Wechsel wortlos fallen zu lassen wäre
+                  // derselbe stille Verlust, um den es hier die ganze Zeit geht.
+                  if (
+                    nachzureichen &&
+                    !window.confirm(
+                      `${nachzureichen.dateien.length} Foto(s) sind noch nicht ` +
+                        "übertragen und gehen jetzt verloren. Trotzdem einen " +
+                        "neuen Satz erfassen?"
+                    )
+                  ) {
+                    return;
+                  }
                   setFertig(null);
                   setWarnung(null);
                   setMeldung(null);
+                  setNachzureichen(null);
                 }}
               >
                 Weiteren Satz erfassen
@@ -338,6 +457,7 @@ export function BaufotosHochladen({
             <FotoAuswahl
               dateien={fotos}
               onChange={setFotos}
+              maxFotos={MAX_FOTOS_BAUFOTOS}
               hinweis="Noch keine Fotos. Alles, was auf die Baustelle gehört — sie werden beim Hochladen umbenannt und verkleinert."
             />
 
