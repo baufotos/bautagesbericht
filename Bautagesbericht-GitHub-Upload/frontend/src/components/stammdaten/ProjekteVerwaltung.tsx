@@ -19,6 +19,20 @@
  * Ordner auf dem Netzlaufwerk die vom Handy hochgeladenen Baufotos gehören.
  * Jedes Projekt liegt woanders, deshalb steht der Pfad hier am Projekt und
  * nicht in einer Textdatei auf jedem einzelnen Rechner.
+ *
+ * WARUM DER FOTOORDNER NICHT MEHR „OPTIONAL" IST
+ * ==============================================
+ * Fehlt er, rät das Abholskript den Pfad aus dem Projektnamen
+ * (``<Basis>\<Projektname>\01 FOTOS``). Am 11.09.2026 hat das einen echten
+ * Schaden angerichtet: Ein Bürorechner mit einer älteren Skriptfassung las
+ * die Serverantwort als Westeuropäisch statt UTF-8, aus „McDonald´s" wurde
+ * „McDonaldÂ´s" — und die Fotos landeten in einem neu angelegten Ordner
+ * neben dem echten Projektordner, wo sie niemand suchte.
+ *
+ * Der Ratepfad bleibt als letzte Rückfallebene bestehen, aber er ist die
+ * Fehlerquelle. Deshalb wird der Fotoordner hier beim Anlegen vorbelegt und
+ * fehlt er doch, sagt die Projektkarte deutlich, was das bedeutet — statt
+ * eines grauen „nicht festgelegt", das wie eine Nebensache aussah.
  */
 
 import {
@@ -42,6 +56,30 @@ import type { Projekt } from "@/lib/types";
 import { Karte, KarteInhalt, KarteKopf, LeerHinweis } from "@/components/dashboard";
 import { Button, Field, Input, Meldung } from "@/components/ui";
 
+/**
+ * Vorschlag für den Fotoordner eines Projekts.
+ *
+ * Dieselbe Regel, die das Abholskript als Rückfallebene benutzt
+ * (``<Basis>\<Projektname>\<Unterordner>``, siehe
+ * desktop/abholung/Baufotos-Abholen.ps1). Der Unterschied ist entscheidend:
+ * Hier entsteht der Pfad EINMAL aus dem Namen, wird gespeichert und ist
+ * danach sichtbar und korrigierbar. Rät ihn dagegen jeder Bürorechner bei
+ * jeder Abholung neu, hängt das Ergebnis daran, wie dessen PowerShell die
+ * Serverantwort dekodiert — und aus „McDonald´s" wird „McDonaldÂ´s".
+ *
+ * Basis und Unterordner sind der Hamburger Standard. Wo ein Projekt woanders
+ * liegt (etwa auf M:), wird der Vorschlag überschrieben — dafür ist er ein
+ * Vorschlag und kein Zwang.
+ */
+const FOTO_BASIS = "L:\\Bauleitung-Hamburg";
+const FOTO_UNTERORDNER = "01 FOTOS";
+
+function standardPfad(projektName: string): string {
+  const name = projektName.trim();
+  if (!name) return "";
+  return `${FOTO_BASIS}\\${name}\\${FOTO_UNTERORDNER}`;
+}
+
 export function ProjekteVerwaltung({
   projekte,
   onAendern,
@@ -63,6 +101,8 @@ export function ProjekteVerwaltung({
   // Welche Karte gerade ihre Adresse bearbeitet.
   const [adresseBearbeitet, setAdresseBearbeitet] = useState<number | null>(null);
   const [adresseEntwurf, setAdresseEntwurf] = useState("");
+  /** Hat der Anwender den vorgeschlagenen Fotoordner von Hand überschrieben? */
+  const [pfadHandgemacht, setPfadHandgemacht] = useState(false);
   // Standort, den der Nutzer im Anlegen-Formular schon ausgewählt hat. Ist er
   // gesetzt, schlägt der Server die Adresse nicht mehr nach.
   const [neuLat, setNeuLat] = useState<number | null>(null);
@@ -73,6 +113,7 @@ export function ProjekteVerwaltung({
     setAdresse("");
     setWebhook("");
     setZielpfad("");
+    setPfadHandgemacht(false);
     setNeuLat(null);
     setNeuLon(null);
     setFormularOffen(false);
@@ -129,7 +170,10 @@ export function ProjekteVerwaltung({
         name: name.trim(),
         adresse: adresse.trim(),
         teams_webhook_url: webhook.trim(),
-        foto_zielpfad: zielpfad.trim(),
+        // Leer lassen ist die eine Möglichkeit, die wir NICHT anbieten: Ohne
+        // Pfad rät das Abholskript, und genau daraus entstehen Ordner mit
+        // kaputten Umlauten neben dem echten Projektordner.
+        foto_zielpfad: zielpfad.trim() || standardPfad(name),
         lat: neuLat,
         lon: neuLon,
       });
@@ -279,17 +323,27 @@ export function ProjekteVerwaltung({
                   <Input
                     value={pfadEntwurf}
                     onChange={(e) => setPfadEntwurf(e.target.value)}
-                    placeholder={`L:\\Bauleitung-Hamburg\\${projekt.name}\\01 FOTOS`}
+                    placeholder={standardPfad(projekt.name)}
                     onKeyDown={(e) => e.key === "Enter" && pfadSpeichern(projekt)}
                     autoFocus
                   />
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       icon={Check}
                       onClick={() => pfadSpeichern(projekt)}
                       disabled={speichert}
                     >
                       Speichern
+                    </Button>
+                    {/* Ein Klick statt Abtippen — der Standardpfad ist in fast
+                        allen Fällen der richtige, und abtippen erzeugt genau
+                        die Schreibfehler, um die es hier geht. */}
+                    <Button
+                      variante="sekundaer"
+                      icon={FolderTree}
+                      onClick={() => setPfadEntwurf(standardPfad(projekt.name))}
+                    >
+                      Standardpfad
                     </Button>
                     <Button variante="still" icon={X} onClick={() => setBearbeitet(null)}>
                       Abbrechen
@@ -309,8 +363,12 @@ export function ProjekteVerwaltung({
                   <FolderTree size={13} className="mt-0.5 shrink-0" />
                   <span className="min-w-0 flex-1 break-all font-mono text-[11px]">
                     {projekt.foto_zielpfad || (
-                      <span className="font-sans text-app-text-leise">
-                        Fotoordner nicht festgelegt
+                      // Kein graues „nicht festgelegt" mehr: Das las sich wie
+                      // eine Nebensache und ist in Wahrheit die Ursache für
+                      // Fotos in falsch benannten Ordnern.
+                      <span className="font-sans text-app-warn">
+                        Kein Fotoordner — die Abholung rät ihn aus dem
+                        Projektnamen. Zum Festlegen hier klicken.
                       </span>
                     )}
                   </span>
@@ -344,7 +402,14 @@ export function ProjekteVerwaltung({
               <Field label="Projektname / -nummer (Pflicht)">
                 <Input
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    // Fotoordner mitschreiben, solange niemand ihn selbst
+                    // angefasst hat. So steht beim Speichern ein Pfad da,
+                    // ohne dass man ihn abtippen muss — und man sieht schon
+                    // beim Anlegen, wohin die Fotos später wandern.
+                    if (!pfadHandgemacht) setZielpfad(standardPfad(e.target.value));
+                  }}
                   placeholder="z. B. 2451 Neubau Verwaltungsgebäude Süd"
                   onKeyDown={(e) => e.key === "Enter" && anlegen()}
                   autoFocus
@@ -393,13 +458,19 @@ export function ProjekteVerwaltung({
               />
             </Field>
             <Field
-              label="Fotoordner im Netzlaufwerk (optional)"
-              hinweis="Dorthin legt das Abholskript im Büro die vom Handy hochgeladenen Baufotos. Lässt sich später jederzeit auf der Projektkarte ändern."
+              label="Fotoordner im Netzlaufwerk"
+              hinweis="Dorthin legt das Abholskript im Büro die vom Handy hochgeladenen Baufotos. Wird aus dem Projektnamen vorbelegt — bitte gegen den echten Ordner auf dem Laufwerk prüfen und sonst überschreiben."
             >
               <Input
                 value={zielpfad}
-                onChange={(e) => setZielpfad(e.target.value)}
-                placeholder={`L:\\Bauleitung-Hamburg\\${name || "Projektname"}\\01 FOTOS`}
+                onChange={(e) => {
+                  setZielpfad(e.target.value);
+                  // Ab jetzt gehört das Feld dem Anwender; der Vorschlag darf
+                  // seine Eingabe nicht mehr überschreiben, wenn er den Namen
+                  // oben noch einmal anfasst.
+                  setPfadHandgemacht(true);
+                }}
+                placeholder={standardPfad(name || "Projektname")}
               />
             </Field>
             <div className="flex gap-2">
